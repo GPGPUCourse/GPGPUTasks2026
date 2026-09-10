@@ -109,7 +109,7 @@ int main()
 		size_t platformVendorSize = 0;
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &platformVendorSize));
 
-		std::vector<unsigned char> platformVendor(platformNameSize);
+		std::vector<unsigned char> platformVendor(platformVendorSize);
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, platformVendor.size(), platformVendor.data(), nullptr));
 		std::cout << "    Platform vendor: " << platformVendor.data() << std::endl;
 
