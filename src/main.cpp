@@ -1,3 +1,4 @@
+#include <bitset>
 #include <CL/cl.h>
 #include <libclew/ocl_init.h>
 
@@ -70,24 +71,65 @@ int main()
 		// TODO 1.2
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
 		std::vector<unsigned char> platformName(platformNameSize, 0);
-		// clGetPlatformInfo(...);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), nullptr));
 		std::cout << "    Platform name: " << platformName.data() << std::endl;
 
 		// TODO 1.3
 		// Запросите и напечатайте так же в консоль вендора данной платформы
+		size_t platformVendorSize = 0;
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &platformVendorSize));
+
+		std::vector<unsigned char> platformVendor(platformVendorSize, 0);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, platformVendorSize, platformVendor.data(), nullptr));
+		std::cout << "    Platform vendor: " << platformVendor.data() << std::endl;
 
 		// TODO 2.1
 		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
 		cl_uint devicesCount = 0;
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount));
+		std::cout << "    Number of OpenCL devices: " << devicesCount << std::endl;
+
+		std::vector<cl_device_id> devices(devicesCount);
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr));
 
 		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
 		{
+			std::cout << "    Device #" << (deviceIndex + 1) << "/" << devicesCount << std::endl;
 			// TODO 2.2
 			// Запросите и напечатайте в консоль:
 			// - Название устройства
+			size_t deviceNameSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_NAME, 0, nullptr, &deviceNameSize));
+			std::vector<unsigned char> deviceName(deviceNameSize, 0);
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_NAME, deviceNameSize, deviceName.data(), nullptr));
+			std::cout << "        Device name: " << deviceName.data() << std::endl;
+
 			// - Тип устройства (видеокарта/процессор/что-то странное)
+			cl_device_type deviceType = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_TYPE, sizeof(deviceType), &deviceType, nullptr));
+			if (deviceType == CL_DEVICE_TYPE_GPU) {
+				std::cout << "        Device type: GPU" << std::endl;
+			} else if (deviceType == CL_DEVICE_TYPE_CPU) {
+				std::cout << "        Device type: CPU" << std::endl;
+			} else {
+				std::cout << "        Device type: Unknown (cl_device_type = " << std::bitset<sizeof(cl_device_type) * 8>(deviceType) << ")" << std::endl;
+			}
+
 			// - Размер памяти устройства в мегабайтах
+			cl_ulong deviceMemorySize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(deviceMemorySize), &deviceMemorySize, nullptr));
+			std::cout << "        Memory size: " << deviceMemorySize / 1024 / 1024 << " Mb" << std::endl;
+
 			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+			cl_uint deviceClockFrequency = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_MAX_CLOCK_FREQUENCY, sizeof(deviceClockFrequency), &deviceClockFrequency, nullptr));
+			std::cout << "        Max frequency: " << deviceClockFrequency <<  " MHz" << std::endl;
+
+			size_t deviceDriverVersionSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DRIVER_VERSION, 0, nullptr, &deviceDriverVersionSize));
+			std::vector<unsigned char> deviceDriverVersion(deviceDriverVersionSize, 0);
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DRIVER_VERSION, deviceDriverVersionSize, deviceDriverVersion.data(), nullptr));
+			std::cout << "        OpenCL driver version: " << deviceDriverVersion.data() << std::endl;
 		}
 	}
 
