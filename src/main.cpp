@@ -107,7 +107,7 @@ int main()
 
 			std::cout << "    Device #" << deviceIndex + 1 << '/' << devicesCount << std::endl;
 
-			cl_device_id device = devices[0];
+			cl_device_id device = devices[deviceIndex];
 
 			size_t deviceNameSize = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, 0, nullptr, &deviceNameSize));
