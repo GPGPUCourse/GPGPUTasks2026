@@ -70,7 +70,7 @@ int main()
 		// TODO 1.2
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
 		std::vector<unsigned char> platformName(platformNameSize, 0);
-		// clGetPlatformInfo(...);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), nullptr));
 		std::cout << "    Platform name: " << platformName.data() << std::endl;
 
 		// TODO 1.3
@@ -79,15 +79,70 @@ int main()
 		// TODO 2.1
 		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
 		cl_uint devicesCount = 0;
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount));
 
+		std::vector<cl_device_id> devices(devicesCount);
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr));
 		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
 		{
+
 			// TODO 2.2
 			// Запросите и напечатайте в консоль:
 			// - Название устройства
+			size_t deviceNameSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_NAME, 0, nullptr, &deviceNameSize));
+
+			std::vector<unsigned char> deviceName(deviceNameSize, 0);
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_NAME, deviceNameSize, deviceName.data(), nullptr));
+			std::cout << "        * " << deviceName.data() << std::endl;
 			// - Тип устройства (видеокарта/процессор/что-то странное)
+			cl_device_type deviceType;
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_TYPE, sizeof(cl_device_type), &deviceType, nullptr));
+			std::cout << "            Type: ";
+			switch(deviceType)
+			{
+			case CL_DEVICE_TYPE_CPU:
+				std::cout << "CPU";
+				break;
+			case CL_DEVICE_TYPE_GPU:
+				std::cout << "GPU";
+				break;
+			case CL_DEVICE_TYPE_ACCELERATOR:
+				std::cout << "OpenCL accelerator";
+				break;
+			case CL_DEVICE_TYPE_DEFAULT:
+				std::cout << "Default device";
+				break;
+			case CL_DEVICE_TYPE_CUSTOM:
+			default:
+				std::cout << "Unsupported device";
+				break;
+			}
+			std::cout << std::endl;
 			// - Размер памяти устройства в мегабайтах
+			const cl_ulong mb_size = 1024 * 1024;
+
+			cl_ulong memSize;
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(cl_ulong), &memSize, nullptr));
+			std::cout << "            Memory size: " << memSize / mb_size << " mb" << std::endl;
 			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+			// - Версия
+			size_t versionNameSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_VERSION, 0, nullptr, &versionNameSize));
+
+			std::vector<unsigned char> versionName(versionNameSize, 0);
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_VERSION, versionNameSize, versionName.data(), nullptr));
+			std::cout << "            OpenCL version: " << versionName.data() << std::endl;
+			// - Порядок байт
+			cl_bool isLittleEndian;
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_ENDIAN_LITTLE, sizeof(cl_bool), &isLittleEndian, nullptr));
+			std::cout << "            Endian: ";
+			if(isLittleEndian) {
+				std::cout << "Little";
+			} else {
+				std::cout << "Big";
+			}
+			std::cout << std::endl;
 		}
 	}
 
