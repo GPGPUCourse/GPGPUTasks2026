@@ -1,10 +1,10 @@
-В этом репозитории предложены задания для курса по вычислениям на видеокартах 2025.
+В этом репозитории предложены задания для курса по вычислениям на видеокартах 2026.
 
-[Остальные задания](https://github.com/GPGPUCourse/GPGPUTasks2025/).
+[Остальные задания](https://github.com/GPGPUCourse/GPGPUTasks2026/).
 
 # Задание 0. Вводное.
 
-[![Build Status](https://github.com/GPGPUCourse/GPGPUTasks2025/actions/workflows/cmake.yml/badge.svg?branch=task00&event=push)](https://github.com/GPGPUCourse/GPGPUTasks2025/actions/workflows/cmake.yml)
+[![Build Status](https://github.com/GPGPUCourse/GPGPUTasks2026/actions/workflows/cmake.yml/badge.svg?branch=task00&event=push)](https://github.com/GPGPUCourse/GPGPUTasks2026/actions/workflows/cmake.yml)
 
 Установка OpenCL-драйвера для процессора
 ========================================
@@ -66,7 +66,7 @@ Apple macOS
 
 1. Сделайте fork этого репозитория
 2. ``git clone ВАШ_ФОРК_РЕПОЗИТОРИЯ``
-3. ``cd GPGPUTasks2025``
+3. ``cd GPGPUTasks2026``
 4. ``git checkout task00``
 5. ``mkdir build``
 6. ``cd build``
@@ -109,7 +109,7 @@ LLVM ERROR: inconsistency in registered CommandLine options
 0. Сделать fork проекта
 1. Прочитать все комментарии подряд и выполнить все **TODO** в файле ``src/main.cpp``. Для разработки под Linux рекомендуется использовать CLion. Под Windows рекомендуется использовать CLion+MSVC. Также под Windows можно использовать Visual Studio Community.
 2. Отправить **Pull-request** с названием ```Task00 <Имя> <Фамилия> <Аффиляция>```. **Аффиляция** - ваш ВУЗ (например SPbU/ITMO или HSE) или ваше место работы. Мне интересно узнать кто откуда.
-3. В тексте **PR** укажите вывод программы при исполнении на сервере Github CI (Github Actions) и на вашем компьютере (в **pre**-тэгах, чтобы сохранить форматирование, см. [пример](https://raw.githubusercontent.com/GPGPUCourse/GPGPUTasks2025/task00/.github/pull_request_example.md)). И ваш бранч должен называться так же, как и у меня - **task00**.
+3. В тексте **PR** укажите вывод программы при исполнении на сервере Github CI (Github Actions) и на вашем компьютере (в **pre**-тэгах, чтобы сохранить форматирование, см. [пример](https://raw.githubusercontent.com/GPGPUCourse/GPGPUTasks2026/task00/.github/pull_request_example.md)). И ваш бранч должен называться так же, как и у меня - **task00**.
 4. Убедиться что Github CI (Github Actions) смог скомпилировать ваш код и что все хорошо, при отправке первого задания CI может не запуститься пока я вручную не нажму ```Approve``` - если я этого не сделал в течение суток - напомните мне пожалуйста в чате курса
 5. Ждать комментарии проверки
 
