@@ -46,7 +46,7 @@ int main()
 	std::vector<cl_platform_id> platforms(platformsCount);
 	OCL_SAFE_CALL(clGetPlatformIDs(platformsCount, platforms.data(), nullptr));
 
-	for(int platformIndex = 0; platformIndex < platformsCount; ++platformIndex)
+	for(cl_uint platformIndex = 0; platformIndex < platformsCount; ++platformIndex)
 	{
 		std::cout << "Platform #" << (platformIndex + 1) << "/" << platformsCount << std::endl;
 		cl_platform_id platform = platforms[platformIndex];
@@ -69,10 +69,10 @@ int main()
 
 		// TODO 1.2
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
-		std::vector<unsigned char> platformName(platformNameSize, 0);
+		std::string platformName(platformNameSize, 0);
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), nullptr));
 		// clGetPlatformInfo(...);
-		std::cout << "    Platform name: " << platformName.data() << std::endl;
+		std::cout << "    Platform name: " << platformName << std::endl;
 
 		// TODO 1.3
 		// Запросите и напечатайте так же в консоль вендора данной платформы
@@ -81,7 +81,7 @@ int main()
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &vendorNameSize));
 		std::string vendorName(vendorNameSize, 0);
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, vendorNameSize, vendorName.data(), nullptr));
-		std::cout << "    Vendor name: " << vendorName.data() << std::endl;
+		std::cout << "    Vendor name: " << vendorName << std::endl;
 
 		cl_uint devicesCount = 0;
 		cl_int devicesError = clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount);
@@ -108,15 +108,13 @@ int main()
 
 			const auto deviceMemorySize = *reinterpret_cast<cl_ulong *>(getDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE).data());
 
-			const auto deviceAvailable = *reinterpret_cast<cl_bool *>(getDeviceInfo(device, CL_DEVICE_AVAILABLE).data());
-
 			const auto deviceVendor = getDeviceInfo(device, CL_DEVICE_VENDOR);
 
 			const auto deviceMaxClockFrequency = *reinterpret_cast<cl_uint *>(getDeviceInfo(device, CL_DEVICE_MAX_CLOCK_FREQUENCY).data());
 
 			const auto deviceGlobalMemCacheSize = *reinterpret_cast<cl_ulong *>(getDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHE_SIZE).data());
 
-			const auto deviceFlobalMemCacheType = *reinterpret_cast<cl_device_mem_cache_type *>(getDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHE_TYPE).data());
+			const auto deviceGlobalMemCacheType = *reinterpret_cast<cl_device_mem_cache_type *>(getDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHE_TYPE).data());
 
 			const auto deviceGlobalMemCachelineSize = *reinterpret_cast<cl_ulong *>(getDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE).data());
 
@@ -136,7 +134,7 @@ int main()
 
 			const auto driverVersion = getDeviceInfo(device, CL_DRIVER_VERSION);
 
-			std::cout << "    Device name: " << deviceName.data() << std::endl;
+			std::cout << "    Device name: " << deviceName << std::endl;
 			if(deviceType & CL_DEVICE_TYPE_CPU)
 				std::cout << "    Device type: CPU" << std::endl;
 			else if(deviceType & CL_DEVICE_TYPE_GPU)
@@ -148,18 +146,19 @@ int main()
 
 			std::cout << "    Device memory size: " << deviceMemorySize / 1024 / 1024 << " MB" << std::endl;
 
-			std::cout << "    Device vendor: " << deviceVendor.data() << std::endl;
+			std::cout << "    Device vendor: " << deviceVendor << std::endl;
 
 			std::cout << "    Device max clock frequency: " << deviceMaxClockFrequency << " MHz" << std::endl;
 
 			std::cout << "    Device global mem cache size: " << deviceGlobalMemCacheSize / 1024 << " KB" << std::endl;
 
 			std::cout << "    Device global mem cache type: ";
-			if(deviceFlobalMemCacheType == CL_NONE)
+
+			if(deviceGlobalMemCacheType == CL_NONE)
 				std::cout << "None";
-			else if(deviceFlobalMemCacheType == CL_READ_ONLY_CACHE)
+			else if(deviceGlobalMemCacheType == CL_READ_ONLY_CACHE)
 				std::cout << "Read-only";
-			else if(deviceFlobalMemCacheType == CL_READ_WRITE_CACHE)
+			else if(deviceGlobalMemCacheType == CL_READ_WRITE_CACHE)
 				std::cout << "Read-write";
 			else
 				std::cout << "Unknown";
@@ -193,13 +192,13 @@ int main()
 
 			std::cout << "    Device built-in kernels: " << deviceBuiltInKernels << std::endl;
 
-			std::cout << "    Device OpenCL C version: " << deviceOpenCLCVersion.data() << std::endl;
+			std::cout << "    Device OpenCL C version: " << deviceOpenCLCVersion << std::endl;
 
-			std::cout << "    Device version: " << deviceVersion.data() << std::endl;
+			std::cout << "    Device version: " << deviceVersion << std::endl;
 
-			std::cout << "    Driver version: " << driverVersion.data() << std::endl;
+			std::cout << "    Driver version: " << driverVersion << std::endl;
 
-			std::cout << "    Device extensions: " << deviceExtensions.data() << std::endl;
+			std::cout << "    Device extensions: " << deviceExtensions << std::endl;
 
 			// TODO 2.2
 			// Запросите и напечатайте в консоль:
