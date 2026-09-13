@@ -130,6 +130,12 @@ int main()
 
 			const auto deviceBuiltInKernels = getDeviceInfo(device, CL_DEVICE_BUILT_IN_KERNELS).data();
 
+			const auto deviceOpenCLCVersion = getDeviceInfo(device, CL_DEVICE_OPENCL_C_VERSION);
+
+			const auto deviceVersion = getDeviceInfo(device, CL_DEVICE_VERSION);
+
+			const auto driverVersion = getDeviceInfo(device, CL_DRIVER_VERSION);
+
 			std::cout << "    Device name: " << deviceName.data() << std::endl;
 			if(deviceType & CL_DEVICE_TYPE_CPU)
 				std::cout << "    Device type: CPU" << std::endl;
@@ -187,7 +193,14 @@ int main()
 
 			std::cout << "    Device built-in kernels: " << deviceBuiltInKernels << std::endl;
 
+			std::cout << "    Device OpenCL C version: " << deviceOpenCLCVersion.data() << std::endl;
+
+			std::cout << "    Device version: " << deviceVersion.data() << std::endl;
+
+			std::cout << "    Driver version: " << driverVersion.data() << std::endl;
+
 			std::cout << "    Device extensions: " << deviceExtensions.data() << std::endl;
+
 			// TODO 2.2
 			// Запросите и напечатайте в консоль:
 			// - Название устройства
