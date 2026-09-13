@@ -92,10 +92,10 @@ int main()
 		devicesError = clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr);
 		OCL_SAFE_CALL(devicesError);
 
-		const auto getDeviceInfo = [](cl_device_id device, cl_device_info param_name) -> std::vector<unsigned char> {
+		const auto getDeviceInfo = [](cl_device_id device, cl_device_info param_name) -> std::string {
 			size_t param_value_size = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, param_name, 0, nullptr, &param_value_size));
-			std::vector<unsigned char> param_value(param_value_size, 0);
+			std::string param_value(param_value_size, 0);
 			OCL_SAFE_CALL(clGetDeviceInfo(device, param_name, param_value_size, param_value.data(), nullptr));
 			return param_value;
 		};
