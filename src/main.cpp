@@ -67,19 +67,25 @@ int main()
 		// в документации подробно объясняется, какой ситуации соответствует данная ошибка, и это позволит, проверив код, понять, чем же вызвана данная ошибка (некорректным аргументом param_name)
 		// Обратите внимание, что в этом же libs/clew/CL/cl.h файле указаны всевоможные defines, такие как CL_DEVICE_TYPE_GPU и т.п.
 
-		// TODO 1.2
-		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
+		// OCL_SAFE_CALL(clGetPlatformInfo(platform, 42, 0, nullptr, &platformNameSize));
+		
 		std::vector<unsigned char> platformName(platformNameSize, 0);
-		// clGetPlatformInfo(...);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), NULL));
+
 		std::cout << "    Platform name: " << platformName.data() << std::endl;
 
-		// TODO 1.3
-		// Запросите и напечатайте так же в консоль вендора данной платформы
+		size_t vendorSize = 0;
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &vendorSize));
+		std::vector<unsigned char> platformVendor(vendorSize, 0);
 
-		// TODO 2.1
-		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, vendorSize, platformVendor.data(), NULL));
+
+		std::cout << "    Vendor: " << platformVendor.data() << std::endl;
 		cl_uint devicesCount = 0;
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_DEFAULT, 0, nullptr, &devicesCount));
 
+		std::vector<cl_device_id> devices(devicesCount);
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_DEFAULT, devicesCount, devices.data(), NULL));
 		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
 		{
 			// TODO 2.2
@@ -88,6 +94,53 @@ int main()
 			// - Тип устройства (видеокарта/процессор/что-то странное)
 			// - Размер памяти устройства в мегабайтах
 			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+
+			cl_device_id device = devices[deviceIndex];
+
+			size_t deviceNameSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, 0, nullptr, &deviceNameSize));
+
+			std::vector<unsigned char> deviceName(deviceNameSize);
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, deviceNameSize, deviceName.data(), nullptr));
+
+			std::cout << "        Device name: " << deviceName.data() << std::endl;
+
+			cl_device_type dev_t;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(dev_t), &dev_t, NULL));
+
+			std::string dev_t_str;
+			if(dev_t & CL_DEVICE_TYPE_CPU)
+				dev_t_str += "CPU ";
+			if(dev_t & CL_DEVICE_TYPE_GPU)
+				dev_t_str += "GPU ";
+			if(dev_t & CL_DEVICE_TYPE_ACCELERATOR)
+				dev_t_str += "Accelerator ";
+			if(dev_t & CL_DEVICE_TYPE_DEFAULT)
+				dev_t_str += "Default ";
+			if(dev_t_str.empty())
+				dev_t_str = "Unknown (" + to_string(dev_t) + ")";
+
+			std::cout << "        Device type: " << dev_t_str << std::endl;
+
+			cl_ulong globalMemSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(globalMemSize), &globalMemSize, NULL));
+			std::cout << "        Global memory: " << globalMemSize / (1024 * 1024) << " MB" << std::endl;
+
+			cl_ulong maxAllocSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_MEM_ALLOC_SIZE, sizeof(maxAllocSize), &maxAllocSize, NULL));
+			std::cout << "        Max alloc size: " << maxAllocSize / (1024 * 1024) << " MB" << std::endl;
+
+			size_t deviceVersionSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_VERSION, 0, NULL, &deviceVersionSize));
+			std::vector<unsigned char> deviceVersion(deviceVersionSize);
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_VERSION, deviceVersionSize, deviceVersion.data(), NULL));
+			std::cout << "        OpenCL version: " << deviceVersion.data() << std::endl;
+
+			size_t driverVersionSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DRIVER_VERSION, 0, NULL, &driverVersionSize));
+			std::vector<unsigned char> driverVersion(driverVersionSize);
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DRIVER_VERSION, driverVersionSize, driverVersion.data(), NULL));
+			std::cout << "        Driver version: " << driverVersion.data() << std::endl;
 		}
 	}
 
