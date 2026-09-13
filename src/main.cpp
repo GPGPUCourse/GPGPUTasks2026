@@ -100,8 +100,12 @@ int main()
 			return param_value;
 		};
 
-		for(const auto &device : devices)
+		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
 		{
+			std::cout << "    Device #" << (deviceIndex + 1) << "/" << devicesCount << std::endl;
+
+			const auto device = devices[deviceIndex];
+
 			const auto deviceName = getDeviceInfo(device, CL_DEVICE_NAME);
 
 			const auto deviceType = *reinterpret_cast<cl_device_type *>(getDeviceInfo(device, CL_DEVICE_TYPE).data());
@@ -134,25 +138,25 @@ int main()
 
 			const auto driverVersion = getDeviceInfo(device, CL_DRIVER_VERSION);
 
-			std::cout << "    Device name: " << deviceName << std::endl;
+			std::cout << "        Device name: " << deviceName << std::endl;
 			if(deviceType & CL_DEVICE_TYPE_CPU)
-				std::cout << "    Device type: CPU" << std::endl;
+				std::cout << "        Device type: CPU" << std::endl;
 			else if(deviceType & CL_DEVICE_TYPE_GPU)
-				std::cout << "    Device type: GPU" << std::endl;
+				std::cout << "        Device type: GPU" << std::endl;
 			else if(deviceType & CL_DEVICE_TYPE_ACCELERATOR)
-				std::cout << "    Device type: Accelerator" << std::endl;
+				std::cout << "        Device type: Accelerator" << std::endl;
 			else
-				std::cout << "    Device type: Unknown" << std::endl;
+				std::cout << "        Device type: Unknown" << std::endl;
 
-			std::cout << "    Device memory size: " << deviceMemorySize / 1024 / 1024 << " MB" << std::endl;
+			std::cout << "        Device memory size: " << deviceMemorySize / 1024 / 1024 << " MB" << std::endl;
 
-			std::cout << "    Device vendor: " << deviceVendor << std::endl;
+			std::cout << "        Device vendor: " << deviceVendor << std::endl;
 
-			std::cout << "    Device max clock frequency: " << deviceMaxClockFrequency << " MHz" << std::endl;
+			std::cout << "        Device max clock frequency: " << deviceMaxClockFrequency << " MHz" << std::endl;
 
-			std::cout << "    Device global mem cache size: " << deviceGlobalMemCacheSize / 1024 << " KB" << std::endl;
+			std::cout << "        Device global mem cache size: " << deviceGlobalMemCacheSize / 1024 << " KB" << std::endl;
 
-			std::cout << "    Device global mem cache type: ";
+			std::cout << "        Device global mem cache type: ";
 
 			if(deviceGlobalMemCacheType == CL_NONE)
 				std::cout << "None";
@@ -164,18 +168,18 @@ int main()
 				std::cout << "Unknown";
 			std::cout << std::endl;
 
-			std::cout << "    Device global mem cacheline size: " << deviceGlobalMemCachelineSize << " bytes" << std::endl;
+			std::cout << "        Device global mem cacheline size: " << deviceGlobalMemCachelineSize << " bytes" << std::endl;
 
-			std::cout << "    Device compiler available: " << (deviceCompilerAvailable ? "Yes" : "No") << std::endl;
+			std::cout << "        Device compiler available: " << (deviceCompilerAvailable ? "Yes" : "No") << std::endl;
 
-			std::cout << "    Device execution capabilities: ";
+			std::cout << "        Device execution capabilities: ";
 			if(deviceExecutionCapabilities & CL_EXEC_KERNEL)
 				std::cout << "Kernel ";
 			if(deviceExecutionCapabilities & CL_EXEC_NATIVE_KERNEL)
 				std::cout << "NativeKernel ";
 			std::cout << std::endl;
 
-			std::cout << "    Device double fp config: ";
+			std::cout << "        Device double fp config: ";
 			if(deviceDoubleFpConfig == 0)
 				std::cout << "Not supported";
 			else
@@ -190,15 +194,15 @@ int main()
 			}
 			std::cout << std::endl;
 
-			std::cout << "    Device built-in kernels: " << deviceBuiltInKernels << std::endl;
+			std::cout << "        Device built-in kernels: " << deviceBuiltInKernels << std::endl;
 
-			std::cout << "    Device OpenCL C version: " << deviceOpenCLCVersion << std::endl;
+			std::cout << "        Device OpenCL C version: " << deviceOpenCLCVersion << std::endl;
 
-			std::cout << "    Device version: " << deviceVersion << std::endl;
+			std::cout << "        Device version: " << deviceVersion << std::endl;
 
-			std::cout << "    Driver version: " << driverVersion << std::endl;
+			std::cout << "        Driver version: " << driverVersion << std::endl;
 
-			std::cout << "    Device extensions: " << deviceExtensions << std::endl;
+			std::cout << "        Device extensions: " << deviceExtensions << std::endl;
 
 			// TODO 2.2
 			// Запросите и напечатайте в консоль:
