@@ -70,18 +70,124 @@ int main()
 		// TODO 1.2
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
 		std::vector<unsigned char> platformName(platformNameSize, 0);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), nullptr));
 		// clGetPlatformInfo(...);
 		std::cout << "    Platform name: " << platformName.data() << std::endl;
 
 		// TODO 1.3
 		// Запросите и напечатайте так же в консоль вендора данной платформы
 
-		// TODO 2.1
-		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
-		cl_uint devicesCount = 0;
+		size_t vendorNameSize = 0;
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &vendorNameSize));
+		std::string vendorName(vendorNameSize, 0);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, vendorNameSize, vendorName.data(), nullptr));
+		std::cout << "    Vendor name: " << vendorName.data() << std::endl;
 
-		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
+		cl_uint devicesCount = 0;
+		cl_int devicesError = clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount);
+		if(devicesError != CL_DEVICE_NOT_FOUND)
+			OCL_SAFE_CALL(devicesError);
+
+		std::vector<cl_device_id> devices(devicesCount, 0);
+		devicesError = clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr);
+		OCL_SAFE_CALL(devicesError);
+
+		const auto getDeviceInfo = [](cl_device_id device, cl_device_info param_name) -> std::vector<unsigned char> {
+			size_t param_value_size = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, param_name, 0, nullptr, &param_value_size));
+			std::vector<unsigned char> param_value(param_value_size, 0);
+			OCL_SAFE_CALL(clGetDeviceInfo(device, param_name, param_value_size, param_value.data(), nullptr));
+			return param_value;
+		};
+
+		for(const auto &device : devices)
 		{
+			const auto deviceName = getDeviceInfo(device, CL_DEVICE_NAME);
+
+			const auto deviceType = *reinterpret_cast<cl_device_type *>(getDeviceInfo(device, CL_DEVICE_TYPE).data());
+
+			const auto deviceMemorySize = *reinterpret_cast<cl_ulong *>(getDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE).data());
+
+			const auto deviceAvailable = *reinterpret_cast<cl_bool *>(getDeviceInfo(device, CL_DEVICE_AVAILABLE).data());
+
+			const auto deviceVendor = getDeviceInfo(device, CL_DEVICE_VENDOR);
+
+			const auto deviceMaxClockFrequency = *reinterpret_cast<cl_uint *>(getDeviceInfo(device, CL_DEVICE_MAX_CLOCK_FREQUENCY).data());
+
+			const auto deviceGlobalMemCacheSize = *reinterpret_cast<cl_ulong *>(getDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHE_SIZE).data());
+
+			const auto deviceFlobalMemCacheType = *reinterpret_cast<cl_device_mem_cache_type *>(getDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHE_TYPE).data());
+
+			const auto deviceGlobalMemCachelineSize = *reinterpret_cast<cl_ulong *>(getDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE).data());
+
+			const auto deviceExtensions = getDeviceInfo(device, CL_DEVICE_EXTENSIONS);
+
+			const auto deviceExecutionCapabilities = *reinterpret_cast<cl_device_exec_capabilities *>(getDeviceInfo(device, CL_DEVICE_EXECUTION_CAPABILITIES).data());
+
+			const auto deviceDoubleFpConfig = *reinterpret_cast<cl_device_fp_config *>(getDeviceInfo(device, CL_DEVICE_DOUBLE_FP_CONFIG).data());
+
+			const auto deviceCompilerAvailable = *reinterpret_cast<cl_bool *>(getDeviceInfo(device, CL_DEVICE_COMPILER_AVAILABLE).data());
+
+			const auto deviceBuiltInKernels = getDeviceInfo(device, CL_DEVICE_BUILT_IN_KERNELS).data();
+
+			std::cout << "    Device name: " << deviceName.data() << std::endl;
+			if(deviceType & CL_DEVICE_TYPE_CPU)
+				std::cout << "    Device type: CPU" << std::endl;
+			else if(deviceType & CL_DEVICE_TYPE_GPU)
+				std::cout << "    Device type: GPU" << std::endl;
+			else if(deviceType & CL_DEVICE_TYPE_ACCELERATOR)
+				std::cout << "    Device type: Accelerator" << std::endl;
+			else
+				std::cout << "    Device type: Unknown" << std::endl;
+
+			std::cout << "    Device memory size: " << deviceMemorySize / 1024 / 1024 << " MB" << std::endl;
+
+			std::cout << "    Device vendor: " << deviceVendor.data() << std::endl;
+
+			std::cout << "    Device max clock frequency: " << deviceMaxClockFrequency << " MHz" << std::endl;
+
+			std::cout << "    Device global mem cache size: " << deviceGlobalMemCacheSize / 1024 << " KB" << std::endl;
+
+			std::cout << "    Device global mem cache type: ";
+			if(deviceFlobalMemCacheType == CL_NONE)
+				std::cout << "None";
+			else if(deviceFlobalMemCacheType == CL_READ_ONLY_CACHE)
+				std::cout << "Read-only";
+			else if(deviceFlobalMemCacheType == CL_READ_WRITE_CACHE)
+				std::cout << "Read-write";
+			else
+				std::cout << "Unknown";
+			std::cout << std::endl;
+
+			std::cout << "    Device global mem cacheline size: " << deviceGlobalMemCachelineSize << " bytes" << std::endl;
+
+			std::cout << "    Device compiler available: " << (deviceCompilerAvailable ? "Yes" : "No") << std::endl;
+
+			std::cout << "    Device execution capabilities: ";
+			if(deviceExecutionCapabilities & CL_EXEC_KERNEL)
+				std::cout << "Kernel ";
+			if(deviceExecutionCapabilities & CL_EXEC_NATIVE_KERNEL)
+				std::cout << "NativeKernel ";
+			std::cout << std::endl;
+
+			std::cout << "    Device double fp config: ";
+			if(deviceDoubleFpConfig == 0)
+				std::cout << "Not supported";
+			else
+			{
+				if(deviceDoubleFpConfig & CL_FP_DENORM)           std::cout << "Denorm ";
+				if(deviceDoubleFpConfig & CL_FP_INF_NAN)          std::cout << "InfNan ";
+				if(deviceDoubleFpConfig & CL_FP_ROUND_TO_NEAREST) std::cout << "RoundToNearest ";
+				if(deviceDoubleFpConfig & CL_FP_ROUND_TO_ZERO)   std::cout << "RoundToZero ";
+				if(deviceDoubleFpConfig & CL_FP_ROUND_TO_INF)    std::cout << "RoundToInf ";
+				if(deviceDoubleFpConfig & CL_FP_FMA)              std::cout << "FMA ";
+				if(deviceDoubleFpConfig & CL_FP_SOFT_FLOAT)       std::cout << "SoftFloat ";
+			}
+			std::cout << std::endl;
+
+			std::cout << "    Device built-in kernels: " << deviceBuiltInKernels << std::endl;
+
+			std::cout << "    Device extensions: " << deviceExtensions.data() << std::endl;
 			// TODO 2.2
 			// Запросите и напечатайте в консоль:
 			// - Название устройства
