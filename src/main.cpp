@@ -175,13 +175,13 @@ int main()
 				std::cout << "Not supported";
 			else
 			{
-				if(deviceDoubleFpConfig & CL_FP_DENORM)           std::cout << "Denorm ";
-				if(deviceDoubleFpConfig & CL_FP_INF_NAN)          std::cout << "InfNan ";
+				if(deviceDoubleFpConfig & CL_FP_DENORM) std::cout << "Denorm ";
+				if(deviceDoubleFpConfig & CL_FP_INF_NAN) std::cout << "InfNan ";
 				if(deviceDoubleFpConfig & CL_FP_ROUND_TO_NEAREST) std::cout << "RoundToNearest ";
-				if(deviceDoubleFpConfig & CL_FP_ROUND_TO_ZERO)   std::cout << "RoundToZero ";
-				if(deviceDoubleFpConfig & CL_FP_ROUND_TO_INF)    std::cout << "RoundToInf ";
-				if(deviceDoubleFpConfig & CL_FP_FMA)              std::cout << "FMA ";
-				if(deviceDoubleFpConfig & CL_FP_SOFT_FLOAT)       std::cout << "SoftFloat ";
+				if(deviceDoubleFpConfig & CL_FP_ROUND_TO_ZERO) std::cout << "RoundToZero ";
+				if(deviceDoubleFpConfig & CL_FP_ROUND_TO_INF) std::cout << "RoundToInf ";
+				if(deviceDoubleFpConfig & CL_FP_FMA) std::cout << "FMA ";
+				if(deviceDoubleFpConfig & CL_FP_SOFT_FLOAT) std::cout << "SoftFloat ";
 			}
 			std::cout << std::endl;
 
