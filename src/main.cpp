@@ -128,7 +128,7 @@ int main()
 
 			const auto deviceCompilerAvailable = *reinterpret_cast<cl_bool *>(getDeviceInfo(device, CL_DEVICE_COMPILER_AVAILABLE).data());
 
-			const auto deviceBuiltInKernels = getDeviceInfo(device, CL_DEVICE_BUILT_IN_KERNELS).data();
+			const auto deviceBuiltInKernels = getDeviceInfo(device, CL_DEVICE_BUILT_IN_KERNELS);
 
 			const auto deviceOpenCLCVersion = getDeviceInfo(device, CL_DEVICE_OPENCL_C_VERSION);
 
