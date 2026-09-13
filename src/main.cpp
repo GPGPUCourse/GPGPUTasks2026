@@ -143,7 +143,7 @@ int main()
 			size_t deviceExtensionsSize;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_EXTENSIONS, 0, nullptr, &deviceExtensionsSize));
 			std::vector<unsigned char> deviceKernels(deviceExtensionsSize, 0);
-			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_BUILT_IN_KERNELS, deviceExtensionsSize, deviceKernels.data(), nullptr));
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_EXTENSIONS, deviceExtensionsSize, deviceKernels.data(), nullptr));
 			std::cout << "    Device extensions: " << deviceKernels.data() << std::endl;
 		}
 	}
