@@ -40,7 +40,7 @@ int main()
 	// Прочитайте документацию clGetPlatformIDs и убедитесь, что этот способ узнать, сколько есть платформ, соответствует документации:
 	cl_uint platformsCount = 0;
 	OCL_SAFE_CALL(clGetPlatformIDs(0, nullptr, &platformsCount));
-	std::cout << "Number of OpenCL platforms: " << platformsCount << std::endl;
+	std::cout << "Number of super OpenCL super platforms: " << platformsCount << std::endl;
 
 	// Тот же метод используется для того, чтобы получить идентификаторы всех платформ - сверьтесь с документацией, что это сделано верно:
 	std::vector<cl_platform_id> platforms(platformsCount);
