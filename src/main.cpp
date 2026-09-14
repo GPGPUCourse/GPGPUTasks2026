@@ -117,13 +117,13 @@ int main()
 			std::cout << "    Device type:";
 			if(deviceType & CL_DEVICE_TYPE_CPU)
 				std::cout << " CPU";
-			else if(deviceType & CL_DEVICE_TYPE_GPU)
+			if(deviceType & CL_DEVICE_TYPE_GPU)
 				std::cout << " GPU";
-			else if(deviceType & CL_DEVICE_TYPE_ACCELERATOR)
+			if(deviceType & CL_DEVICE_TYPE_ACCELERATOR)
 				std::cout << " ACCELERATOR";
-			else if(deviceType & CL_DEVICE_TYPE_DEFAULT)
+			if(deviceType & CL_DEVICE_TYPE_DEFAULT)
 				std::cout << " DEFAULT";
-			else if(deviceType & CL_DEVICE_TYPE_CUSTOM)
+			if(deviceType & CL_DEVICE_TYPE_CUSTOM)
 				std::cout << " CUSTOM";
 			std::cout << std::endl;
 
