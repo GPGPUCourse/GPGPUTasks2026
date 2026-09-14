@@ -111,20 +111,25 @@ int main()
 			cl_device_type deviceType;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(deviceType), &deviceType, nullptr));
 			std::string deviceTypeStr;
-			switch(deviceType)
+			if (deviceType & CL_DEVICE_TYPE_CPU)
 			{
-			case CL_DEVICE_TYPE_CPU:
-				deviceTypeStr = "CPU";
-				break;
-			case CL_DEVICE_TYPE_GPU:
-				deviceTypeStr = "GPU";
-				break;
-			case CL_DEVICE_TYPE_ACCELERATOR:
-				deviceTypeStr = "ACCELERATOR";
-				break;
-			case CL_DEVICE_TYPE_DEFAULT:
-				deviceTypeStr = "DEFAULT";
-				break;
+				deviceTypeStr += "CPU ";
+			}
+			if (deviceType & CL_DEVICE_TYPE_GPU)
+			{
+				deviceTypeStr += "GPU ";
+			}
+			if (deviceType & CL_DEVICE_TYPE_ACCELERATOR)
+			{
+				deviceTypeStr += "ACCELERATOR ";
+			}
+			if (deviceType & CL_DEVICE_TYPE_DEFAULT)
+			{
+				deviceTypeStr += "DEFAULT";
+			}
+			if (deviceType & CL_DEVICE_TYPE_CUSTOM)
+			{
+				deviceTypeStr += "CUSTOM ";
 			}
 			std::cout << "    Device type: " << deviceTypeStr << std::endl;
 
