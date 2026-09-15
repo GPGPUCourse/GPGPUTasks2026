@@ -28,6 +28,30 @@ void reportError(cl_int err, const std::string &filename, int line)
 
 #define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
 
+std::vector<unsigned char> getDeviceInfo(cl_device_id device, cl_device_info device_info) {
+	size_t paramSize = 0;
+	OCL_SAFE_CALL(clGetDeviceInfo(device, device_info, 0, nullptr, &paramSize));
+	if (device_info == CL_DEVICE_TYPE) {
+		cl_device_type type;
+		OCL_SAFE_CALL(clGetDeviceInfo(device, device_info, paramSize, &type, nullptr));
+
+		switch(type) {
+			case CL_DEVICE_TYPE_CPU: std::cout << "CPU"; break;
+			case CL_DEVICE_TYPE_GPU: std::cout << "GPU"; break;
+			case CL_DEVICE_TYPE_ACCELERATOR: std::cout << "ACCELERATOR"; break;
+			case CL_DEVICE_TYPE_CUSTOM: std::cout << "CUSTOM"; break;
+			case CL_DEVICE_TYPE_ALL: std::cout << "ALL"; break;
+		}
+
+		return {'\0'};
+	}
+
+	std::vector<unsigned char> param(paramSize);
+	OCL_SAFE_CALL(clGetDeviceInfo(device, device_info, paramSize, param.data(), nullptr));
+	
+	return param;
+}
+
 int main()
 {
 	// Пытаемся слинковаться с символами OpenCL API в runtime (через библиотеку libs/clew)
@@ -63,6 +87,9 @@ int main()
 		// libs/clew/CL/cl.h:103
 		// P.S. Быстрый переход к файлу в CLion: Ctrl+Shift+N -> cl.h (или даже с номером строки: cl.h:103) -> Enter
 		// Найдите там нужный код ошибки и ее название
+		//
+		// -30 CL_INVALID_VALUE
+		//
 		// Затем откройте документацию по clGetPlatformInfo и в секции Errors найдите ошибку, с которой столкнулись
 		// в документации подробно объясняется, какой ситуации соответствует данная ошибка, и это позволит, проверив код, понять, чем же вызвана данная ошибка (некорректным аргументом param_name)
 		// Обратите внимание, что в этом же libs/clew/CL/cl.h файле указаны всевоможные defines, такие как CL_DEVICE_TYPE_GPU и т.п.
@@ -70,15 +97,29 @@ int main()
 		// TODO 1.2
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
 		std::vector<unsigned char> platformName(platformNameSize, 0);
-		// clGetPlatformInfo(...);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), nullptr));
 		std::cout << "    Platform name: " << platformName.data() << std::endl;
 
 		// TODO 1.3
 		// Запросите и напечатайте так же в консоль вендора данной платформы
+		size_t platformVendorSize = 0;
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &platformVendorSize));
+	
+		std::vector<unsigned char> platformVendor(platformVendorSize, 0);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, platformVendorSize, platformVendor.data(), nullptr));
+
+		std::cout << "    Vendor name: " << platformName.data() << std::endl;
+
+		std::cout << '\n';
 
 		// TODO 2.1
 		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
 		cl_uint devicesCount = 0;
+
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount));
+
+		std::vector<cl_device_id> devices(devicesCount);
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr)); 
 
 		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
 		{
@@ -88,6 +129,15 @@ int main()
 			// - Тип устройства (видеокарта/процессор/что-то странное)
 			// - Размер памяти устройства в мегабайтах
 			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+			std::cout << "Device #" << (platformIndex + 1) << "/" << devicesCount << std::endl;
+			auto device = devices[deviceIndex];
+			
+			std::cout << "		Name: " << getDeviceInfo(device, CL_DEVICE_NAME).data() << '\n';
+			std::cout << "		Type: " << getDeviceInfo(device, CL_DEVICE_TYPE).data() << '\n'; 
+			std::cout << "		Global cache memory size: " << *reinterpret_cast<cl_ulong*>(getDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE).data()) / 1024. / 1024. / 1024. << " GB" << '\n'; 
+			std::cout << "		Vendor: " << getDeviceInfo(device, CL_DEVICE_VENDOR).data() << '\n'; 
+			std::cout << "		Version: " << getDeviceInfo(device, CL_DEVICE_VERSION).data() << '\n'; 
+			std::cout << "		:) Preferred vector width for char's: " << *reinterpret_cast<cl_uint*>(getDeviceInfo(device, CL_DEVICE_PREFERRED_VECTOR_WIDTH_CHAR).data()) << '\n'; 
 		}
 	}
 
