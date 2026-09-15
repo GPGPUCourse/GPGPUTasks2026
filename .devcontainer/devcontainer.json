@@ -1,0 +1,6 @@
+{
+  "name": "GPGPU Local Container",
+  "build": {
+    "dockerfile": "./Containerfile"
+  }
+}
