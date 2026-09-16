@@ -28,6 +28,35 @@ void reportError(cl_int err, const std::string &filename, int line)
 
 #define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
 
+
+template <typename T>
+T getDeviceInfo(cl_device_id device, cl_device_info paramName) {
+    T value;
+    OCL_SAFE_CALL(clGetDeviceInfo(device, paramName, sizeof(T), &value, nullptr));
+    return value;
+}
+
+
+std::string getDeviceInfoString(cl_device_id device, cl_device_info paramName) {
+    size_t paramSize = 0;
+    OCL_SAFE_CALL(clGetDeviceInfo(device, paramName, 0, nullptr, &paramSize));
+
+    std::vector<char> param(paramSize, 0);
+    OCL_SAFE_CALL(clGetDeviceInfo(device, paramName, paramSize, param.data(), nullptr));
+
+    return std::string(param.data());
+}
+
+std::string stringDeviceType(cl_device_type deviceType) {
+    switch (deviceType) {
+        case CL_DEVICE_TYPE_CPU: return "CPU";
+        case CL_DEVICE_TYPE_GPU: return "GPU";
+        case CL_DEVICE_TYPE_ACCELERATOR: return "ACCELERATOR";
+        case CL_DEVICE_TYPE_CUSTOM: return "CUSTOM";
+        default: return "UNKNOWN";
+    }
+}
+
 int main()
 {
 	// Пытаемся слинковаться с символами OpenCL API в runtime (через библиотеку libs/clew)
@@ -67,18 +96,33 @@ int main()
 		// в документации подробно объясняется, какой ситуации соответствует данная ошибка, и это позволит, проверив код, понять, чем же вызвана данная ошибка (некорректным аргументом param_name)
 		// Обратите внимание, что в этом же libs/clew/CL/cl.h файле указаны всевоможные defines, такие как CL_DEVICE_TYPE_GPU и т.п.
 
+		// Тут получил -30 -> CL_INVALID_VALUE -> для clGetPlatformInfo: `if param_name is not one of the supported values`
+
 		// TODO 1.2
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
 		std::vector<unsigned char> platformName(platformNameSize, 0);
 		// clGetPlatformInfo(...);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), nullptr));
 		std::cout << "    Platform name: " << platformName.data() << std::endl;
 
 		// TODO 1.3
 		// Запросите и напечатайте так же в консоль вендора данной платформы
+		size_t platformVendorSize = 0;
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &platformVendorSize));
+
+		std::vector<unsigned char> platformVendor(platformVendorSize, 0);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, platformVendorSize, platformVendor.data(), nullptr));
+
+		std::cout << "    Platform vendor: " << platformVendor.data() << std::endl;
 
 		// TODO 2.1
 		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
 		cl_uint devicesCount = 0;
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount));
+		std::cout << "    Number of platform devices: " << devicesCount << std::endl;
+
+		std::vector<cl_device_id> devices(devicesCount);
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr));
 
 		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
 		{
@@ -88,6 +132,20 @@ int main()
 			// - Тип устройства (видеокарта/процессор/что-то странное)
 			// - Размер памяти устройства в мегабайтах
 			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+			std::cout << "    Device #" << (deviceIndex + 1) << "/" << devicesCount << std::endl;
+			cl_device_id device = devices[deviceIndex];
+
+			std::cout << "        Device name: " << getDeviceInfoString(device, CL_DEVICE_NAME) << std::endl;
+			std::cout << "        Device type: " << stringDeviceType(getDeviceInfo<cl_device_type>(device, CL_DEVICE_TYPE)) << std::endl << std::endl;
+
+			std::cout << "        Device global mem size: " << getDeviceInfo<cl_ulong>(device, CL_DEVICE_GLOBAL_MEM_SIZE) / 1024 / 1024 << "MB" << std::endl;
+			std::cout << "        Device local mem size: " << getDeviceInfo<cl_ulong>(device, CL_DEVICE_LOCAL_MEM_SIZE) / 1024  << "KB" << std::endl;
+			std::cout << "        Device global cache size: " << getDeviceInfo<cl_ulong>(device, CL_DEVICE_GLOBAL_MEM_CACHE_SIZE) << " bytes" << std::endl;
+			std::cout << "        Device global cacheline size: " << getDeviceInfo<cl_uint>(device, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE) << " bytes" << std::endl << std::endl;
+
+			std::cout << "        Device max clock freq: " << getDeviceInfo<cl_uint>(device, CL_DEVICE_MAX_CLOCK_FREQUENCY) << std::endl;
+			std::cout << "        Device max compute units: " << getDeviceInfo<cl_uint>(device, CL_DEVICE_MAX_COMPUTE_UNITS) << std::endl;
+			std::cout << "        Device max work group size: " << getDeviceInfo<size_t>(device, CL_DEVICE_MAX_WORK_GROUP_SIZE) << std::endl;
 		}
 	}
 
