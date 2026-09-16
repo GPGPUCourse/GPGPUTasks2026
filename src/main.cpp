@@ -45,7 +45,9 @@ auto getDeviceInfo(cl_device_id device, cl_device_info paramName)
 	{
 		if(paramValueSize % sizeof(typename T::value_type))
 			throw std::runtime_error("Unexpected size of device info parameter value");
-		const auto numValues = paramValueSize / sizeof(typename T::value_type);
+		size_t numValues = paramValueSize / sizeof(typename T::value_type);
+		if constexpr(std::is_same_v<T, std::string>)
+			--numValues;  // Skip null terminator
 		auto result = T(numValues, 0);
 		OCL_SAFE_CALL(clGetDeviceInfo(device, paramName, paramValueSize, std::data(result), nullptr));
 		return result;
