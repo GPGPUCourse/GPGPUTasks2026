@@ -1,6 +1,7 @@
 #include <CL/cl.h>
 #include <libclew/ocl_init.h>
 
+#include <iomanip>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -165,7 +166,9 @@ int main()
 
 			auto deviceVendor = cl_utils::getDeviceInfo<std::string>(device, CL_DEVICE_VENDOR);
 			auto deviceVendorId = cl_utils::getDeviceInfo<cl_uint>(device, CL_DEVICE_VENDOR_ID);
-			std::cout << "        Device vendor: " << deviceVendor << " (ID: " << deviceVendorId << ")" << std::endl;
+			std::stringstream vendorIdSs;
+			vendorIdSs << std::setw(4) << std::setfill('0') << std::hex << std::uppercase << deviceVendorId;
+			std::cout << "        Device vendor: " << deviceVendor << " (ID: " << vendorIdSs.str() << ")" << std::endl;
 
 			auto deviceName = cl_utils::getDeviceInfo<std::string>(device, CL_DEVICE_NAME);
 			std::cout << "        Device name: " << deviceName << std::endl;
