@@ -67,6 +67,19 @@ int main()
 		// в документации подробно объясняется, какой ситуации соответствует данная ошибка, и это позволит, проверив код, понять, чем же вызвана данная ошибка (некорректным аргументом param_name)
 		// Обратите внимание, что в этом же libs/clew/CL/cl.h файле указаны всевоможные defines, такие как CL_DEVICE_TYPE_GPU и т.п.
 
+		// SOLUTION 1.1
+
+		// После замены CL_PLATFORM_NAME на 239 я получил следующий вывод:
+		// "OpenCL error code -30 encountered at /workspaces/gpgpu-course/src/main.cpp:57"
+
+		// В таблице с кодами ошибок обнаружил следующую строку:
+		// #define CL_INVALID_VALUE -30
+
+		// В документации по clGetPlatformInfo нашёл следующее объяснение:
+		// CL_INVALID_VALUE if param_name is not one of the supported values or if size in bytes specified by param_value_size is less than size of return type and param_value is not a NULL value.
+
+		// Действительно, проблема в параметре param_name, поэтому возвращаем его в изначальное состояние.
+
 		// TODO 1.2
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
 		std::vector<unsigned char> platformName(platformNameSize, 0);
