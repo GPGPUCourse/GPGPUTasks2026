@@ -50,50 +50,35 @@ std::vector<cl_platform_id> GetPlatformIds()
 	return platforms;
 }
 
-std::string GetPlatformName(cl_platform_id platformId)
+std::string GetPlatformStringInfo(cl_platform_id platformId, cl_platform_info paramName)
 {
-	size_t platformNameSize = 0;
+	size_t valueSize = 0;
 	OCL_SAFE_CALL(
 		clGetPlatformInfo(
 			platformId,
-			CL_PLATFORM_NAME,
+			paramName,
 			0,
 			nullptr,
-			&platformNameSize));
+			&valueSize));
 
-	std::string platformName(platformNameSize, 0);
+	if (valueSize == 0) {
+		return {};
+	}
+
+	std::string value(valueSize, '\0');
 	OCL_SAFE_CALL(
 		clGetPlatformInfo(
 			platformId,
-			CL_PLATFORM_NAME,
-			platformNameSize, 
-			platformName.data(),
-			nullptr));
-	
-	return platformName;
-}
-
-std::string GetPlatformVendor(cl_platform_id platformId)
-{
-	size_t platformVendorSize = 0;
-	OCL_SAFE_CALL(
-		clGetPlatformInfo(
-			platformId,
-			CL_PLATFORM_VENDOR,
-			0,
-			nullptr,
-			&platformVendorSize));
-
-	std::string platformVendor(platformVendorSize, '0');
-	OCL_SAFE_CALL(
-		clGetPlatformInfo(
-			platformId,
-			CL_PLATFORM_VENDOR,
-			platformVendorSize, 
-			platformVendor.data(),
+			paramName,
+			valueSize,
+			value.data(),
 			nullptr));
 
-	return platformVendor;
+	if (value.back() == '\0') {
+		value.pop_back();
+	}
+
+	return value;
 }
 
 std::vector<cl_device_id> GetDeviceIds(cl_platform_id platformId)
@@ -117,29 +102,6 @@ std::vector<cl_device_id> GetDeviceIds(cl_platform_id platformId)
 			nullptr));
 	
 	return deviceIds;
-}
-
-std::vector<unsigned char> GetDeviceName(cl_device_id deviceId)
-{
-	size_t deviceNameSize = 0;
-	OCL_SAFE_CALL(
-		clGetDeviceInfo(
-			deviceId,
-			CL_DEVICE_NAME,
-			0,
-			nullptr,
-			&deviceNameSize));
-
-	std::vector<unsigned char> deviceName(deviceNameSize, 0);
-	OCL_SAFE_CALL(
-		clGetDeviceInfo(
-			deviceId,
-			CL_DEVICE_NAME,
-			deviceNameSize,
-			deviceName.data(),
-			nullptr));
-
-			return deviceName;
 }
 
 void AppendDeviceType(
@@ -249,27 +211,49 @@ cl_ulong GetDeviceComputeUnits(cl_device_id deviceId)
 	return computeUnits;
 }
 
-std::string GetDeviceSupportedExtensions(cl_device_id deviceId)
+cl_uint GetDeviceMaxClockFrequency(cl_device_id deviceId)
 {
-	size_t deviceExtensionsSize = 0;
+	cl_uint frequency = 0;
 	OCL_SAFE_CALL(
 		clGetDeviceInfo(
 			deviceId,
-			CL_DEVICE_EXTENSIONS,
-			0,
-			nullptr,
-			&deviceExtensionsSize));
-
-	std::string deviceExtensions(deviceExtensionsSize, '0');
-	OCL_SAFE_CALL(
-		clGetDeviceInfo(
-			deviceId,
-			CL_DEVICE_EXTENSIONS,
-			deviceExtensionsSize,
-			deviceExtensions.data(),
+			CL_DEVICE_MAX_CLOCK_FREQUENCY,
+			sizeof(frequency),
+			&frequency,
 			nullptr));
 
-	return deviceExtensions;
+	return frequency;
+}
+
+std::string GetDeviceStringInfo(cl_device_id deviceId, cl_device_info paramName)
+{
+	size_t valueSize = 0;
+	OCL_SAFE_CALL(
+		clGetDeviceInfo(
+			deviceId,
+			paramName,
+			0,
+			nullptr,
+			&valueSize));
+
+	if (valueSize == 0) {
+		return {};
+	}
+
+	std::string value(valueSize, '\0');
+	OCL_SAFE_CALL(
+		clGetDeviceInfo(
+			deviceId,
+			paramName,
+			valueSize,
+			value.data(),
+			nullptr));
+
+	if (value.back() == '\0') {
+		value.pop_back();
+	}
+
+	return value;
 }
 
 int main()
@@ -319,11 +303,11 @@ int main()
 
 		// TODO 1.2
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
-		std::cout << "    Platform name: " << GetPlatformName(platformId) << std::endl;
+		std::cout << "    Platform name: " << GetPlatformStringInfo(platformId, CL_PLATFORM_NAME) << std::endl;
 
 		// TODO 1.3
 		// Запросите и напечатайте так же в консоль вендора данной платформы
-		std::cout << "    Platform vendor: " << GetPlatformVendor(platformId) << std::endl;
+		std::cout << "    Platform vendor: " << GetPlatformStringInfo(platformId, CL_PLATFORM_VENDOR) << std::endl;
 
 		// TODO 2.1
 		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
@@ -346,7 +330,7 @@ int main()
 			cl_device_id deviceId = deviceIds[deviceIdx];
 
 			std::cout << "        Device #" << (deviceIdx + 1) << "/" << deviceIds.size() << std::endl;
-			std::cout << "        Name: " << GetDeviceName(deviceId).data() << std::endl;
+			std::cout << "        Name: " << GetDeviceStringInfo(deviceId, CL_DEVICE_NAME) << std::endl;
 
 			std::cout << "        Type:";
 			for (const auto& deviceType: GetDeviceTypes(deviceId)) {
@@ -356,7 +340,10 @@ int main()
 
 			std::cout << "        Memory: " << GetDeviceMemoryMb(deviceId) << "MB" << std::endl;
 			std::cout << "        Compute units: " << GetDeviceComputeUnits(deviceId) << std::endl;
-			std::cout << "        Supported extensions: " << GetDeviceSupportedExtensions(deviceId) << std::endl;
+			std::cout << "        Max clock frequency: " << GetDeviceMaxClockFrequency(deviceId) << " MHz" << std::endl;
+			std::cout << "        OpenCL Version: " << GetDeviceStringInfo(deviceId, CL_DEVICE_VERSION) << std::endl;
+			std::cout << "        Driver version: " << GetDeviceStringInfo(deviceId, CL_DRIVER_VERSION) << std::endl;
+			std::cout << "        Supported extensions: " << GetDeviceStringInfo(deviceId, CL_DEVICE_EXTENSIONS) << std::endl;
 		}
 	}
 
