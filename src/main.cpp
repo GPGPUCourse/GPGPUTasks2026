@@ -5,6 +5,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+#include <tuple>
 
 template<typename T>
 std::string to_string(T value)
@@ -27,6 +28,39 @@ void reportError(cl_int err, const std::string &filename, int line)
 }
 
 #define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
+
+std::string prettyBool(cl_bool value) {
+	return value == CL_TRUE ? "Yes" : "No";
+}
+
+std::vector<std::tuple<cl_device_type, std::string>> checked_types = {
+	{ CL_DEVICE_TYPE_CPU, "CPU" },
+	{ CL_DEVICE_TYPE_GPU, "GPU" },
+	{ CL_DEVICE_TYPE_ACCELERATOR, "ACCELERATOR" },
+	{ CL_DEVICE_TYPE_DEFAULT, "DEFAULT" },
+	{ CL_DEVICE_TYPE_CUSTOM, "CUSTOM" },
+};
+std::string prettyDeviceType(cl_device_type type) {
+	std::vector<std::string> types;
+	for (auto tuple : checked_types) {
+		cl_device_type checked_type = std::get<0>(tuple);
+		if (type & checked_type) {
+			types.push_back(std::get<1>(tuple));
+			types.push_back("|");
+			type ^= checked_type;
+		}
+	}
+	if (types.empty() || type != 0) {
+		types.push_back("UNKNOWN");
+	} else {
+		types.pop_back();
+	}
+	std::string result = "";
+	for (auto word : types) {
+		result += word;
+	}
+	return result;
+}
 
 int main()
 {
@@ -117,15 +151,38 @@ int main()
 
 			size_t deviceNameSize = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, 0, NULL, &deviceNameSize));
-			
+
 			std::vector<unsigned char> deviceName(deviceNameSize, 0);
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, deviceNameSize, deviceName.data(), NULL));
 			std::cout << "        Device name: " << deviceName.data() << std::endl;
 			
-			cl_device_type deviceType = CL_DEVICE_TYPE_DEFAULT;
-			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, 0, NULL, &deviceType));
+			size_t deviceTypeSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, 0, NULL, &deviceTypeSize));
 
-			std::cout << "        Device type: " << deviceType << std::endl;
+			cl_device_type deviceType = CL_DEVICE_TYPE_DEFAULT;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, deviceTypeSize, &deviceType, NULL));
+			std::cout << "        Device type: " << prettyDeviceType(deviceType) << std::endl;
+
+			size_t deviceMemorySizeBytesSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, 0, NULL, &deviceMemorySizeBytesSize));
+
+			cl_ulong deviceMemorySizeBytes = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, deviceMemorySizeBytesSize, &deviceMemorySizeBytes, NULL));
+			std::cout << "        Device memory: " << (deviceMemorySizeBytes >> 20) << " Mb"  << std::endl;
+
+			size_t deviceLittleEndianSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_ENDIAN_LITTLE, 0, NULL, &deviceLittleEndianSize));
+
+			cl_bool deviceLittleEndian = false;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_ENDIAN_LITTLE, deviceLittleEndianSize, &deviceLittleEndian, NULL));
+			std::cout << "        Little endian: " << prettyBool(deviceLittleEndian) << std::endl;
+
+			size_t deviceCachelineSizeBytesSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, 0, NULL, &deviceCachelineSizeBytesSize));
+
+			cl_uint deviceCachelineSizeBytes = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, deviceCachelineSizeBytesSize, &deviceCachelineSizeBytes, NULL));
+			std::cout << "        Device cacheline: " << deviceCachelineSizeBytes << " b" << std::endl;
 		}
 	}
 
