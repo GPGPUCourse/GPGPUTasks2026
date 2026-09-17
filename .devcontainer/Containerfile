@@ -1,0 +1,21 @@
+FROM ubuntu:24.04
+
+# 0) Install primitive dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    gnupg2 \
+    build-essential \
+    cmake
+
+# 1) Add Intel oneAPI APT repo + key  (Ubuntu 24.04 Noble)
+RUN \
+    wget -O- https://apt.repos.intel.com/intel-gpg-keys/GPG-PUB-KEY-INTEL-SW-PRODUCTS.PUB |\
+    gpg --dearmor |\
+    tee /usr/share/keyrings/oneapi-archive-keyring.gpg > /dev/null && \
+    echo "deb [signed-by=/usr/share/keyrings/oneapi-archive-keyring.gpg] https://apt.repos.intel.com/oneapi all main" |\
+    tee /etc/apt/sources.list.d/oneAPI.list
+
+# 2) Install Intel OpenCL runtime for CPU
+RUN apt-get update && apt-get install -y \
+    intel-oneapi-runtime-opencl \
+    clinfo

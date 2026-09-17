@@ -5,6 +5,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <vector>
+#include <tuple>
 
 template<typename T>
 std::string to_string(T value)
@@ -27,6 +28,39 @@ void reportError(cl_int err, const std::string &filename, int line)
 }
 
 #define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
+
+std::string prettyBool(cl_bool value) {
+	return value == CL_TRUE ? "Yes" : "No";
+}
+
+std::vector<std::tuple<cl_device_type, std::string>> checked_types = {
+	{ CL_DEVICE_TYPE_CPU, "CPU" },
+	{ CL_DEVICE_TYPE_GPU, "GPU" },
+	{ CL_DEVICE_TYPE_ACCELERATOR, "ACCELERATOR" },
+	{ CL_DEVICE_TYPE_DEFAULT, "DEFAULT" },
+	{ CL_DEVICE_TYPE_CUSTOM, "CUSTOM" },
+};
+std::string prettyDeviceType(cl_device_type type) {
+	std::vector<std::string> types;
+	for (auto tuple : checked_types) {
+		cl_device_type checked_type = std::get<0>(tuple);
+		if (type & checked_type) {
+			types.push_back(std::get<1>(tuple));
+			types.push_back("|");
+			type ^= checked_type;
+		}
+	}
+	if (types.empty() || type != 0) {
+		types.push_back("UNKNOWN");
+	} else {
+		types.pop_back();
+	}
+	std::string result = "";
+	for (auto word : types) {
+		result += word;
+	}
+	return result;
+}
 
 int main()
 {
@@ -67,18 +101,43 @@ int main()
 		// в документации подробно объясняется, какой ситуации соответствует данная ошибка, и это позволит, проверив код, понять, чем же вызвана данная ошибка (некорректным аргументом param_name)
 		// Обратите внимание, что в этом же libs/clew/CL/cl.h файле указаны всевоможные defines, такие как CL_DEVICE_TYPE_GPU и т.п.
 
+		// SOLUTION 1.1
+
+		// После замены CL_PLATFORM_NAME на 239 я получил следующий вывод:
+		// "OpenCL error code -30 encountered at /workspaces/gpgpu-course/src/main.cpp:57"
+
+		// В таблице с кодами ошибок обнаружил следующую строку:
+		// #define CL_INVALID_VALUE -30
+
+		// В документации по clGetPlatformInfo нашёл следующее объяснение:
+		// CL_INVALID_VALUE if param_name is not one of the supported values or if size in bytes specified by param_value_size is less than size of return type and param_value is not a NULL value.
+
+		// Действительно, проблема в параметре param_name, поэтому возвращаем его в изначальное состояние.
+
 		// TODO 1.2
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
 		std::vector<unsigned char> platformName(platformNameSize, 0);
-		// clGetPlatformInfo(...);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), NULL));
 		std::cout << "    Platform name: " << platformName.data() << std::endl;
 
 		// TODO 1.3
 		// Запросите и напечатайте так же в консоль вендора данной платформы
+		size_t platformVendorSize = 0;
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, NULL, &platformVendorSize));
+
+		std::vector<unsigned char> platformVendor(platformVendorSize, 0);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, platformVendorSize, platformVendor.data(), NULL));
+		std::cout << "    Platform vendor: " << platformVendor.data() << std::endl;
 
 		// TODO 2.1
 		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
 		cl_uint devicesCount = 0;
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, NULL, &devicesCount));
+
+		std::cout << "    Number of OpenCL devices: " << devicesCount << std::endl;
+
+		std::vector<cl_device_id> devices(devicesCount, 0);
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), NULL));
 
 		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
 		{
@@ -88,6 +147,42 @@ int main()
 			// - Тип устройства (видеокарта/процессор/что-то странное)
 			// - Размер памяти устройства в мегабайтах
 			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+			cl_device_id device = devices[deviceIndex];
+
+			size_t deviceNameSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, 0, NULL, &deviceNameSize));
+
+			std::vector<unsigned char> deviceName(deviceNameSize, 0);
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, deviceNameSize, deviceName.data(), NULL));
+			std::cout << "        Device name: " << deviceName.data() << std::endl;
+			
+			size_t deviceTypeSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, 0, NULL, &deviceTypeSize));
+
+			cl_device_type deviceType = CL_DEVICE_TYPE_DEFAULT;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, deviceTypeSize, &deviceType, NULL));
+			std::cout << "        Device type: " << prettyDeviceType(deviceType) << std::endl;
+
+			size_t deviceMemorySizeBytesSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, 0, NULL, &deviceMemorySizeBytesSize));
+
+			cl_ulong deviceMemorySizeBytes = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, deviceMemorySizeBytesSize, &deviceMemorySizeBytes, NULL));
+			std::cout << "        Device memory: " << (deviceMemorySizeBytes >> 20) << " Mb"  << std::endl;
+
+			size_t deviceLittleEndianSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_ENDIAN_LITTLE, 0, NULL, &deviceLittleEndianSize));
+
+			cl_bool deviceLittleEndian = false;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_ENDIAN_LITTLE, deviceLittleEndianSize, &deviceLittleEndian, NULL));
+			std::cout << "        Little endian: " << prettyBool(deviceLittleEndian) << std::endl;
+
+			size_t deviceCachelineSizeBytesSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, 0, NULL, &deviceCachelineSizeBytesSize));
+
+			cl_uint deviceCachelineSizeBytes = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, deviceCachelineSizeBytesSize, &deviceCachelineSizeBytes, NULL));
+			std::cout << "        Device cacheline: " << deviceCachelineSizeBytes << " b" << std::endl;
 		}
 	}
 
