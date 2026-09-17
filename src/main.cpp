@@ -134,7 +134,7 @@ int main()
 		cl_uint devicesCount = 0;
 		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, NULL, &devicesCount));
 
-		std::cout << "    Number of OpenCL devices: " << platformsCount << std::endl;
+		std::cout << "    Number of OpenCL devices: " << devicesCount << std::endl;
 
 		std::vector<cl_device_id> devices(devicesCount, 0);
 		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), NULL));
