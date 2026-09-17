@@ -338,7 +338,7 @@ int main()
 			}
 			std::cout << std::endl;
 
-			std::cout << "        Memory: " << GetDeviceMemoryMb(deviceId) << "MB" << std::endl;
+			std::cout << "        Memory: " << GetDeviceMemoryMb(deviceId) << " MB" << std::endl;
 			std::cout << "        Compute units: " << GetDeviceComputeUnits(deviceId) << std::endl;
 			std::cout << "        Max clock frequency: " << GetDeviceMaxClockFrequency(deviceId) << " MHz" << std::endl;
 			std::cout << "        OpenCL Version: " << GetDeviceStringInfo(deviceId, CL_DEVICE_VERSION) << std::endl;
