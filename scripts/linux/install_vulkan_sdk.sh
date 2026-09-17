@@ -17,13 +17,12 @@ sudo apt update
 sudo apt install -yq libgraphicsmagick++1-dev # we need Magick++.h so that CImg.h can load jpg files
 sudo apt install -yq build-essential pkg-config libx11-dev libxrandr-dev # to fix #include <X11/extensions/Xrandr.h> when compiling Vulkan-Loader
 sudo apt install -yq libx11-xcb-dev libxkbcommon-dev libxrandr-dev libegl1-mesa-dev # to fix "The following required packages were not found: - wayland-client" when compiling Validation-Layers - see https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-ValidationLayers/%2B/refs/tags/v1.1.107/BUILD.md#linux-build-requirements
-sudo apt install -yq glslc
+sudo apt install -yq glslc libspirv-reflect-dev spirv-headers
 
 googletest_version=1.12.1
 vulkan_sdk_version=1.3.283
 vulkan_headers_version=${vulkan_sdk_version}
 vulkan_loader_version=${vulkan_sdk_version}
-vulkan_spirv_reflect_version=${vulkan_sdk_version}
 vulkan_validation_layers_version=${vulkan_sdk_version}
 
 echo "Downloading sources"
@@ -32,7 +31,6 @@ wget https://github.com/KhronosGroup/Vulkan-Headers/archive/refs/tags/v${vulkan_
 wget https://github.com/KhronosGroup/Vulkan-Loader/archive/refs/tags/v${vulkan_loader_version}.zip -O Vulkan-Loader-${vulkan_loader_version}.zip
 wget https://raw.githubusercontent.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator/19b940e864bd3a5afb3c79e3c6788869d01a19eb/include/vk_mem_alloc.h -O vk_mem_alloc.h
 wget https://github.com/KhronosGroup/Vulkan-ValidationLayers/archive/refs/tags/v${vulkan_validation_layers_version}.zip -O Vulkan-ValidationLayers-${vulkan_validation_layers_version}.zip
-wget https://github.com/KhronosGroup/SPIRV-Reflect/archive/refs/tags/vulkan-sdk-${vulkan_spirv_reflect_version}.0.zip -O SPIRV-Reflect-${vulkan_spirv_reflect_version}.zip
 
 echo "Installing googletest"
 unzip release-${googletest_version}.zip
@@ -94,14 +92,3 @@ if [ "$SKIP_VALIDATION_LAYERS" -eq 0 ]; then
 else
   echo "Skipping Vulkan Validation Layers (--no-validation-layers)"
 fi
-
-echo "Installing Vulkan SPIRV Reflect"
-unzip SPIRV-Reflect-${vulkan_spirv_reflect_version}.zip
-rm SPIRV-Reflect-${vulkan_spirv_reflect_version}.zip
-cd SPIRV-Reflect-vulkan-sdk-${vulkan_spirv_reflect_version}.0
-mkdir releasebuild
-cd releasebuild
-cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${install_prefix} ..
-make -j$njobs install
-cd ../..
-rm -rf SPIRV-Reflect-vulkan-sdk-${vulkan_spirv_reflect_version}.0
