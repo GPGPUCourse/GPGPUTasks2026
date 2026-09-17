@@ -8,7 +8,7 @@ njobs=`grep -c '^processor' /proc/cpuinfo`
 install_prefix=/usr/local
 
 sudo apt update
-sudo apt install -yq graphicsmagick-libmagick-dev-compat # we need Magick++.h so that CImg.h can load jpg files
+sudo apt install -yq libgraphicsmagick++1-dev # we need Magick++.h so that CImg.h can load jpg files
 
 googletest_version=1.12.1
 
