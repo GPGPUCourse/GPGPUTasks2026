@@ -111,7 +111,7 @@ int main()
         }
       };
 
-      std::string deviceName, deviceVersion;
+      std::vector<unsigned char> deviceName, deviceVersion;
       cl_device_type deviceType;
       cl_ulong vramSize, localMemSize, maxMemallocSize, vramCacheSize;
       cl_uint maxComputeUnits;
@@ -125,14 +125,14 @@ int main()
       getDeviceInfo(CL_DEVICE_MAX_COMPUTE_UNITS, maxComputeUnits);
 
       std::cout << "    Device #" << deviceIndex+1 << "/" << devicesCount << std::endl;
-      std::cout << "        Name: " << deviceName << std::endl;
+      std::cout << "        Name: " << deviceName.data() << std::endl;
       std::cout << "        Type: " << deviceType << std::endl;
       std::cout << "        Global Memory Size: " << vramSize / (1u << 20) << " MiB" << std::endl;
       std::cout << "        Global Memory Cache Size: " << double(vramCacheSize) / (1u << 20) << " MiB" << std::endl;
       std::cout << "        Max Memory Allocation Size: " << maxMemallocSize / (1u << 20) << " MiB" << std::endl;
       std::cout << "        Local Memory Size: " << localMemSize << " bytes" << std::endl;
       std::cout << "        Max Compute Units: " << maxComputeUnits << std::endl;
-      std::cout << "        CL Version: " << deviceVersion << std::endl;
+      std::cout << "        CL Version: " << deviceVersion.data() << std::endl;
 		}
 	}
 
