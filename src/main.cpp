@@ -6,42 +6,38 @@
 #include <stdexcept>
 #include <vector>
 
-namespace {
+template<typename T>
+std::string to_string(T value)
+{
+	std::ostringstream ss;
+	ss << value;
+	return ss.str();
+}
 
-	template<typename T>
-	std::string to_string(T value)
-	{
-		std::ostringstream ss;
-		ss << value;
-		return ss.str();
+void reportError(cl_int err, const std::string &filename, int line)
+{
+	if(CL_SUCCESS == err)
+		return;
+
+	// Таблица с кодами ошибок:
+	// libs/clew/CL/cl.h:178
+	// P.S. Быстрый переход к файлу в CLion: Ctrl+Shift+N -> cl.h (или даже с номером строки: cl.h:178) -> Enter
+	std::string message = "OpenCL error code " + to_string(err) + " encountered at " + filename + ":" + to_string(line);
+	throw std::runtime_error(message);
+}
+
+#define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
+
+const char* getDeviceNameFromType(cl_device_type type) {
+	switch (type) {
+		case CL_DEVICE_TYPE_CPU:
+			return "CPU";
+		case CL_DEVICE_TYPE_GPU:
+			return "GPU";
+		default:
+			return "Unknown";
 	}
-
-	void reportError(cl_int err, const std::string &filename, int line)
-	{
-		if(CL_SUCCESS == err)
-			return;
-
-		// Таблица с кодами ошибок:
-		// libs/clew/CL/cl.h:178
-		// P.S. Быстрый переход к файлу в CLion: Ctrl+Shift+N -> cl.h (или даже с номером строки: cl.h:178) -> Enter
-		std::string message = "OpenCL error code " + to_string(err) + " encountered at " + filename + ":" + to_string(line);
-		throw std::runtime_error(message);
-	}
-
-	#define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
-
-	const char* getDeviceNameFromType(cl_device_type type) {
-		switch (type) {
-			case CL_DEVICE_TYPE_CPU:
-				return "CPU";
-			case CL_DEVICE_TYPE_GPU:
-				return "GPU";
-			default:
-				return "Unknown";
-		}
-	}
-
-} // namespace
+}
 
 int main()
 {
