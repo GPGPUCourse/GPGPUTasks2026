@@ -31,5 +31,5 @@ void main()
 
     uint idx = y * params.width + x;
 
-    cs[idx] = as[idx] + bx[idx];
+    cs[idx] = as[idx] + bs[idx];
 }
