@@ -37,6 +37,9 @@ void run(int argc, char** argv)
     unsigned int task_size = 64;
     unsigned int width = task_size * 256;
     unsigned int height = task_size * 128;
+    // Для избавления от if-ов в кернеле явно проверяем, что размеры матриц кратны рабочей группе
+    rassert(width % GROUP_SIZE_X == 0, 1234151, width, GROUP_SIZE_X);
+    rassert(height % GROUP_SIZE_Y == 0, 613455715, height, GROUP_SIZE_Y);
     std::cout << "matrices size: " << width << "x" << height << " = 3 * " << (sizeof(unsigned int) * width * height / 1024 / 1024) << " MB" << std::endl;
 
     std::vector<unsigned int> as(width * height, 0);
