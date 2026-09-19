@@ -6,27 +6,42 @@
 #include <stdexcept>
 #include <vector>
 
-template<typename T>
-std::string to_string(T value)
-{
-	std::ostringstream ss;
-	ss << value;
-	return ss.str();
-}
+namespace {
 
-void reportError(cl_int err, const std::string &filename, int line)
-{
-	if(CL_SUCCESS == err)
-		return;
+	template<typename T>
+	std::string to_string(T value)
+	{
+		std::ostringstream ss;
+		ss << value;
+		return ss.str();
+	}
 
-	// Таблица с кодами ошибок:
-	// libs/clew/CL/cl.h:178
-	// P.S. Быстрый переход к файлу в CLion: Ctrl+Shift+N -> cl.h (или даже с номером строки: cl.h:178) -> Enter
-	std::string message = "OpenCL error code " + to_string(err) + " encountered at " + filename + ":" + to_string(line);
-	throw std::runtime_error(message);
-}
+	void reportError(cl_int err, const std::string &filename, int line)
+	{
+		if(CL_SUCCESS == err)
+			return;
 
-#define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
+		// Таблица с кодами ошибок:
+		// libs/clew/CL/cl.h:178
+		// P.S. Быстрый переход к файлу в CLion: Ctrl+Shift+N -> cl.h (или даже с номером строки: cl.h:178) -> Enter
+		std::string message = "OpenCL error code " + to_string(err) + " encountered at " + filename + ":" + to_string(line);
+		throw std::runtime_error(message);
+	}
+
+	#define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
+
+	const char* getDeviceNameFromType(cl_device_type type) {
+		switch (type) {
+			case CL_DEVICE_TYPE_CPU:
+				return "CPU";
+			case CL_DEVICE_TYPE_GPU:
+				return "GPU";
+			default:
+				return "Unknown";
+		}
+	}
+
+} // namespace
 
 int main()
 {
@@ -90,14 +105,45 @@ int main()
 		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount));
 		std::cout << "    Number of devices: " << devicesCount << std::endl;
 
+		std::vector<cl_device_id> devices(devicesCount, 0);
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr));
+
 		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
 		{
-			// TODO 2.2
+			// DONE 2.2
 			// Запросите и напечатайте в консоль:
 			// - Название устройства
 			// - Тип устройства (видеокарта/процессор/что-то странное)
 			// - Размер памяти устройства в мегабайтах
 			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+
+			std::cout << "    Device #" << (deviceIndex + 1) << "/" << devicesCount << std::endl;
+
+			cl_device_id device = devices[deviceIndex];
+
+			size_t deviceNameSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, 0, nullptr, &deviceNameSize));
+			std::vector<unsigned char> deviceName(deviceNameSize, 0);
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, deviceNameSize, deviceName.data(), nullptr));
+			std::cout << "        Device name: " << deviceName.data() << std::endl;
+
+			cl_device_type deviceType = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(deviceType), &deviceType, nullptr));
+			std::cout << "        Device type: " << getDeviceNameFromType(deviceType) << std::endl;
+
+			cl_ulong deviceMemorySize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(deviceMemorySize), &deviceMemorySize, nullptr));
+			std::cout << "        Device memory size: " << deviceMemorySize / (1024.0 * 1024.0) << " MB" << std::endl;
+
+			size_t makWorkGroupSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(makWorkGroupSize), &makWorkGroupSize, nullptr));
+			std::cout << "        Device max work group size: " << makWorkGroupSize << std::endl;
+
+			size_t deviceProfileSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_PROFILE, 0, nullptr, &deviceProfileSize));
+			std::vector<unsigned char> deviceProfile(deviceProfileSize, 0);
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_PROFILE, deviceProfileSize, deviceProfile.data(), nullptr));
+			std::cout << "        Device profile: " << deviceProfile.data() << std::endl;
 		}
 	}
 
