@@ -5,6 +5,7 @@
 #ifdef VULKAN_SUPPORT
 #include <libgpu/vulkan/enum.h>
 #include <libgpu/vulkan/vulkan_api_headers.h>
+#endif
 #include <libbase/string_utils.h>
 #include <libbase/runtime_assert.h>
 #include <libbase/timer.h>
