@@ -33,6 +33,13 @@ else ()
     message(WARNING "OpenMP not found!")
 endif ()
 
+# На windows создается проблема cuda.lib(cuda_driverloader_generated_cuda_driverloader_cuda.obj) : error LNK2005:
+# cuCtxDestroy_v2 уже определен в libgpu.lib(cuda_api.cpp.obj). К сожалению, я точно не выяснил причину данной
+# проблемы, поэтому используется такой WA.
+if (WIN32)
+    set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} /FORCE:MULTIPLE")
+endif()
+
 add_subdirectory(libs)
 
 set(HEADERS
