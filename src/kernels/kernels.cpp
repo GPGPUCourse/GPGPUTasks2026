@@ -4,9 +4,11 @@
 #include "cl/generated_kernels/aplusb_matrix_bad.h"
 #include "cl/generated_kernels/aplusb_matrix_good.h"
 
+#ifdef VULKAN_SUPPORT
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/aplusb_matrix_bad_comp.h"
 #include "vk/generated_kernels/aplusb_matrix_good_comp.h"
+#endif
 
 #ifndef CUDA_SUPPORT
 namespace cuda {
@@ -46,6 +48,7 @@ const ocl::ProgramBinaries& getAplusBMatrixGood()
 }
 } // namespace ocl
 
+#ifdef VULKAN_SUPPORT
 namespace avk2 {
 const ProgramBinaries& getAplusB()
 {
@@ -60,3 +63,4 @@ const ProgramBinaries& getAplusBMatrixGood()
     return vulkan_binaries_aplusb_matrix_good_comp;
 }
 } // namespace avk2
+#endif

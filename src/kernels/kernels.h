@@ -1,6 +1,12 @@
 #pragma once
 
+#include <libgpu/opencl/engine.h>
+#include <libgpu/shared_device_buffer.h>
+#include <libgpu/work_size.h>
+
+#ifdef VULKAN_SUPPORT
 #include <libgpu/vulkan/engine.h>
+#endif
 
 namespace cuda {
 void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n);
@@ -14,8 +20,10 @@ const ProgramBinaries& getAplusBMatrixBad();
 const ProgramBinaries& getAplusBMatrixGood();
 }
 
+#ifdef VULKAN_SUPPORT
 namespace avk2 {
 const ProgramBinaries& getAplusB();
 const ProgramBinaries& getAplusBMatrixBad();
 const ProgramBinaries& getAplusBMatrixGood();
 }
+#endif

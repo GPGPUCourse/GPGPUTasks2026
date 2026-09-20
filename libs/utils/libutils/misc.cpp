@@ -1,7 +1,9 @@
 #include "misc.h"
 
+#ifdef VULKAN_SUPPORT
 #include <libgpu/vulkan/device.h>
 #include <libgpu/vulkan/vulkan_api_headers.h>
+#endif
 
 #ifdef CUDA_SUPPORT
 #include <cuda_runtime_api.h>
@@ -51,7 +53,9 @@ void gpu::printDeviceInfo(const gpu::Device& device)
         if (info.device_type == CL_DEVICE_TYPE_CPU) {
             std::cout << " " << info.vendor_name << ".";
         }
-    } else if (device.supports_vulkan) {
+    }
+#ifdef VULKAN_SUPPORT
+    else if (device.supports_vulkan) {
         avk2::Device info(device.device_id_vulkan);
         info.init(true);
         if ((vk::PhysicalDeviceType)info.device_type == vk::PhysicalDeviceType::eDiscreteGpu) {
@@ -70,7 +74,9 @@ void gpu::printDeviceInfo(const gpu::Device& device)
         if (info.device_type == CL_DEVICE_TYPE_CPU) {
             std::cout << " " << info.vendor_name << ".";
         }
-    } else {
+    }
+#endif
+    else {
         rassert(false, 4356234512341, device.name);
     }
 

@@ -17,15 +17,6 @@ function(get_program_name program program_name ext_name)
 	endif()
 endfunction()
 
-function(join_defines VALUES OUTPUT)
-	string (REPLACE " " "_" _TMP_STR "${${VALUES}}")
-	string (REPLACE "-D" "_" _TMP_STR ${_TMP_STR})
-	string (REPLACE "=" "_" _TMP_STR ${_TMP_STR})
-	string (REGEX REPLACE "__+" "_" _TMP_STR ${_TMP_STR})
-	string (REGEX REPLACE "^_+$" "" _TMP_STR ${_TMP_STR})
-	set (${OUTPUT} "${_TMP_STR}" PARENT_SCOPE)
-endfunction()
-
 function (compile_vulkan_spir outfiles program defines)
 	get_program_name (${program} VK_NAME EXT_NAME)
 	get_filename_component (VK_DIR ${program} DIRECTORY) # Directory without file name

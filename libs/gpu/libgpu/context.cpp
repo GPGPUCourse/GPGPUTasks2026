@@ -2,7 +2,9 @@
 
 #include "context.h"
 #include <libgpu/device_memory_pool.h>
+#ifdef VULKAN_SUPPORT
 #include <libgpu/vulkan/engine.h>
+#endif
 
 #ifdef CUDA_SUPPORT
 #include <libgpu/cuda/utils.h>
@@ -63,10 +65,12 @@ Context::Data::~Data()
 	// Vulkan Kernels destruction leads to destruction of their rassert code storages
 	// and those gpu buffers on their de-allocations will require active Context,
 	// so we need to force their deallocation before active Context will be cleared 
+#ifdef VULKAN_SUPPORT
 	if (vk_engine) {
 		vk_engine->clearKernels();
 		vk_engine->clearStagingBuffers();
 	}
+#endif
 
 	if (data_current_ != this) {
 		if (data_current_ != 0) {
@@ -129,10 +133,14 @@ void Context::init(struct _cl_device_id *device_id_opencl)
 
 void Context::initVulkan(uint64_t device_id_vulkan)
 {
+#ifdef VULKAN_SUPPORT
 	std::shared_ptr<Data> data = std::make_shared<Data>();
 	data->type							= TypeVulkan;
 	data->vk_device_id					= device_id_vulkan;
 	data_ref_	= data;
+#else
+	throw std::runtime_error("Vulkan support is disabled; configure with -DGPU_VULKAN_SUPPORT=ON");
+#endif
 }
 
 void Context::setVKValidationLayers(bool enabled)
@@ -259,11 +267,13 @@ void Context::activate()
 			data_ref_->ocl_engine = engine;
 		}
 
+#ifdef VULKAN_SUPPORT
 		if (data_ref_->type == TypeVulkan) {
 			avk2::sh_ptr_vk_engine engine = std::make_shared<avk2::VulkanEngine>();
 			engine->init(data_ref_->vk_device_id, data_ref_->vk_enable_validation_layers);
 			data_ref_->vk_engine = engine;
 		}
+#endif
 
 		data_ref_->activated = true;
 	}
