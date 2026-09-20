@@ -2,9 +2,7 @@
 #include <libclew/ocl_init.h>
 
 #include <cstddef>
-#include <cstdint>
 #include <iostream>
-#include <random>
 #include <sstream>
 #include <stdexcept>
 #include <string>
