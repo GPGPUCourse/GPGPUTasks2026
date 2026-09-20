@@ -8,6 +8,19 @@ set(HEADERS
         libgpu/opencl/enum.h
         libgpu/opencl/exceptions.h
         libgpu/opencl/utils.h
+        libgpu/context.h
+        libgpu/device.h
+        libgpu/device_memory_pool.h
+        libgpu/gold_helpers.h
+        libgpu/shared_device_buffer.h
+        libgpu/shared_device_image.h
+        libgpu/shared_host_buffer.h
+        libgpu/utils.h
+        libgpu/work_size.h
+        )
+
+if (GPU_VULKAN_SUPPORT)
+    list(APPEND HEADERS
         libgpu/vulkan/spirv_reflect/include/spirv/unified1/spirv.h # https://github.com/KhronosGroup/SPIRV-Reflect/blob/vulkan-sdk-1.3.280.0/include/spirv/unified1/spirv.h
         libgpu/vulkan/spirv_reflect/shader_module_info.h
         libgpu/vulkan/spirv_reflect/spirv_reflect.h # https://github.com/KhronosGroup/SPIRV-Reflect/blob/vulkan-sdk-1.3.280.0/spirv_reflect.h
@@ -20,22 +33,26 @@ set(HEADERS
         libgpu/vulkan/enum.h
         libgpu/vulkan/utils.h
         libgpu/vulkan/vulkan_api_headers.h
-        libgpu/context.h
-        libgpu/device.h
-        libgpu/device_memory_pool.h
-        libgpu/gold_helpers.h
-        libgpu/shared_device_buffer.h
-        libgpu/shared_device_image.h
-        libgpu/shared_host_buffer.h
-        libgpu/utils.h
-        libgpu/work_size.h
-        )
+    )
+endif ()
 
 set(SOURCES
         libgpu/opencl/device_info.cpp
         libgpu/opencl/engine.cpp
         libgpu/opencl/enum.cpp
         libgpu/opencl/utils.cpp
+        libgpu/context.cpp
+        libgpu/device.cpp
+        libgpu/device_memory_pool.cpp
+        libgpu/gold_helpers.cpp
+        libgpu/shared_device_buffer.cpp
+        libgpu/shared_device_image.cpp
+        libgpu/shared_host_buffer.cpp
+        libgpu/utils.cpp
+        )
+
+if (GPU_VULKAN_SUPPORT)
+    list(APPEND SOURCES
         libgpu/vulkan/spirv_reflect/shader_module_info.cpp
         libgpu/vulkan/spirv_reflect/spirv_reflect.cpp # https://github.com/KhronosGroup/SPIRV-Reflect/blob/vulkan-sdk-1.3.280.0/spirv_reflect.c
         libgpu/vulkan/vk/common_host.cpp
@@ -46,15 +63,8 @@ set(SOURCES
         libgpu/vulkan/enum.cpp
         libgpu/vulkan/utils.cpp
         libgpu/vulkan/vulkan_api_headers.cpp
-        libgpu/context.cpp
-        libgpu/device.cpp
-        libgpu/device_memory_pool.cpp
-        libgpu/gold_helpers.cpp
-        libgpu/shared_device_buffer.cpp
-        libgpu/shared_device_image.cpp
-        libgpu/shared_host_buffer.cpp
-        libgpu/utils.cpp
-        )
+    )
+endif ()
 
 set(CUDA_HEADERS
         libgpu/cuda/sdk/helper_math.h
@@ -73,6 +83,11 @@ set(CUDA_SOURCES
 set (SOURCES_TEST
         libgpu/opencl/tests/kernels/kernels.cpp
         libgpu/opencl/tests/aplusb_test.cpp
+        libgpu/device_test.cpp
+        )
+
+if (GPU_VULKAN_SUPPORT)
+    list(APPEND SOURCES_TEST
         libgpu/vulkan/tests/kernels/kernels.cpp
         libgpu/vulkan/tests/aplusb_test.cpp
         libgpu/vulkan/tests/atomic_add_test.cpp
@@ -83,8 +98,8 @@ set (SOURCES_TEST
         libgpu/vulkan/tests/main.cpp
         libgpu/vulkan/tests/rasterization_blending_test.cpp
         libgpu/vulkan/tests/rasterization_test.cpp
-        libgpu/device_test.cpp
-        )
+    )
+endif ()
 
 option(GPU_CUDA_SUPPORT "CUDA support." OFF)
 
@@ -107,6 +122,16 @@ function(convertIntoHeader sourceFile headerFile arrayName)
 
             DEPENDS ${PROJECT_SOURCE_DIR}/${sourceFile} hexdumparray
     )
+endfunction()
+
+# Shared by OpenCL and Vulkan kernel compilation.
+function(join_defines VALUES OUTPUT)
+	string (REPLACE " " "_" _TMP_STR "${${VALUES}}")
+	string (REPLACE "-D" "_" _TMP_STR ${_TMP_STR})
+	string (REPLACE "=" "_" _TMP_STR ${_TMP_STR})
+	string (REGEX REPLACE "__+" "_" _TMP_STR ${_TMP_STR})
+	string (REGEX REPLACE "^_+$" "" _TMP_STR ${_TMP_STR})
+	set (${OUTPUT} "${_TMP_STR}" PARENT_SCOPE)
 endfunction()
 
 function (compile_opencl_nospir newoutfiles program includefiles defines ocl_major ocl_minor)
@@ -175,36 +200,38 @@ set (OPENCL_SOURCES)
 compile_opencl(HEADERS libgpu/opencl/cl/dummy_kernel.cl OPENCL_SOURCES DEFINES)
 compile_opencl(HEADERS libgpu/opencl/tests/kernels/aplusb.cl OPENCL_SOURCES DEFINES)
 
-set(IMAGE_NCHANNELS 1 2 3 4) # from 1 to VK_MAX_NCHANNELS, so if IMAGE_NCHANNELS changes - VK_MAX_NCHANNELS in defines.h should be updated
-set(IMAGE_TYPES 8u 16u 32f)
-set(TEMPLATE_DEFINES_NC_TYPES)
-set(TEMPLATE_SUFFIXES_NC_TYPES)
-set(TEMPLATE_DEFINES_TYPES)
-set(TEMPLATE_SUFFIXES_TYPES)
-foreach(type ${IMAGE_TYPES})
-    string(TOUPPER ${type} type_upper)
-    foreach(nchannels ${IMAGE_NCHANNELS})
-        list(APPEND TEMPLATE_DEFINES_NC_TYPES "-DNCHANNELS=${nchannels} -DT_${type_upper}")
-        list(APPEND TEMPLATE_SUFFIXES_NC_TYPES "${nchannels}x${type_upper}")
-    endforeach(nchannels)
-    list(APPEND TEMPLATE_DEFINES_TYPES "-DT_${type_upper}")
-    list(APPEND TEMPLATE_SUFFIXES_TYPES "${type_upper}")
-endforeach(type)
+if (GPU_VULKAN_SUPPORT)
+    set(IMAGE_NCHANNELS 1 2 3 4) # from 1 to VK_MAX_NCHANNELS, so if IMAGE_NCHANNELS changes - VK_MAX_NCHANNELS in defines.h should be updated
+    set(IMAGE_TYPES 8u 16u 32f)
+    set(TEMPLATE_DEFINES_NC_TYPES)
+    set(TEMPLATE_SUFFIXES_NC_TYPES)
+    set(TEMPLATE_DEFINES_TYPES)
+    set(TEMPLATE_SUFFIXES_TYPES)
+    foreach(type ${IMAGE_TYPES})
+        string(TOUPPER ${type} type_upper)
+        foreach(nchannels ${IMAGE_NCHANNELS})
+            list(APPEND TEMPLATE_DEFINES_NC_TYPES "-DNCHANNELS=${nchannels} -DT_${type_upper}")
+            list(APPEND TEMPLATE_SUFFIXES_NC_TYPES "${nchannels}x${type_upper}")
+        endforeach(nchannels)
+        list(APPEND TEMPLATE_DEFINES_TYPES "-DT_${type_upper}")
+        list(APPEND TEMPLATE_SUFFIXES_TYPES "${type_upper}")
+    endforeach(type)
 
-add_subdirectory(libgpu/vulkan) # it declares functions for Vulkan-related SPIR-V compilation
+    add_subdirectory(libgpu/vulkan) # it declares functions for Vulkan-related SPIR-V compilation
 
-set(VULKAN_DEFINES)
-compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/aplusb.comp VULKAN_DEFINES)
-compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/atomic_add.comp VULKAN_DEFINES)
-compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/batched_binary_search.comp VULKAN_DEFINES)
-compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/rasterize.vert VULKAN_DEFINES)
-compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/rasterize.frag VULKAN_DEFINES)
-compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/rasterize_blending.frag VULKAN_DEFINES)
-compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/write_value_at_index.comp VULKAN_DEFINES)
-compile_vulkan_templated(HEADERS libgpu/vulkan/tests/kernels/image_interpolation.comp VULKAN_DEFINES TEMPLATE_DEFINES_NC_TYPES TEMPLATE_SUFFIXES_NC_TYPES)
-compile_vulkan_templated(HEADERS libgpu/vulkan/tests/kernels/image_conversion_from_float_to_T.comp VULKAN_DEFINES TEMPLATE_DEFINES_TYPES TEMPLATE_SUFFIXES_TYPES)
+    set(VULKAN_DEFINES)
+    compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/aplusb.comp VULKAN_DEFINES)
+    compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/atomic_add.comp VULKAN_DEFINES)
+    compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/batched_binary_search.comp VULKAN_DEFINES)
+    compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/rasterize.vert VULKAN_DEFINES)
+    compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/rasterize.frag VULKAN_DEFINES)
+    compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/rasterize_blending.frag VULKAN_DEFINES)
+    compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/write_value_at_index.comp VULKAN_DEFINES)
+    compile_vulkan_templated(HEADERS libgpu/vulkan/tests/kernels/image_interpolation.comp VULKAN_DEFINES TEMPLATE_DEFINES_NC_TYPES TEMPLATE_SUFFIXES_NC_TYPES)
+    compile_vulkan_templated(HEADERS libgpu/vulkan/tests/kernels/image_conversion_from_float_to_T.comp VULKAN_DEFINES TEMPLATE_DEFINES_TYPES TEMPLATE_SUFFIXES_TYPES)
 
-find_package(Vulkan REQUIRED)
+    find_package(Vulkan REQUIRED)
+endif ()
 
 if (GPU_CUDA_SUPPORT)
     enable_language(CUDA)
@@ -221,7 +248,11 @@ else ()
     add_library(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 endif ()
 
-target_include_directories(${PROJECT_NAME} PUBLIC ${PROJECT_SOURCE_DIR} ${Vulkan_INCLUDE_DIRS})
+target_include_directories(${PROJECT_NAME} PUBLIC ${PROJECT_SOURCE_DIR})
+if (GPU_VULKAN_SUPPORT)
+    target_compile_definitions(${PROJECT_NAME} PUBLIC VULKAN_SUPPORT)
+    target_include_directories(${PROJECT_NAME} PUBLIC ${Vulkan_INCLUDE_DIRS})
+endif ()
 target_link_libraries(${PROJECT_NAME} ${LIBRARIES})
 
 add_executable (${PROJECT_NAME}_test ${HEADERS_TEST} ${SOURCES_TEST})

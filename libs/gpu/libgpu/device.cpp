@@ -2,8 +2,10 @@
 #include "context.h"
 
 #include <libgpu/opencl/enum.h>
+#ifdef VULKAN_SUPPORT
 #include <libgpu/vulkan/enum.h>
 #include <libgpu/vulkan/vulkan_api_headers.h>
+#endif
 #include <libbase/string_utils.h>
 #include <libbase/runtime_assert.h>
 #include <libbase/timer.h>
@@ -109,6 +111,7 @@ std::vector<Device> enumDevices(bool cuda_silent, bool opencl_silent, bool vk_si
 		tm_opencl.stop();
 	}
 
+#ifdef VULKAN_SUPPORT
 	{
 		tm_vulkan.start();
 
@@ -140,6 +143,7 @@ std::vector<Device> enumDevices(bool cuda_silent, bool opencl_silent, bool vk_si
 
 		tm_vulkan.stop();
 	}
+#endif
 
 	mergeApisOnDevices(devices);
 
@@ -156,7 +160,9 @@ std::vector<Device> enumDevices(bool cuda_silent, bool opencl_silent, bool vk_si
 	details.push_back("CUDA: " + to_string(tm_cuda.elapsed()) + " sec");
 #endif
 	details.push_back("OpenCL: " + to_string(tm_opencl.elapsed()) + " sec");
+#ifdef VULKAN_SUPPORT
 	details.push_back("Vulkan: " + to_string(tm_vulkan.elapsed()) + " sec");
+#endif
 
 	std::cout << "Found " << devices.size() << " GPUs in " << tm_total.elapsed() << " sec";
 	if (details.size())
@@ -275,12 +281,14 @@ bool Device::printInfo() const
 		return OpenCLEnum::printInfo(device_id_opencl);
 	}
 
+#ifdef VULKAN_SUPPORT
 	if (supports_vulkan) {
 		avk2::Device vk_device(device_id_vulkan);
 		rassert(vk_device.init(true), 606279660904311);
 		vk_device.printInfo();
 		return true;
 	}
+#endif
 
 	return false;
 }
@@ -299,6 +307,7 @@ bool Device::supportsFreeMemoryQuery() const
 			return true;
 		}
 	}
+#ifdef VULKAN_SUPPORT
 	if (supports_vulkan) {
 		avk2::Device vk_device(device_id_vulkan);
 		vk_device.init();
@@ -306,6 +315,7 @@ bool Device::supportsFreeMemoryQuery() const
 			return true;
 		}
 	}
+#endif
 
 	return false;
 }
@@ -333,6 +343,7 @@ uint64_t Device::getFreeMemory() const
 			return device_info.freeMemory();
 		}
 	}
+#ifdef VULKAN_SUPPORT
 	if (supports_vulkan) {
 		avk2::Device vk_device(device_id_vulkan);
 		vk_device.init();
@@ -340,6 +351,7 @@ uint64_t Device::getFreeMemory() const
 			return vk_device.freeMemory();
 		}
 	}
+#endif
 	uint64_t free_mem_size = mem_size - mem_size / 5;
 	return free_mem_size;
 }

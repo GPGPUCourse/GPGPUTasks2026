@@ -6,15 +6,18 @@ set(CMAKE_CXX_STANDARD 17)
 
 # Если вы установили CUDA SDK - можете включить поддержку CUDA
 option(GPU_CUDA_SUPPORT "CUDA support." OFF)
+option(GPU_VULKAN_SUPPORT "Vulkan support." ON)
 
-# GLSLC_BIN используйтся для компиляции Vulkan шейдеров (GLSL)
-if (NOT DEFINED GLSLC_BIN)
-    # В случае Linux глобальный glslc будет использован (вы его установили среди прочего в scripts/linux/install_vulkan_sdk.sh)
-    set(GLSLC_BIN glslc)
-    message(STATUS "Vulkan glslc compiler from system PATH will be used")
-else ()
-    # В случае Windows вам нужно указать его через CMake options: -DSPIR_CLANG_BIN="C:\Program Files\LLVM\bin\clang.exe" (установлен по инструкции scripts/windows/install_dependencies.txt)
-    message(STATUS "Vulkan glslc compiler is specified")
+if (GPU_VULKAN_SUPPORT)
+    # GLSLC_BIN используйтся для компиляции Vulkan шейдеров (GLSL)
+    if (NOT DEFINED GLSLC_BIN)
+        # В случае Linux глобальный glslc будет использован (вы его установили среди прочего в scripts/linux/install_vulkan_sdk.sh)
+        set(GLSLC_BIN glslc)
+        message(STATUS "Vulkan glslc compiler from system PATH will be used")
+    else ()
+        # В случае Windows вам нужно указать его через CMake options: -DSPIR_CLANG_BIN="C:\Program Files\LLVM\bin\clang.exe" (установлен по инструкции scripts/windows/install_dependencies.txt)
+        message(STATUS "Vulkan glslc compiler is specified")
+    endif ()
 endif ()
 
 # GTest позволяет писать удобные unit-test-ы
@@ -69,10 +72,12 @@ compile_opencl(HEADERS src/kernels/cl/aplusb_matrix_good.cl OPENCL_SOURCES OPENC
 # Затем получившийся скомпилированный SPIR байткод преобразует в массив байтов в файле src/kernels/vk/generated_kernels/aplusb_comp_spirv_vulkan.h
 # (чтобы не нужно было в runtime читать шейдер/байткод с диска, чтобы был монолитный исполняемый файл)
 # Обратите внимание что это происходит на этапе компиляции, кроме того эта команда делает так чтобы файл src/kernels/vk/aplusb_comp.h был перечислен среди HEADERS для компиляции при вызове add_executable
-set(VULKAN_DEFINES)
-compile_vulkan(HEADERS src/kernels/vk/aplusb.comp VULKAN_DEFINES)
-compile_vulkan(HEADERS src/kernels/vk/aplusb_matrix_bad.comp VULKAN_DEFINES)
-compile_vulkan(HEADERS src/kernels/vk/aplusb_matrix_good.comp VULKAN_DEFINES)
+if (GPU_VULKAN_SUPPORT)
+    set(VULKAN_DEFINES)
+    compile_vulkan(HEADERS src/kernels/vk/aplusb.comp VULKAN_DEFINES)
+    compile_vulkan(HEADERS src/kernels/vk/aplusb_matrix_bad.comp VULKAN_DEFINES)
+    compile_vulkan(HEADERS src/kernels/vk/aplusb_matrix_good.comp VULKAN_DEFINES)
+endif ()
 
 if (GPU_CUDA_SUPPORT)
     enable_language(CUDA)

@@ -14,8 +14,10 @@
 #include <cuda_runtime.h>
 #endif
 
+#ifdef VULKAN_SUPPORT
 #include "vulkan/engine.h"
 #include "vulkan/vulkan_api_headers.h"
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -137,9 +139,11 @@ void shared_device_image::decref()
 		case Context::TypeOpenCL:
 			OCL_SAFE_CALL(clReleaseMemObject((cl_mem) data_));
 			break;
+#ifdef VULKAN_SUPPORT
 		case Context::TypeVulkan:
 			delete vkImageData();
 			break;
+#endif
 		default:
 			gpu::raiseException(_SHORT_FILE_, __LINE__, "No GPU context");
 		}
@@ -233,9 +237,13 @@ void shared_device_image::write(const AnyImage &image)
 #endif
 	if (type_ == Context::TypeOpenCL) {
 		throw std::runtime_error("Unimplemented at line " + to_string(__LINE__));
-	} else if (type_ == Context::TypeVulkan) {
+	}
+#ifdef VULKAN_SUPPORT
+	else if (type_ == Context::TypeVulkan) {
 		context.vk()->writeImage(*vkImageData(), image);
-	} else {
+	}
+#endif
+	else {
 		rassert(false, 851867772);
 	}
 }
@@ -262,9 +270,13 @@ AnyImage shared_device_image::read() const
 #endif
 	if (type_ == Context::TypeOpenCL) {
 		context.cl()->readImage(clmem(), width(), height(), row_pitch, img.ptr());
-	} else if (type_ == Context::TypeVulkan) {
+	}
+#ifdef VULKAN_SUPPORT
+	else if (type_ == Context::TypeVulkan) {
 		context.vk()->readImage(*vkImageData(), img);
-	} else {
+	}
+#endif
+	else {
 		rassert(false, 851867772);
 	}
 
@@ -420,12 +432,14 @@ void shared_device_image::resize(size_t width, size_t height, size_t cn, DataTyp
 		data_ = image;
 		break;
 	}
+#ifdef VULKAN_SUPPORT
 	case Context::TypeVulkan:
 	{
 		data_ = allocateVkImage(width, height, cn, data_type);
 		vkImageData()->transitionLayout(vk::ImageLayout::eUndefined, vk::ImageLayout::eGeneral);
 		break;
 	}
+#endif
 	default:
 		gpu::raiseException(_SHORT_FILE_, __LINE__, "No GPU context");
 	}
@@ -444,18 +458,26 @@ void shared_device_image::resize(size_t width, size_t height, size_t cn, DataTyp
 
 avk2::raii::ImageData* shared_device_image::allocateVkImage(unsigned int width, unsigned int height, size_t cn, DataType data_type)
 {
+#ifdef VULKAN_SUPPORT
 	Context context;
 	rassert(context.type() == Context::TypeVulkan, 291944745);
 	return context.vk()->createImage2DArray(width, height, cn, data_type);
+#else
+	throw std::runtime_error("Vulkan support is disabled");
+#endif
 }
 
 avk2::raii::ImageData* shared_device_depth_image::allocateVkImage(unsigned int width, unsigned int height, size_t cn, DataType data_type)
 {
+#ifdef VULKAN_SUPPORT
 	Context context;
 	rassert(context.type() == Context::TypeVulkan, 291944745);
 	rassert(cn == 1, 892261498); // TODO check that we use Image2D instead of Image2DArray (with single layer)
 	rassert(data_type == DataType32f, 926666669);
 	return context.vk()->createDepthImage(width, height); // it differs mostly with different vk::Format - eD32Sfloat instead of eR32Sfloat - this makes possible to use image as depth framebuffer attachment
+#else
+	throw std::runtime_error("Vulkan support is disabled");
+#endif
 }
 
 size_t shared_device_image::size() const

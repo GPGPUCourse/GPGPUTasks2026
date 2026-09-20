@@ -2,13 +2,9 @@
 #include <libutils/misc.h>
 
 #include <libbase/timer.h>
-#include <libgpu/vulkan/engine.h>
-#include <libgpu/vulkan/tests/test_utils.h>
 
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
-
-#include <fstream>
 
 void run(int argc, char** argv)
 {
@@ -32,7 +28,9 @@ void run(int argc, char** argv)
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
     ocl::KernelSource ocl_aplusb(ocl::getAplusB());
+#ifdef VULKAN_SUPPORT
     avk2::KernelSource vk_aplusb(avk2::getAplusB());
+#endif
 
     unsigned int n = 100 * 1000 * 1000;
     std::vector<unsigned int> as(n, 0);
@@ -63,9 +61,13 @@ void run(int argc, char** argv)
             ocl_aplusb.exec(workSize, a_gpu, b_gpu, c_gpu, n);
         } else if (context.type() == gpu::Context::TypeCUDA) {
             cuda::aplusb(workSize, a_gpu, b_gpu, c_gpu, n);
-        } else if (context.type() == gpu::Context::TypeVulkan) {
+        }
+#ifdef VULKAN_SUPPORT
+        else if (context.type() == gpu::Context::TypeVulkan) {
             vk_aplusb.exec(n, workSize, a_gpu, b_gpu, c_gpu);
-        } else {
+        }
+#endif
+        else {
             rassert(false, 4531412341, context.type());
         }
 

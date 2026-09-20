@@ -13,10 +13,12 @@
 #include <cuda_runtime.h>
 #endif
 
+#ifdef VULKAN_SUPPORT
 #include "vulkan/utils.h"
 #include "vulkan/engine.h"
 #include "vulkan/data_buffer.h"
 #include "vulkan/vulkan_api_headers.h"
+#endif
 
 #ifdef _WIN32
 #define NOMINMAX
@@ -134,12 +136,14 @@ void shared_device_buffer::decref()
 		case Context::TypeOpenCL:
 			OCL_SAFE_CALL(clReleaseMemObject((cl_mem) data_));
 			break;
+#ifdef VULKAN_SUPPORT
 		case Context::TypeVulkan:
 		{
 			avk2::raii::BufferData* vk_data = (avk2::raii::BufferData *) data_;
 			delete vk_data;
 			break;
 		}
+#endif
 		default:
 			gpu::raiseException(_SHORT_FILE_, __LINE__, "No GPU context");
 		}
@@ -240,9 +244,12 @@ void shared_device_buffer::resize(size_t size)
 			// so it is not easy to move cl_mem w.r.t. prefix guard
 			// TODO add full support (prefix guard + suffix guard instead of just suffix guard) with clCreateSubBuffer(...) - https://registry.khronos.org/OpenCL/sdk/1.2/docs/man/xhtml/clCreateSubBuffer.html
 			nbytes_guard_prefix_ = 0;
-		} else if (type == Context::TypeVulkan) {
+		}
+#ifdef VULKAN_SUPPORT
+		else if (type == Context::TypeVulkan) {
 			rassert(nbytes_guard_prefix_ % context.vk()->device().min_storage_buffer_offset_alignment == 0, 339520659);
 		}
+#endif
 	}
 
 	size_t size_with_magic_bytes_guards = nbytes_guard_prefix_ + size + nbytes_guard_suffix_;
@@ -256,9 +263,11 @@ void shared_device_buffer::resize(size_t size)
 	case Context::TypeOpenCL:
 		data_ = context.cl()->createBuffer(CL_MEM_READ_WRITE, size_with_magic_bytes_guards);
 		break;
+#ifdef VULKAN_SUPPORT
 	case Context::TypeVulkan:
 		data_ = context.vk()->createBuffer(size_with_magic_bytes_guards);
 		break;
+#endif
 	default:
 		gpu::raiseException(_SHORT_FILE_, __LINE__, "No GPU context");
 	}
@@ -298,11 +307,13 @@ void shared_device_buffer::write(const void *data, size_t size)
 	case Context::TypeOpenCL:
 		context.cl()->writeBuffer((cl_mem) data_, CL_TRUE, offset_, size, data);
 		break;
+#ifdef VULKAN_SUPPORT
 	case Context::TypeVulkan:
 	{
 		context.vk()->writeBuffer(*((avk2::raii::BufferData*) data_), offset_, size, data);
 		break;
 	}
+#endif
 	default:
 		gpu::raiseException(_SHORT_FILE_, __LINE__, "No GPU context");
 	}
@@ -410,9 +421,11 @@ void shared_device_buffer::read(void *data, size_t size, ptrdiff_t offset) const
 		case Context::TypeOpenCL:
 			context.cl()->readBuffer((cl_mem) data_, CL_TRUE, offset_ + offset, size, data);
 			break;
+#ifdef VULKAN_SUPPORT
 		case Context::TypeVulkan:
 			context.vk()->readBuffer(*((avk2::raii::BufferData*) data_), offset_ + offset, size, data);
 			break;
+#endif
 		default:
 			gpu::raiseException(_SHORT_FILE_, __LINE__, "No GPU context");
 		}
