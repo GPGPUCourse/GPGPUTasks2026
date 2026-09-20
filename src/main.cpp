@@ -28,6 +28,25 @@ void reportError(cl_int err, const std::string &filename, int line)
 
 #define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
 
+static void deviceType_helper(cl_device_type deviceType)
+{
+	std::cout << "\t\t\tDevice type: ";
+
+	if (deviceType & CL_DEVICE_TYPE_GPU)
+		std::cout << "GPU";
+	else if (deviceType & CL_DEVICE_TYPE_CPU)
+		std::cout << "CPU";
+	else if (deviceType & CL_DEVICE_TYPE_ACCELERATOR)
+		std::cout << "Accelerator";
+	else if (deviceType & CL_DEVICE_TYPE_DEFAULT)
+		std::cout << "Default";
+	else
+		std::cout << "Unknown";
+
+	std::cout << std::endl;
+}
+
+
 int main()
 {
 	// Пытаемся слинковаться с символами OpenCL API в runtime (через библиотеку libs/clew)
@@ -70,16 +89,22 @@ int main()
 		// TODO 1.2
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
 		std::vector<unsigned char> platformName(platformNameSize, 0);
-		// clGetPlatformInfo(...);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), nullptr));
 		std::cout << "    Platform name: " << platformName.data() << std::endl;
 
 		// TODO 1.3
 		// Запросите и напечатайте так же в консоль вендора данной платформы
-
+		size_t vendorNameSize = 0;
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &vendorNameSize));
+		std::vector<unsigned char> vendorName(vendorNameSize, 0);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, vendorNameSize, vendorName.data(), nullptr));
+		std::cout << "	Platform Vendor: " << vendorName.data() << std::endl;
 		// TODO 2.1
 		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
 		cl_uint devicesCount = 0;
-
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount));
+		std::vector<cl_device_id> devices(devicesCount);
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr));
 		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
 		{
 			// TODO 2.2
@@ -88,6 +113,37 @@ int main()
 			// - Тип устройства (видеокарта/процессор/что-то странное)
 			// - Размер памяти устройства в мегабайтах
 			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+			cl_device_id device = devices[deviceIndex];
+			std::cout << "\t\tDevice #" << (deviceIndex + 1) << "/" << devicesCount << std::endl;
+
+			size_t deviceNameSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, 0, nullptr, &deviceNameSize));
+			std::vector<unsigned char> deviceName(deviceNameSize, 0);
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, deviceNameSize, deviceName.data(), nullptr));
+			std::cout << "\t\t\tDevice name: " << deviceName.data() << std::endl;
+
+			cl_device_type deviceType;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(deviceType), &deviceType, nullptr));
+			deviceType_helper(deviceType);
+
+			cl_ulong globalMemSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(globalMemSize), &globalMemSize, nullptr));
+			double globalMemMB = static_cast<double>(globalMemSize) / 1'000'000.0;
+			std::cout << "\t\t\tGlobal mem size: " << globalMemMB << " MB" << std::endl;
+
+			cl_uint computeUnits = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(computeUnits), &computeUnits, nullptr));
+			std::cout << "\t\t\tCompute units: " << computeUnits << std::endl;
+
+			cl_uint clockFreqMHz = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_CLOCK_FREQUENCY, sizeof(clockFreqMHz), &clockFreqMHz, nullptr));
+			std::cout << "\t\t\tClock frequency: " << clockFreqMHz << " MHz" << std::endl;
+
+			cl_bool imageSupport = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_IMAGE_SUPPORT, sizeof(imageSupport), &imageSupport, nullptr));
+			std::cout << "\t\t\tImage support: " << (imageSupport ? "Yes" : "No") << std::endl;
+
+
 		}
 	}
 
