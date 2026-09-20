@@ -4,6 +4,7 @@
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
+#include <string>
 #include <vector>
 
 template<typename T>
@@ -27,6 +28,19 @@ void reportError(cl_int err, const std::string &filename, int line)
 }
 
 #define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
+
+
+// Запрашивает строковое свойство устройства (двойной вызов: сначала размер, потом данные)
+std::string getDeviceString(cl_device_id device, cl_device_info paramName)
+{
+	size_t size = 0;
+	OCL_SAFE_CALL(clGetDeviceInfo(device, paramName, 0, nullptr, &size));
+
+	std::vector<char> buffer(size, 0);
+	OCL_SAFE_CALL(clGetDeviceInfo(device, paramName, buffer.size(), buffer.data(), nullptr));
+
+	return std::string(buffer.data());
+}
 
 int main()
 {
@@ -55,6 +69,8 @@ int main()
 		// Не забывайте проверять коды ошибок с помощью макроса OCL_SAFE_CALL
 		size_t platformNameSize = 0;
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, 0, nullptr, &platformNameSize));
+		// OCL_SAFE_CALL(clGetPlatformInfo(platform, 239, 0, nullptr, &platformNameSize));
+
 		// TODO 1.1
 		// Попробуйте вместо CL_PLATFORM_NAME передать какое-нибудь случайное число - например 239
 		// Т.к. это некорректный идентификатор параметра платформы - то метод вернет код ошибки
@@ -71,23 +87,59 @@ int main()
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
 		std::vector<unsigned char> platformName(platformNameSize, 0);
 		// clGetPlatformInfo(...);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformName.size(), platformName.data(), &platformNameSize));
+
 		std::cout << "    Platform name: " << platformName.data() << std::endl;
 
 		// TODO 1.3
 		// Запросите и напечатайте так же в консоль вендора данной платформы
+		size_t platformVendorSize = 0;
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &platformVendorSize));
+		std::vector<unsigned char> platformVendor(platformVendorSize, 0);
+		// clGetPlatformInfo(...);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, platformVendor.size(), platformVendor.data(), &platformVendorSize));
+
+		std::cout << "    Platform vendor: " << platformVendor.data() << std::endl;
 
 		// TODO 2.1
 		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
 		cl_uint devicesCount = 0;
-
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount));
+		
+		std::vector<cl_device_id> devices(devicesCount);
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devices.size(), devices.data(), nullptr));
+		
 		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
-		{
+		{	
 			// TODO 2.2
 			// Запросите и напечатайте в консоль:
 			// - Название устройства
 			// - Тип устройства (видеокарта/процессор/что-то странное)
 			// - Размер памяти устройства в мегабайтах
 			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+			
+			std::cout << "    Device Name: " << getDeviceString(devices[deviceIndex], CL_DEVICE_NAME) << std::endl;
+			std::cout << "    Device Version: " << getDeviceString(devices[deviceIndex], CL_DEVICE_VERSION) << std::endl;
+			std::cout << "    Device Vendor: " << getDeviceString(devices[deviceIndex], CL_DEVICE_VENDOR) << std::endl;
+
+			cl_device_type deviceType = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_TYPE, sizeof(deviceType), &deviceType, nullptr));
+			std::cout << "    Device Type: ";
+			if(deviceType & CL_DEVICE_TYPE_GPU)
+				std::cout << "GPU";
+			else if(deviceType & CL_DEVICE_TYPE_CPU)
+				std::cout << "CPU";
+			else
+				std::cout << "other";
+			std::cout << std::endl;
+
+			cl_ulong memSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(memSize), &memSize, nullptr));
+			std::cout << "    Device Global Memory size: " << (memSize / (1024 * 1024)) << " MB" << std::endl;
+
+			cl_bool available = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_AVAILABLE, sizeof(available), &available, nullptr));
+			std::cout << "    Device available: " << (available ? "true" : "false") << std::endl;
 		}
 	}
 
