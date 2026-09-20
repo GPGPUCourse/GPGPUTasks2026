@@ -117,14 +117,17 @@ int main()
 			// - Тип устройства (видеокарта/процессор/что-то странное)
 			// - Размер памяти устройства в мегабайтах
 			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+
+			std::cout << "    Device #" << (deviceIndex + 1) << "/" << devicesCount << std::endl;
+
 			
-			std::cout << "    Device Name: " << getDeviceString(devices[deviceIndex], CL_DEVICE_NAME) << std::endl;
-			std::cout << "    Device Version: " << getDeviceString(devices[deviceIndex], CL_DEVICE_VERSION) << std::endl;
-			std::cout << "    Device Vendor: " << getDeviceString(devices[deviceIndex], CL_DEVICE_VENDOR) << std::endl;
+			std::cout << "        Device Name: " << getDeviceString(devices[deviceIndex], CL_DEVICE_NAME) << std::endl;
+			std::cout << "        Device Version: " << getDeviceString(devices[deviceIndex], CL_DEVICE_VERSION) << std::endl;
+			std::cout << "        Device Vendor: " << getDeviceString(devices[deviceIndex], CL_DEVICE_VENDOR) << std::endl;
 
 			cl_device_type deviceType = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_TYPE, sizeof(deviceType), &deviceType, nullptr));
-			std::cout << "    Device Type: ";
+			std::cout << "        Device Type: ";
 			if(deviceType & CL_DEVICE_TYPE_GPU)
 				std::cout << "GPU";
 			else if(deviceType & CL_DEVICE_TYPE_CPU)
@@ -135,11 +138,11 @@ int main()
 
 			cl_ulong memSize = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(memSize), &memSize, nullptr));
-			std::cout << "    Device Global Memory size: " << (memSize / (1024 * 1024)) << " MB" << std::endl;
+			std::cout << "        Device Global Memory size: " << (memSize / (1024 * 1024)) << " MB" << std::endl;
 
 			cl_bool available = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(devices[deviceIndex], CL_DEVICE_AVAILABLE, sizeof(available), &available, nullptr));
-			std::cout << "    Device available: " << (available ? "true" : "false") << std::endl;
+			std::cout << "        Device available: " << (available ? "true" : "false") << std::endl;
 		}
 	}
 
