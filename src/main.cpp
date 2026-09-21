@@ -23,6 +23,7 @@ void reportError(cl_int err, const std::string &filename, int line)
 	// libs/clew/CL/cl.h:178
 	// P.S. Быстрый переход к файлу в CLion: Ctrl+Shift+N -> cl.h (или даже с номером строки: cl.h:103) -> Enter
 	std::string message = "OpenCL error code " + to_string(err) + " encountered at " + filename + ":" + to_string(line);
+	std::cerr << message << std::endl;
 	throw std::runtime_error(message);
 }
 
@@ -71,14 +72,25 @@ int main()
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
 		std::vector<unsigned char> platformName(platformNameSize, 0);
 		// clGetPlatformInfo(...);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), nullptr));
 		std::cout << "    Platform name: " << platformName.data() << std::endl;
 
 		// TODO 1.3
 		// Запросите и напечатайте так же в консоль вендора данной платформы
+		size_t platformVendorSize = 0;
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &platformVendorSize));
+		std::vector<unsigned char> platformVendor(platformVendorSize, 0);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, platformVendorSize, platformVendor.data(), nullptr));
+		std::cout << "    Platform vendor: " << platformVendor.data() << std::endl;
 
 		// TODO 2.1
 		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
 		cl_uint devicesCount = 0;
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount));
+		std::cout << "    Number of all platform's devices: " << devicesCount << std::endl;
+
+		std::vector<cl_device_id> devices(devicesCount);
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr));
 
 		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
 		{
@@ -88,6 +100,44 @@ int main()
 			// - Тип устройства (видеокарта/процессор/что-то странное)
 			// - Размер памяти устройства в мегабайтах
 			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+			cl_device_id device = devices[deviceIndex];
+			std::cout << "    Device #" << (deviceIndex + 1) << ":" << std::endl;
+
+			size_t deviceNameSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, 0, nullptr, &deviceNameSize));
+			std::vector<unsigned char> deviceName(deviceNameSize, 0);
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, deviceNameSize, deviceName.data(), nullptr));
+			std::cout << "        Name: " << deviceName.data() << std::endl;
+
+			cl_device_type deviceType;
+			std::string type;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(deviceType), &deviceType, nullptr));
+			if (deviceType & CL_DEVICE_TYPE_CPU)
+				 type = "CPU";
+			else if (deviceType & CL_DEVICE_TYPE_GPU)
+				type = "GPU";
+			else if (deviceType & CL_DEVICE_TYPE_ACCELERATOR)
+				type = "Accelerator";
+			else if (deviceType & CL_DEVICE_TYPE_DEFAULT)
+				type = "Default";
+			else
+				type = "Other";
+			std::cout << "        Type: " << type << std::endl;
+
+			cl_ulong memorySize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(memorySize), &memorySize, nullptr));
+			std::cout << "        Memory size: " << memorySize / (1024 * 1024) << " MB" << std::endl;
+
+			size_t deviceVersionSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_VERSION, 0, nullptr, &deviceVersionSize));
+			std::vector<unsigned char> deviceVersion(deviceVersionSize, 0);
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_VERSION, deviceVersionSize, deviceVersion.data(), nullptr));
+			std::cout << "        Version: " << deviceVersion.data() << std::endl;
+
+			size_t maxWidth3DImage = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_IMAGE3D_MAX_WIDTH, sizeof(maxWidth3DImage), &maxWidth3DImage, nullptr));
+			std::cout << "        Max width of 3D image in pixels: " <<  maxWidth3DImage<< std::endl;
+
 		}
 	}
 
