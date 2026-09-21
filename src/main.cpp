@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include <vector>
 #include <type_traits>
+#include <utility>
+#include <string_view>
 
 template<typename T>
 std::string to_string(T value)
@@ -59,49 +61,51 @@ ret:
 	return deviceInfo;
 }
 
+static constexpr std::pair<cl_device_type, std::string_view> device_types[] = {
+	{CL_DEVICE_TYPE_CPU, "cpu"},
+	{CL_DEVICE_TYPE_GPU, "gpu"},
+	{CL_DEVICE_TYPE_ACCELERATOR, "accelerator"},
+	{CL_DEVICE_TYPE_DEFAULT, "default"},
+	{CL_DEVICE_TYPE_CUSTOM, "custom"}
+};
+
+static constexpr std::pair<cl_device_info, std::string_view> single_fp_configs[] = {
+	{CL_FP_DENORM, "denorm"},
+	{CL_FP_INF_NAN, "{INF, NAN}"},
+	{CL_FP_ROUND_TO_NEAREST, "round_to_nearest"},
+	{CL_FP_ROUND_TO_ZERO, "round_to_zero"},
+	{CL_FP_ROUND_TO_INF, "round_to_inf"},
+	{CL_FP_FMA, "fma"},
+	{CL_FP_CORRECTLY_ROUNDED_DIVIDE_SQRT, "correct_rounding_divide_sqrt"},
+	{CL_FP_SOFT_FLOAT, "soft_float"},
+};
+
+
 template <typename T>
-std::string write(cl_device_info info, T data) {
+static std::string write(cl_device_info info, T data) {
 	std::string res;
 	if (info == CL_DEVICE_TYPE) {
-		if (data & CL_DEVICE_TYPE_CPU)
-			return "cpu";
-		else if (data & CL_DEVICE_TYPE_GPU)
-			return "gpu";
-		else if (data & CL_DEVICE_TYPE_ACCELERATOR)
-			return "accelerator";
-		else if (data & CL_DEVICE_TYPE_DEFAULT)
-			return "default";
-		else if (data & CL_DEVICE_TYPE_CUSTOM)
-			return "custom";
-		else
-			return "unknown";
+		for (auto &[device_type, device_type_str] : device_types) {
+			if (data & device_type)
+				return std::string(device_type_str);
+		}
+		return "unknown";
 	}
 	if (info == CL_DEVICE_SINGLE_FP_CONFIG) {
-		res = "supported: ";
-		if (data & CL_FP_DENORM) {
-			res += "denorm ";
-		} 
-		if (data & CL_FP_INF_NAN) {
-			res += "{INF, NAN} ";
+		res = "\n            supported:\n";
+		bool found = false;
+		for (auto &[device_info, device_info_str] : single_fp_configs) {
+			if (data & device_info) {
+				res += "                ";
+				res += device_info_str;
+				res += "\n";
+				found = true;
+			}
 		}
-		if (data & CL_FP_ROUND_TO_NEAREST) {
-			res += "round_to_nearest ";
-		} 
-		if (data & CL_FP_ROUND_TO_ZERO) {
-			res += "round_to_zero ";
-		} 
-		if (data & CL_FP_ROUND_TO_INF) {
-			res += "round_to_inf";
-		} 
-		if (data & CL_FP_FMA) {
-			res += "fma ";
-		} 
-		if (data & CL_FP_CORRECTLY_ROUNDED_DIVIDE_SQRT) {
-			res += "correct_rounding_divide_sqrt ";
-		} 
-		if (data & CL_FP_SOFT_FLOAT) {
-			res += "soft_float ";
-		}
+		if (found)
+			res.erase(res.size() - 1);
+		else
+			res += "                none";
 		return res;
 	}
 	return "(n/a)";
