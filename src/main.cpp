@@ -112,6 +112,15 @@ int main()
 
 			std::cout << "	Little Endian: " << (littleEndian == CL_TRUE ? "Yes" : "No") << std::endl;
 
+			cl_bool imageSupport;
+			OCL_SAFE_CALL(clGetDeviceInfo(
+				device, CL_DEVICE_IMAGE_SUPPORT, sizeof(imageSupport), &imageSupport, nullptr));
+			std::cout << "	Image support: " << (imageSupport == CL_TRUE ? "Yes" : "No") << std::endl;
+
+			cl_ulong localMemSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(
+				device, CL_DEVICE_LOCAL_MEM_SIZE, sizeof(localMemSize), &localMemSize, nullptr));
+			std::cout << "	Local mem size: " << localMemSize / 1024<< " KB" << std::endl;
 		}
 	}
 
