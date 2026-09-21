@@ -69,19 +69,19 @@ int main()
 
 		// TODO 1.2
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
-		std::vector platformName(platformNameSize, 0);
+		std::vector<char> platformName(platformNameSize, 0);
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), nullptr));
 		// clGetPlatformInfo(...);
-		std::cout << "    Platform name: " << platformName << std::endl;
+		std::cout << "    Platform name: " << platformName.data() << std::endl;
 
 		// TODO 1.3
 		// Запросите и напечатайте так же в консоль вендора данной платформы
 
 		size_t vendorNameSize = 0;
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &vendorNameSize));
-		std::vector vendorName(vendorNameSize, 0);
+		std::vector<char> vendorName(vendorNameSize, 0);
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, vendorNameSize, vendorName.data(), nullptr));
-		std::cout << "    Vendor name: " << vendorName << std::endl;
+		std::cout << "    Vendor name: " << vendorName.data() << std::endl;
 
 		cl_uint devicesCount = 0;
 		cl_int devicesError = clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount);
@@ -92,10 +92,10 @@ int main()
 		devicesError = clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr);
 		OCL_SAFE_CALL(devicesError);
 
-		const auto getDeviceInfo = [](cl_device_id device, cl_device_info param_name) -> std::string {
+		const auto getDeviceInfo = [](cl_device_id device, cl_device_info param_name) -> std::vector<unsigned char> {
 			size_t param_value_size = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, param_name, 0, nullptr, &param_value_size));
-			std::vector param_value(param_value_size, 0);
+			std::vector<unsigned char> param_value(param_value_size, 0);
 			OCL_SAFE_CALL(clGetDeviceInfo(device, param_name, param_value_size, param_value.data(), nullptr));
 			return param_value;
 		};
@@ -120,7 +120,7 @@ int main()
 
 			const auto deviceGlobalMemCacheType = *reinterpret_cast<cl_device_mem_cache_type *>(getDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHE_TYPE).data());
 
-			const auto deviceGlobalMemCachelineSize = *reinterpret_cast<cl_ulong *>(getDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE).data());
+			const auto deviceGlobalMemCachelineSize = *reinterpret_cast<cl_uint *>(getDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE).data());
 
 			const auto deviceExtensions = getDeviceInfo(device, CL_DEVICE_EXTENSIONS);
 
@@ -138,7 +138,7 @@ int main()
 
 			const auto driverVersion = getDeviceInfo(device, CL_DRIVER_VERSION);
 
-			std::cout << "        Device name: " << deviceName << std::endl;
+			std::cout << "        Device name: " << deviceName.data() << std::endl;
 			if(deviceType & CL_DEVICE_TYPE_CPU)
 				std::cout << "        Device type: CPU" << std::endl;
 			else if(deviceType & CL_DEVICE_TYPE_GPU)
@@ -150,7 +150,7 @@ int main()
 
 			std::cout << "        Device memory size: " << deviceMemorySize / 1024 / 1024 << " MB" << std::endl;
 
-			std::cout << "        Device vendor: " << deviceVendor << std::endl;
+			std::cout << "        Device vendor: " << deviceVendor.data() << std::endl;
 
 			std::cout << "        Device max clock frequency: " << deviceMaxClockFrequency << " MHz" << std::endl;
 
@@ -194,15 +194,15 @@ int main()
 			}
 			std::cout << std::endl;
 
-			std::cout << "        Device built-in kernels: " << deviceBuiltInKernels << std::endl;
+			std::cout << "        Device built-in kernels: " << deviceBuiltInKernels.data() << std::endl;
 
-			std::cout << "        Device OpenCL C version: " << deviceOpenCLCVersion << std::endl;
+			std::cout << "        Device OpenCL C version: " << deviceOpenCLCVersion.data() << std::endl;
 
-			std::cout << "        Device version: " << deviceVersion << std::endl;
+			std::cout << "        Device version: " << deviceVersion.data() << std::endl;
 
-			std::cout << "        Driver version: " << driverVersion << std::endl;
+			std::cout << "        Driver version: " << driverVersion.data() << std::endl;
 
-			std::cout << "        Device extensions: " << deviceExtensions << std::endl;
+			std::cout << "        Device extensions: " << deviceExtensions.data() << std::endl;
 
 			// TODO 2.2
 			// Запросите и напечатайте в консоль:
