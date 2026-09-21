@@ -19,5 +19,7 @@ __kernel void aplusb_matrix_bad(__global const uint* a,
     const unsigned int col = get_global_id(0);
     const unsigned int row = get_global_id(1);
 
+    if (col >= width || row >= height) return;
+
     c[row * width + col] = a[row * width + col] + b[row * width + col];
 }
