@@ -26,8 +26,8 @@ namespace {
 	// this is a debug callback for Vulkan Validation Layers
 	// when they find any problems - this callback will be triggered
 	static VKAPI_ATTR VkBool32 VKAPI_CALL
-	debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType,
-				  const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData)
+	debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity, vk::DebugUtilsMessageTypeFlagsEXT messageType,
+				  const vk::DebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData)
 	{
 		avk2::InstanceContext *instance_context = (avk2::InstanceContext*) pUserData;
 
@@ -62,16 +62,14 @@ namespace {
 	{
 		VkDebugUtilsMessengerEXT debug_messenger;
 
-		vk::DebugUtilsMessengerCreateInfoEXT create_info;
-		vk::DebugUtilsMessageSeverityFlagsEXT any_severity = /*vk::DebugUtilsMessageSeverityFlagBitsEXT::eVerbose | vk::DebugUtilsMessageSeverityFlagBitsEXT::eInfo | */vk::DebugUtilsMessageSeverityFlagBitsEXT::eWarning | vk::DebugUtilsMessageSeverityFlagBitsEXT::eError;
-		create_info.messageSeverity = any_severity;
-		vk::DebugUtilsMessageTypeFlagsEXT any_type = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance | vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding;
-		create_info.messageType = any_type;
-		create_info.pfnUserCallback = debugCallback;
-		create_info.pUserData = (void*) instance_context;
+		VkDebugUtilsMessengerCreateInfoEXT vk_create_info = {};
+		vk_create_info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+		vk_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT;
+		vk_create_info.messageType = VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_DEVICE_ADDRESS_BINDING_BIT_EXT;
+		vk_create_info.pfnUserCallback = (PFN_vkDebugUtilsMessengerCallbackEXT) debugCallback;
+		vk_create_info.pUserData = (void*) instance_context;
 
 		rassert(VKF.vkCreateDebugUtilsMessengerEXT, 378392459011272);
-		VkDebugUtilsMessengerCreateInfoEXT vk_create_info = create_info;
 		VK_CHECK_RESULT(VKF.vkCreateDebugUtilsMessengerEXT(*instance_context->instance(), &vk_create_info, nullptr, &debug_messenger), 56756784764);
 
 		return debug_messenger;
