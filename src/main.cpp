@@ -94,7 +94,7 @@ auto fetchParam(cl_device_id id) -> std::enable_if_t<std::is_same_v<cl::param_tr
 {
 	auto raw = fetchRawParam(id, info);
 	const char *cdata = reinterpret_cast<const char *>(raw.data());
-	std::string res(cdata, raw.size());
+	std::string res(cdata);
 	return res;
 }
 
