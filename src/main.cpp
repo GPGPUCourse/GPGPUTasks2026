@@ -60,12 +60,12 @@ std::string mapDeviceType(cl_device_type type)
 
 	if(type & CL_DEVICE_TYPE_CPU)
 	{
-		ss << "cpu, ";
+		ss << "CPU, ";
 	}
 
 	if(type & CL_DEVICE_TYPE_GPU)
 	{
-		ss << "gpu, ";
+		ss << "GPU, ";
 	}
 
 	if(type & CL_DEVICE_TYPE_ACCELERATOR)
