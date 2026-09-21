@@ -28,6 +28,40 @@ void reportError(cl_int err, const std::string &filename, int line)
 
 #define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
 
+template<typename T, auto Func, typename IdType, typename InfoType>
+T getInfo(const IdType id, const InfoType infoType)
+{
+	size_t InfoSize = 0;
+	OCL_SAFE_CALL(Func(id, infoType, 0, nullptr, &InfoSize));
+	if constexpr(std::is_same_v<T, std::string>)
+	{
+		T platformDeviceInfo(InfoSize, 0);
+		OCL_SAFE_CALL(Func(id, infoType, InfoSize, platformDeviceInfo.data(), nullptr));
+		if (!platformDeviceInfo.empty() && platformDeviceInfo.back() == '\0') {
+			platformDeviceInfo.pop_back();
+		}
+		return platformDeviceInfo;
+	}
+	else
+	{
+		T result{};
+		OCL_SAFE_CALL(Func(id, infoType, sizeof(T), &result, nullptr));
+		return result;
+	}
+}
+
+template<typename T>
+T getPlatformInfo(cl_platform_id id, cl_platform_info param)
+{
+	return getInfo<T, clGetPlatformInfo>(id, param);
+}
+
+template<typename T>
+T getDeviceInfo(cl_device_id id, const cl_device_info param)
+{
+	return getInfo<T, clGetDeviceInfo>(id, param);
+}
+
 int main()
 {
 	// Пытаемся слинковаться с символами OpenCL API в runtime (через библиотеку libs/clew)
@@ -51,43 +85,61 @@ int main()
 		std::cout << "Platform #" << (platformIndex + 1) << "/" << platformsCount << std::endl;
 		cl_platform_id platform = platforms[platformIndex];
 
-		// Откройте документацию по "OpenCL Runtime" -> "Query Platform Info" -> "clGetPlatformInfo"
-		// Не забывайте проверять коды ошибок с помощью макроса OCL_SAFE_CALL
-		size_t platformNameSize = 0;
-		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, 0, nullptr, &platformNameSize));
-		// TODO 1.1
-		// Попробуйте вместо CL_PLATFORM_NAME передать какое-нибудь случайное число - например 239
-		// Т.к. это некорректный идентификатор параметра платформы - то метод вернет код ошибки
-		// Макрос OCL_SAFE_CALL заметит это, и кинет ошибку с кодом
-		// Откройте таблицу с кодами ошибок:
-		// libs/clew/CL/cl.h:103
-		// P.S. Быстрый переход к файлу в CLion: Ctrl+Shift+N -> cl.h (или даже с номером строки: cl.h:103) -> Enter
-		// Найдите там нужный код ошибки и ее название
-		// Затем откройте документацию по clGetPlatformInfo и в секции Errors найдите ошибку, с которой столкнулись
-		// в документации подробно объясняется, какой ситуации соответствует данная ошибка, и это позволит, проверив код, понять, чем же вызвана данная ошибка (некорректным аргументом param_name)
-		// Обратите внимание, что в этом же libs/clew/CL/cl.h файле указаны всевоможные defines, такие как CL_DEVICE_TYPE_GPU и т.п.
+		auto platformName = getPlatformInfo<std::string>(platform, CL_PLATFORM_NAME);
+		std::cout << "    Platform name: " << platformName << std::endl;
 
-		// TODO 1.2
-		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
-		std::vector<unsigned char> platformName(platformNameSize, 0);
-		// clGetPlatformInfo(...);
-		std::cout << "    Platform name: " << platformName.data() << std::endl;
-
-		// TODO 1.3
+		auto platformVendorName = getPlatformInfo<std::string>(platform, CL_PLATFORM_VENDOR);
+		std::cout << "    Platform vendor: " << platformVendorName << std::endl;
 		// Запросите и напечатайте так же в консоль вендора данной платформы
 
-		// TODO 2.1
 		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
 		cl_uint devicesCount = 0;
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount));
+		std::cout << "Number of OpenCL devices: " << devicesCount << std::endl;
+
+		std::vector<cl_device_id> devices(devicesCount);
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr));
 
 		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
 		{
-			// TODO 2.2
 			// Запросите и напечатайте в консоль:
 			// - Название устройства
 			// - Тип устройства (видеокарта/процессор/что-то странное)
 			// - Размер памяти устройства в мегабайтах
 			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+			cl_device_id device = devices[deviceIndex];
+
+			auto deviceName = getDeviceInfo<std::string>(device, CL_DEVICE_NAME);
+			std::cout << "    Device name: " << deviceName << std::endl;
+
+			auto deviceType = getDeviceInfo<cl_device_type>(device, CL_DEVICE_TYPE);
+			if(deviceType & CL_DEVICE_TYPE_GPU)
+			{
+				std::cout << "    Device type: GPU" << std::endl;
+			}
+			else if(deviceType & CL_DEVICE_TYPE_CPU)
+			{
+				std::cout << "    Device type: CPU" << std::endl;
+			}
+			else
+			{
+				std::cout << "    Device type: something strange" << std::endl;
+			}
+
+			auto deviceMemorySize = getDeviceInfo<cl_ulong>(device, CL_DEVICE_GLOBAL_MEM_SIZE);
+			std::cout << "    Device global memory size: " << static_cast<double>(deviceMemorySize) / (1024.0 * 1024.0) << " Mb" << std::endl;
+
+			auto deviceProfile = getDeviceInfo<std::string>(device, CL_DEVICE_PROFILE);
+			std::cout << "    Device profile: " << deviceProfile << std::endl;
+
+			if(getDeviceInfo<cl_bool>(device, CL_DEVICE_ENDIAN_LITTLE))
+			{
+				std::cout << "    Little Endian" << std::endl;
+			}
+			else
+			{
+				std::cout << "    Big Endian" << std::endl;
+			}
 		}
 	}
 
