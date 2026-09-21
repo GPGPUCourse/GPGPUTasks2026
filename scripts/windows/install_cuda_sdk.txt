@@ -1,2 +1,7 @@
 Download CUDA SDK - https://developer.nvidia.com/cuda-downloads?target_os=Windows&target_arch=x86_64&target_version=11&target_type=exe_local
 or via direct link - https://developer.download.nvidia.com/compute/cuda/13.0.0/local_installers/cuda_13.0.0_windows.exe
+
+In CLion, use Visual Studio toolchain and specify CMake options:
+-DGPU_CUDA_SUPPORT=ON
+-DCUDAToolkit_ROOT="C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.4"
+-DCMAKE_CUDA_COMPILER="C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v13.4\\bin\\nvcc.exe"
