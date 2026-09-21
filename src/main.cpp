@@ -69,7 +69,7 @@ int main()
 
 		// TODO 1.2
 		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
-		std::string platformName(platformNameSize, 0);
+		std::vector platformName(platformNameSize, 0);
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), nullptr));
 		// clGetPlatformInfo(...);
 		std::cout << "    Platform name: " << platformName << std::endl;
@@ -79,7 +79,7 @@ int main()
 
 		size_t vendorNameSize = 0;
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &vendorNameSize));
-		std::string vendorName(vendorNameSize, 0);
+		std::vector vendorName(vendorNameSize, 0);
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, vendorNameSize, vendorName.data(), nullptr));
 		std::cout << "    Vendor name: " << vendorName << std::endl;
 
@@ -95,7 +95,7 @@ int main()
 		const auto getDeviceInfo = [](cl_device_id device, cl_device_info param_name) -> std::string {
 			size_t param_value_size = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, param_name, 0, nullptr, &param_value_size));
-			std::string param_value(param_value_size, 0);
+			std::vector param_value(param_value_size, 0);
 			OCL_SAFE_CALL(clGetDeviceInfo(device, param_name, param_value_size, param_value.data(), nullptr));
 			return param_value;
 		};
