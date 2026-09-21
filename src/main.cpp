@@ -166,10 +166,11 @@ int main()
 
 			size_t extensionsSize = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_EXTENSIONS, 0, nullptr, &extensionsSize));
-			std::string extensions(extensionsSize, 0);
+			std::string extensions(extensionsSize, '\0');
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_EXTENSIONS, extensionsSize, extensions.data(), nullptr));
 			std::cout << "        Extensions:\n";
-
+            if (!extensions.empty())
+                extensions.pop_back();
 			std::istringstream iss(extensions);
 			std::string extension;
 			while(iss >> extension)
