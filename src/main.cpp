@@ -85,7 +85,7 @@ int main()
 		// TODO 2.1
 		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
 		cl_uint devicesCount = 0;
-		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount));
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount));  // без CUSTOM
 
 		std::vector<cl_device_id> devices(devicesCount);
 		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr));
@@ -98,6 +98,7 @@ int main()
 			// - Тип устройства (видеокарта/процессор/что-то странное)
 			// - Размер памяти устройства в мегабайтах
 			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+			std::cout << "    Device #" << (deviceIndex + 1) << "/" << devicesCount << std::endl;
 			cl_device_id device = devices[deviceIndex];
 
 			size_t deviceNameSize = 0;
@@ -105,11 +106,11 @@ int main()
 
 			std::vector<unsigned char> deviceName(deviceNameSize, 0);
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, deviceNameSize, deviceName.data(), nullptr));
-			std::cout << "    Device name: " << deviceName.data() << std::endl;
+			std::cout << "        Device name: " << deviceName.data() << std::endl;
 
 			cl_device_type deviceType = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(cl_device_type), &deviceType, nullptr));
-			std::cout << "    Device types are: ";
+			std::cout << "        Device types are: ";
 			if(deviceType & CL_DEVICE_TYPE_CPU)
 			{
 				std::cout << "CPU ";
@@ -133,37 +134,37 @@ int main()
 
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(cl_ulong), &globalMemSize, nullptr));
 
-			std::cout << "    Global memory size OF: " << globalMemSize / (1024 * 1024) << " MB\n";
+			std::cout << "        Global memory size OF: " << globalMemSize / (1024 * 1024) << " MB\n";
 
 			cl_bool unifiedMemory = CL_FALSE;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_HOST_UNIFIED_MEMORY, sizeof(cl_bool), &unifiedMemory, nullptr));
 
-			std::cout << "    Unified with host memory: " << (unifiedMemory ? "yes" : "no") << '\n';
+			std::cout << "        Unified with host memory: " << (unifiedMemory ? "yes" : "no") << '\n';
 
 			cl_bool imageSupport = CL_FALSE;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_IMAGE_SUPPORT, sizeof(cl_bool), &imageSupport, nullptr));
 
-			std::cout << "    Device support image: " << (imageSupport ? "yes" : "no") << '\n';
+			std::cout << "        Device support image: " << (imageSupport ? "yes" : "no") << '\n';
 
 			cl_uint maxComputeUints = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(cl_uint), &maxComputeUints, nullptr));
 
-			std::cout << "    Device max compute uints: " << maxComputeUints << '\n';
+			std::cout << "        Device max compute uints: " << maxComputeUints << '\n';
 
 			size_t maxWorkGroupSize = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(size_t), &maxWorkGroupSize, nullptr));
 
-			std::cout << "    Device max work group size: " << maxWorkGroupSize << '\n';
+			std::cout << "        Device max work group size: " << maxWorkGroupSize << '\n';
 
 			cl_ulong localMemSize = CL_FALSE;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_LOCAL_MEM_SIZE, sizeof(cl_ulong), &localMemSize, nullptr));
 
-			std::cout << "    Device local mem size: " << localMemSize / 1024 << " KB\n";
+			std::cout << "        Device local mem size: " << localMemSize / 1024 << " KB\n";
 
 			cl_uint nativeVectorWidthF = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NATIVE_VECTOR_WIDTH_FLOAT, sizeof(cl_uint), &nativeVectorWidthF, nullptr));
 
-			std::cout << "    Device native vector width of float: " << nativeVectorWidthF << '\n';
+			std::cout << "        Device native vector width of float: " << nativeVectorWidthF << '\n';
 		}
 	}
 
