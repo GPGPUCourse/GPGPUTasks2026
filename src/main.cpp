@@ -71,17 +71,17 @@ int main()
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &platformVendorSize));
 		std::vector<unsigned char> platformVendor(platformVendorSize, 0);
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, platformVendorSize, platformVendor.data(), nullptr));
-		std::cout << "	Platform vendor: " << platformVendor.data() << std::endl;
+		std::cout << "    Platform vendor: " << platformVendor.data() << std::endl;
 
 		// 2.1
 		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
 		cl_uint devicesCount = 0;
 
 		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0,  nullptr, &devicesCount));
-		std::cout << "        Number of OpenCL devices: " << devicesCount << std::endl;
+		std::cout << "    Number of OpenCL devices: " << devicesCount << std::endl;
 		std::vector<cl_device_id> devices(devicesCount);
 		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, devices.data(), nullptr));
-		std::cout << "        Devices:" << std::endl;
+		std::cout << "    Devices:" << std::endl;
 		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
 		{
 			// 2.2
@@ -93,11 +93,11 @@ int main()
 
 			cl_device_id device = devices[deviceIndex];
 			size_t deviceNameSize{};
-			std::cout << "            Device #" << (deviceIndex + 1) << "/" << devicesCount << std::endl;
+			std::cout << "        Device #" << (deviceIndex + 1) << "/" << devicesCount << std::endl;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, 0, nullptr, &deviceNameSize));
 			std::vector<unsigned char> deviceName(deviceNameSize, 0);
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NAME, deviceNameSize, deviceName.data(), nullptr));
-			std::cout << "	        Device name: " << deviceName.data() << std::endl;
+			std::cout << "            Device name: " << deviceName.data() << std::endl;
 			cl_device_type deviceType{};
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(cl_device_type), &deviceType, nullptr));
 			std::string deviceTypeName{};
@@ -116,27 +116,26 @@ int main()
 				default:
 					deviceTypeName = "OTHER";
 			}
-			std::cout << "		Device type: " << deviceTypeName << std::endl;
+			std::cout << "            Device type: " << deviceTypeName << std::endl;
 
 			cl_ulong deviceMemory{};
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(deviceMemory), &deviceMemory, nullptr));
-			std::cout << "		Device memory size (MiB): " << deviceMemory / (1024 * 1024) << std::endl;
+			std::cout << "            Device memory size (MiB): " << deviceMemory / (1024 * 1024) << std::endl;
 
 			cl_ulong localMemory{};
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_LOCAL_MEM_SIZE, sizeof(localMemory), &localMemory, nullptr));
-			std::cout << "		Device local memory size (KiB): " << localMemory / 1024 << std::endl;
+			std::cout << "            Device local memory size (KiB): " << localMemory / 1024 << std::endl;
 
 			cl_uint cacheLineSize{};
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, sizeof(cacheLineSize), &cacheLineSize, nullptr));
-			std::cout << "		Device cache line size (bytes): " << cacheLineSize << std::endl;
+			std::cout << "            Device cache line size (bytes): " << cacheLineSize << std::endl;
 
 			cl_bool compilerAvailable{};
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_COMPILER_AVAILABLE, sizeof(compilerAvailable), &compilerAvailable, nullptr));
-			std::cout << "		Device compiler available: " << (compilerAvailable == CL_TRUE ? "Yes": "No") << std::endl;
-
+			std::cout << "            Device compiler available: " << (compilerAvailable == CL_TRUE ? "Yes": "No") << std::endl;
 			cl_uint computeUnits{};
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(computeUnits), &computeUnits, nullptr));
-			std::cout << "		Device compute units: " << computeUnits << std::endl;
+			std::cout << "            Device compute units: " << computeUnits << std::endl;
 		}
 	}
 
