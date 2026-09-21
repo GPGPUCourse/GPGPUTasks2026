@@ -1,50 +1,6 @@
 #ifdef CUDA_SUPPORT
 #include "cuda_api.h"
 
-#ifdef _WIN32
-
-#include <windows.h>
-
-typedef HMODULE CudaLibrary;
-
-static HMODULE cudaLoadLibrary()
-{
-	return LoadLibraryW(L"nvcuda.dll");
-}
-
-static FARPROC cudaGetProcAddress(HMODULE hModule, LPCSTR lpProcName)
-{
-	return ::GetProcAddress(hModule, lpProcName);
-}
-
-#elif defined(__unix__) || defined(__APPLE__) || defined(__MACOSX)
-
-#include <dlfcn.h>
-
-typedef void * CudaLibrary;
-
-static CudaLibrary cudaLoadLibrary()
-{
-#if defined(__APPLE__) || defined(__MACOSX)
-	return dlopen("/Library/Frameworks/CUDA.framework/Versions/Current/CUDA", RTLD_NOW);
-#else
-	CudaLibrary lib = dlopen("libcuda.so", RTLD_NOW);
-	if (!lib) {
-		lib = dlopen("libcuda.so.1", RTLD_NOW);
-	}
-	return lib;
-#endif
-}
-
-static void *cudaGetProcAddress(void *handle, const char *symbol)
-{
-	return dlsym(handle, symbol);
-}
-
-#else
-#error unsupported platform
-#endif
-
 namespace cuda {
 
 std::string driverErrorString(CUresult code)
@@ -115,48 +71,8 @@ std::string formatDriverError(CUresult code)
 
 }
 
-typedef CUresult				(CUDAAPI * p_pfn_cuDeviceGet)				(CUdevice *, int);
-typedef CUresult				(CUDAAPI * p_pfn_cuCtxCreate)				(CUcontext *, unsigned int, CUdevice);
-typedef CUresult				(CUDAAPI * p_pfn_cuCtxDestroy)				(CUcontext);
-
-p_pfn_cuDeviceGet				pfn_cuDeviceGet				= 0;
-p_pfn_cuCtxCreate				pfn_cuCtxCreate				= 0;
-p_pfn_cuCtxDestroy				pfn_cuCtxDestroy			= 0;
-
 bool cuda_api_init()
 {
-	if (pfn_cuCtxCreate)
-		return true;
-
-	CudaLibrary lib = cudaLoadLibrary();
-	if (!lib)
-		return false;
-
-	pfn_cuDeviceGet				= (p_pfn_cuDeviceGet)				cudaGetProcAddress(lib, "cuDeviceGet");
-	pfn_cuCtxCreate				= (p_pfn_cuCtxCreate)				cudaGetProcAddress(lib, "cuCtxCreate_v2");
-	pfn_cuCtxDestroy			= (p_pfn_cuCtxDestroy)				cudaGetProcAddress(lib, "cuCtxDestroy_v2");
-
-	return true;
-}
-
-CUresult CUDAAPI cuDeviceGet(CUdevice *device, int ordinal)
-{
-	if (!pfn_cuDeviceGet) return CUDA_ERROR_NOT_INITIALIZED;
-
-	return pfn_cuDeviceGet(device, ordinal);
-}
-
-CUresult CUDAAPI cuCtxCreate(CUcontext *pctx, unsigned int flags, CUdevice dev)
-{
-	if (!pfn_cuCtxCreate) return CUDA_ERROR_NOT_INITIALIZED;
-
-	return pfn_cuCtxCreate(pctx, flags, dev);
-}
-
-CUresult CUDAAPI cuCtxDestroy(CUcontext ctx)
-{
-	if (!pfn_cuCtxDestroy) return CUDA_ERROR_NOT_INITIALIZED;
-
-	return pfn_cuCtxDestroy(ctx);
+	return cuInit(0) == CUDA_SUCCESS;
 }
 #endif
