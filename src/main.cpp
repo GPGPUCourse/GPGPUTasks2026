@@ -158,7 +158,7 @@ int main()
 			cl_ulong localMemSize = CL_FALSE;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_LOCAL_MEM_SIZE, sizeof(cl_ulong), &localMemSize, nullptr));
 
-			std::cout << "    Device local mem size: " << localMemSize / 1024 << '\n';
+			std::cout << "    Device local mem size: " << localMemSize / 1024 << " KB\n";
 
 			cl_uint nativeVectorWidthF = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_NATIVE_VECTOR_WIDTH_FLOAT, sizeof(cl_uint), &nativeVectorWidthF, nullptr));
