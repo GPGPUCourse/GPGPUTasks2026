@@ -9,7 +9,7 @@
 #include "kernels/kernels.h"
 
 #include <fstream>
-#define MAKSIM
+//#define MAKSIM
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
