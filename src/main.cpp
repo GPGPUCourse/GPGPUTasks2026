@@ -112,7 +112,8 @@ int main()
 
 			size_t 	deviceNameSize = 0, 
 					deviceVendorNameSize = 0, 
-					deviceProfileSize = 0;
+					deviceProfileSize = 0,
+					deviceMaxWorkGroupSize = 0;
 
 
 			cl_ulong deviceGlobalMemorySize = 0;
@@ -124,6 +125,7 @@ int main()
 			OCL_SAFE_CALL(clGetDeviceInfo(deviceId, CL_DEVICE_PROFILE, 0, nullptr, &deviceProfileSize));
 			OCL_SAFE_CALL(clGetDeviceInfo(deviceId, CL_DEVICE_TYPE, 0, nullptr, &deviceType));
 			OCL_SAFE_CALL(clGetDeviceInfo(deviceId, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(deviceGlobalMemorySize), &deviceGlobalMemorySize, nullptr));
+			OCL_SAFE_CALL(clGetDeviceInfo(deviceId, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(deviceMaxWorkGroupSize), &deviceMaxWorkGroupSize, nullptr));
 
 			std::vector<unsigned char> 
 				deviceName(deviceNameSize, 0),
@@ -137,6 +139,28 @@ int main()
 			std::cout << "    Device Name: " << deviceName.data() << std::endl;
 			std::cout << "    Vendor Name: " << deviceVendorName.data() << std::endl;
 			std::cout << "    Device Profile: " << deviceProfile.data() << std::endl;
+			std::cout << "    Device Type:";
+			switch (deviceType)
+			{
+			case CL_DEVICE_TYPE_CPU:
+				std::cout << "CPU";
+				break;
+			case CL_DEVICE_TYPE_GPU:
+				std::cout << "GPU";
+				break;
+			case CL_DEVICE_TYPE_ACCELERATOR:
+				std::cout << "Accelerator";
+				break;
+			case CL_DEVICE_TYPE_ALL:
+				std::cout << "All types";
+				break;
+			default:
+				std::cout << "Custom";
+				break;
+			}
+			std::cout << std::endl;
+
+			std::cout << "    Device Max Work Group Size: " << deviceMaxWorkGroupSize << std::endl;
 			std::cout << "    Device Global Memory: " << deviceGlobalMemorySize / (1024. * 1024.) << " Mb" << std::endl;
 		}
 		
