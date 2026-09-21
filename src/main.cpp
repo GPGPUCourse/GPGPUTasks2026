@@ -1,6 +1,5 @@
 #include <CL/cl.h>
 #include <libclew/ocl_init.h>
-
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -28,12 +27,34 @@ void reportError(cl_int err, const std::string &filename, int line)
 
 #define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
 
+template <typename T>
+T get_device_info(cl_device_id device, cl_device_info paramName) {
+	T res;
+ 	OCL_SAFE_CALL(
+		clGetDeviceInfo(device, paramName, sizeof(T), &res, NULL)
+	);
+	return res; 
+}
+
+template <typename T>
+std::vector<T> get_device_info_vec(cl_device_id device, cl_device_info paramName) {
+	size_t retSize;
+ 	OCL_SAFE_CALL(
+		clGetDeviceInfo(device, paramName, 0, nullptr, &retSize)
+	);
+
+	std::vector<T> res(retSize / sizeof(T)); 
+	OCL_SAFE_CALL(
+		clGetDeviceInfo(device, paramName, retSize, res.data(), nullptr)
+	);
+	return res; 
+}
+
 int main()
 {
 	// Пытаемся слинковаться с символами OpenCL API в runtime (через библиотеку libs/clew)
 	if(!ocl_init())
 		throw std::runtime_error("Can't init OpenCL driver!");
-
 	// Откройте
 	// https://www.khronos.org/registry/OpenCL/sdk/1.2/docs/man/xhtml/
 	// Нажмите слева: "OpenCL Runtime" -> "Query Platform Info" -> "clGetPlatformIDs"
@@ -55,39 +76,54 @@ int main()
 		// Не забывайте проверять коды ошибок с помощью макроса OCL_SAFE_CALL
 		size_t platformNameSize = 0;
 		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, 0, nullptr, &platformNameSize));
-		// TODO 1.1
-		// Попробуйте вместо CL_PLATFORM_NAME передать какое-нибудь случайное число - например 239
-		// Т.к. это некорректный идентификатор параметра платформы - то метод вернет код ошибки
-		// Макрос OCL_SAFE_CALL заметит это, и кинет ошибку с кодом
-		// Откройте таблицу с кодами ошибок:
-		// libs/clew/CL/cl.h:103
-		// P.S. Быстрый переход к файлу в CLion: Ctrl+Shift+N -> cl.h (или даже с номером строки: cl.h:103) -> Enter
-		// Найдите там нужный код ошибки и ее название
-		// Затем откройте документацию по clGetPlatformInfo и в секции Errors найдите ошибку, с которой столкнулись
-		// в документации подробно объясняется, какой ситуации соответствует данная ошибка, и это позволит, проверив код, понять, чем же вызвана данная ошибка (некорректным аргументом param_name)
-		// Обратите внимание, что в этом же libs/clew/CL/cl.h файле указаны всевоможные defines, такие как CL_DEVICE_TYPE_GPU и т.п.
 
-		// TODO 1.2
-		// Аналогично тому, как был запрошен список идентификаторов всех платформ - так и с названием платформы, теперь, когда известна длина названия - его можно запросить:
 		std::vector<unsigned char> platformName(platformNameSize, 0);
-		// clGetPlatformInfo(...);
-		std::cout << "    Platform name: " << platformName.data() << std::endl;
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_NAME, platformNameSize, platformName.data(), &platformNameSize));
+		std::cout << "    Platform name:     " << platformName.data() << std::endl;
 
-		// TODO 1.3
-		// Запросите и напечатайте так же в консоль вендора данной платформы
+		size_t vendorNameSize = 0;
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, 0, nullptr, &vendorNameSize));
+		std::vector<unsigned char> vendorName(vendorNameSize, 0);
+		OCL_SAFE_CALL(clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, vendorNameSize, vendorName.data(), nullptr));
+		std::cout << "    Vendor name:       " << vendorName.data() << std::endl;
 
-		// TODO 2.1
-		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
 		cl_uint devicesCount = 0;
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, 0, nullptr, &devicesCount));
+		std::vector<cl_device_id> platformDevices(devicesCount, 0);
+		OCL_SAFE_CALL(clGetDeviceIDs(platform, CL_DEVICE_TYPE_ALL, devicesCount, platformDevices.data(), &devicesCount));
+		std::cout << "    Available devices: " << devicesCount << std::endl;
 
 		for(int deviceIndex = 0; deviceIndex < devicesCount; ++deviceIndex)
 		{
-			// TODO 2.2
-			// Запросите и напечатайте в консоль:
-			// - Название устройства
-			// - Тип устройства (видеокарта/процессор/что-то странное)
-			// - Размер памяти устройства в мегабайтах
-			// - Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+			std::cout << "    Device #" << (deviceIndex + 1) << "/" << devicesCount << std::endl;
+			cl_device_id device = platformDevices[deviceIndex];
+
+			auto deviceName = get_device_info_vec<unsigned char>(device, (cl_device_info)CL_DEVICE_NAME);
+			std::cout << "    	Device name:        " << deviceName.data() << std::endl;
+
+			auto deviceType = get_device_info<cl_device_type>(device, CL_DEVICE_TYPE);
+			std::cout << "    	Device type:        ";
+			switch (deviceType) {
+				case CL_DEVICE_TYPE_CPU:
+					std::cout << "CPU";
+					break;
+				case CL_DEVICE_TYPE_GPU:
+					std::cout << "GPU";
+					break;
+				default:
+					std::cout << "other";
+					break;
+			};
+			std::cout<< std::endl;
+
+			auto deviceMem = get_device_info<cl_ulong>(device, CL_DEVICE_GLOBAL_MEM_SIZE);
+			std::cout << "    	Device memory size: " << (deviceMem >> 20) << " MB" << std::endl;
+
+			auto deviceCacheSize = get_device_info<cl_ulong>(device, CL_DEVICE_GLOBAL_MEM_CACHE_SIZE);
+			std::cout << "    	Device cache size:  " << (deviceCacheSize >> 10) << " KB" << std::endl;
+
+			auto usesHostMem = get_device_info<cl_bool>(device, CL_DEVICE_HOST_UNIFIED_MEMORY);
+			std::cout << "    	Uses host memory:   " << (usesHostMem? "Yes" : "No") << std::endl;
 		}
 	}
 
