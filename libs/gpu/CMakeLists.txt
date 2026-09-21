@@ -222,13 +222,6 @@ else ()
 endif ()
 
 target_include_directories(${PROJECT_NAME} PUBLIC ${PROJECT_SOURCE_DIR} ${Vulkan_INCLUDE_DIRS})
-# VMA (Vulkan Memory Allocator) single-header - part of Vulkan SDK install (not under Vulkan_INCLUDE_DIR)
-if (EXISTS /opt/vulkansdk/macOS/include)
-    target_include_directories(${PROJECT_NAME} PUBLIC /opt/vulkansdk/macOS/include)
-endif ()
-if (EXISTS /opt/include)
-    target_include_directories(${PROJECT_NAME} PUBLIC /opt/include)
-endif ()
 target_link_libraries(${PROJECT_NAME} ${LIBRARIES})
 
 add_executable (${PROJECT_NAME}_test ${HEADERS_TEST} ${SOURCES_TEST})
