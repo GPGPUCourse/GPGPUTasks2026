@@ -110,9 +110,13 @@ int main()
 
 			size_t deviceTypeSize = 0;
 			clGetDeviceInfo(platformDevicesIdx[deviceIndex], CL_DEVICE_TYPE, 0, nullptr, &deviceTypeSize);
-			std::vector<cl_device_type> deviceType(deviceNameSize);
-			clGetDeviceInfo(platformDevicesIdx[deviceIndex], CL_DEVICE_TYPE, deviceTypeSize, deviceType.data(), nullptr);
-			std::cout << "    Device type: " << deviceType.data() << std::endl;
+			cl_device_type deviceType;
+			clGetDeviceInfo(platformDevicesIdx[deviceIndex], CL_DEVICE_TYPE, deviceTypeSize, &deviceType, nullptr);
+			if (deviceType == CL_DEVICE_TYPE_CPU) std::cout << "    Device type: CPU" << std::endl;
+			if (deviceType == CL_DEVICE_TYPE_GPU) std::cout << "    Device type: GPU" << std::endl;
+			if (deviceType == CL_DEVICE_TYPE_ACCELERATOR) std::cout << "    Device type: ACCELERATOR" << std::endl;
+			if (deviceType == CL_DEVICE_TYPE_CUSTOM) std::cout << "    Device type: CUSTOM" << std::endl;
+			if (deviceType == CL_DEVICE_TYPE_ALL) std::cout << "    Device type: ALL" << std::endl;
 
 
 			size_t deviceSizeSize = 0;
