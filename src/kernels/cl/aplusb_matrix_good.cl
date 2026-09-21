@@ -8,7 +8,8 @@ __kernel void aplusb_matrix_good(__global const uint* a,
                      __global const uint* b,
                      __global       uint* c,
                      unsigned int width,
-                     unsigned int height)
+                     unsigned int height,
+                     unsigned long n)
 {
     // все три массива - линейно выложенные двумерные матрицы размера width (число столбиков) x height (число рядов)
     // при этом в памяти подряд идут элементы являющимися соседями в рамках одного ряда,
@@ -19,7 +20,18 @@ __kernel void aplusb_matrix_good(__global const uint* a,
     const unsigned int col = get_global_id(0);
     const unsigned int row = get_global_id(1);
 
-    if (col >= width || row >= height) return;
+    if (row * width + col < 0 || row * width + col >= n) {
+        printf("index=%d out of bounds row=%d col=%d width=%d height=%d n=%d\n", row * width + col, row, col, width, height, n);;
+        return;
+    }
+    if (row * width + col < 0 || row * width + col >= n) {
+        printf("index=%d out of bounds row=%d col=%d width=%d height=%d n=%d\n", row * width + col, row, col, width, height, n);;
+        return;
+    }
+    if (row * width + col < 0 || row * width + col >= n) {
+        printf("index=%d out of bounds row=%d col=%d width=%d height=%d n=%d\n", row * width + col, row, col, width, height, n);;
+        return;
+    }
 
     c[row * width + col] = a[row * width + col] + b[row * width + col];
 }
