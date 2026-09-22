@@ -17,13 +17,13 @@ void aplusb(const gpu::WorkSize& workSize,
     rassert(false, 54623523412413);
 }
 void aplusb_matrix_bad(const gpu::WorkSize& workSize,
-    const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n)
+    const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int width, unsigned int height)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412414);
 }
 void aplusb_matrix_good(const gpu::WorkSize& workSize,
-    const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n)
+    const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int width, unsigned int height)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412415);
