@@ -26,6 +26,24 @@ void reportError(cl_int err, const std::string &filename, int line)
 	throw std::runtime_error(message);
 }
 
+std::string deviceTypeToString(cl_device_type deviceType)
+{
+	static constexpr std::pair<cl_device_type, std::string_view> typeToName[5] = {
+		{CL_DEVICE_TYPE_CPU, "CPU"},
+		{CL_DEVICE_TYPE_GPU, "GPU"},
+		{CL_DEVICE_TYPE_ACCELERATOR, "ACCELERATOR"},
+		{CL_DEVICE_TYPE_DEFAULT, "DEFAULT"},
+		{CL_DEVICE_TYPE_CUSTOM, "CUSTOM"},
+	};
+	std::string type;
+	for (auto& p : typeToName) {
+		if ((p.first & deviceType) > 0) {
+			type = type.empty() ? type.append(p.second) : type.append(" + ").append(p.second);
+		}
+	}
+	return type;
+}
+
 #define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
 
 int main()
@@ -99,21 +117,19 @@ int main()
 
 			cl_device_type type;
 			OCL_SAFE_CALL(clGetDeviceInfo(deviceId, CL_DEVICE_TYPE, sizeof(type), &type, nullptr));
-			std::cout << "    Device type: " << to_string(type) << std::endl;
+			std::cout << "    Device type: " << deviceTypeToString(type) << std::endl;
 
 			cl_ulong globalMemSize = 0;
 			clGetDeviceInfo(deviceId, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(globalMemSize), &globalMemSize, nullptr);
-			std::cout << "    Device mem size: " << globalMemSize / (1024 * 1024) << std::endl;
+			std::cout << "    Device mem size (MB): " << globalMemSize / (1024 * 1024) << std::endl;
 
 			cl_uint globalCacheLineSize = 0;
 			clGetDeviceInfo(deviceId, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, sizeof(globalCacheLineSize), &globalCacheLineSize, nullptr);
-			std::cout << "    globalCacheLine size: " << globalCacheLineSize << std::endl;
+			std::cout << "    Global cache line size (Bytes): " << globalCacheLineSize << std::endl;
 
 			cl_uint maxClockFreq = 0;
 			clGetDeviceInfo(deviceId, CL_DEVICE_MAX_CLOCK_FREQUENCY, sizeof(maxClockFreq), &maxClockFreq, nullptr);
-			std::cout << "    maxClockFreq MHz: " << maxClockFreq << std::endl;
-
-
+			std::cout << "    Max clock frequency (MHz): " << maxClockFreq << std::endl;
 		}
 	}
 
