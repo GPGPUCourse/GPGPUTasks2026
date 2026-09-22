@@ -26,7 +26,7 @@ __global__ void aplusb_matrix_bad(const unsigned int* a,
     return;
   }
 
-  const uint32_t k = 8191;
+  const uint32_t k = 37;
   x = (x * k) % width;
 
   const uint32_t elemOffset = y * width + x;
