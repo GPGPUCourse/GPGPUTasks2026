@@ -4,3 +4,6 @@
 /build*/
 cmake-build*
 .vs
+.vscode
+conanfile.py
+CMakeUserPresets.json
