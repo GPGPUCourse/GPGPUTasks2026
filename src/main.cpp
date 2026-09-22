@@ -125,6 +125,30 @@ int main()
 			std::cout << "        Global memory size: " << (globalMemSize / (1024 * 1024)) << " MB (" << globalMemSize << " bytes)" << std::endl;
 
 			// Еще пару или более свойств устройства, которые вам покажутся наиболее интересными
+			// Число вычислительных блоков (ядер/SIMD-юнитов)
+			cl_uint maxComputeUnits = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(maxComputeUnits), &maxComputeUnits, nullptr));
+			std::cout << "        Max compute units: " << maxComputeUnits << std::endl;
+
+			// Максимальная тактовая частота в МГц
+			cl_uint maxClockFrequency = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_CLOCK_FREQUENCY, sizeof(maxClockFrequency), &maxClockFrequency, nullptr));
+			std::cout << "        Max clock frequency: " << maxClockFrequency << " MHz" << std::endl;
+
+			// Максимальный размер одного буфера, который можно выделить
+			cl_ulong maxMemAllocSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_MEM_ALLOC_SIZE, sizeof(maxMemAllocSize), &maxMemAllocSize, nullptr));
+			std::cout << "        Max memory allocation: " << (maxMemAllocSize / (1024 * 1024)) << " MB (" << maxMemAllocSize << " bytes)" << std::endl;
+
+			// Максимальное число потоков в рабочей группе
+			size_t maxWorkGroupSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(maxWorkGroupSize), &maxWorkGroupSize, nullptr));
+			std::cout << "        Max work group size: " << maxWorkGroupSize << std::endl;
+
+			// Размер локальной памяти (память, разделяемая потоками рабочей группы)
+			cl_ulong localMemSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_LOCAL_MEM_SIZE, sizeof(localMemSize), &localMemSize, nullptr));
+			std::cout << "        Local memory size: " << (localMemSize / 1024) << " KB (" << localMemSize << " bytes)" << std::endl;
 
 			// Версия OpenCL, поддерживаемая устройством
 			size_t deviceVersionSize = 0;
