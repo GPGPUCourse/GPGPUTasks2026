@@ -1,10 +1,15 @@
 1) Install vcpkg
 2) In CLion GUI: install gtest into vcpkg and (automatically) add to CMake options:
-    -DCMAKE_TOOLCHAIN_FILE=C:\...\.vcpkg-clion\vcpkg\scripts\buildsystems\vcpkg.cmake
+        -DCMAKE_TOOLCHAIN_FILE=C:\Users\<USERNAME>\.vcpkg-clion\vcpkg\scripts\buildsystems\vcpkg.cmake
+   You can install gtest manually with:
+       "C:\Users\<USERNAME>\.vcpkg-clion\vcpkg\vcpkg.exe" install gtest:x64-windows
 3) Download and install clang:
     https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.7/LLVM-19.1.7-win64.exe
 4) Add to CMake options (to use clang as a preprocessor for OpenCL kernels):
     -DSPIR_CLANG_BIN="C:\Program Files\LLVM\bin\clang.exe"
+
+3b) Or just install "C++ Clang Compiler for Windows" component in Visual Studio Installer
+4b) with `-DSPIR_CLANG_BIN="C:\Program Files\Microsoft Visual Studio\18\Community\VC\Tools\Llvm\x64\bin\clang.exe"`
 
 Finally, CMake options should look similar to this:
 -DCMAKE_TOOLCHAIN_FILE=C:\Users\<USERNAME>\.vcpkg-clion\vcpkg\scripts\buildsystems\vcpkg.cmake -DSPIR_CLANG_BIN="C:\Program Files\LLVM\bin\clang.exe"
