@@ -10,6 +10,10 @@
 #include <cmath>
 #include <algorithm>
 
+#ifdef CUDA_SUPPORT
+#include <cuda_profiler_api.h>
+#endif
+
 class timer {
 protected:
 #ifdef _WIN32
@@ -33,10 +37,19 @@ public:
             start();
     }
 
+    ~timer()
+    {
+        if (is_running_)
+            stop();
+    }
+
     void start()
     {
-        if (is_running_) restart();
+        if (is_running_) return;
 
+#ifdef CUDA_SUPPORT
+        cudaProfilerStart();
+#endif
         start_ = measure();
         is_running_ = 1;
     }
@@ -45,6 +58,9 @@ public:
     {
         if (!is_running_) return;
 
+#ifdef CUDA_SUPPORT
+        cudaProfilerStop();
+#endif
         counter_ += diff(start_, measure());
         is_running_ = 0;
     }
@@ -59,6 +75,8 @@ public:
 
     void reset()
     {
+        if (is_running_)
+            stop();
         counter_ = 0;
         is_running_ = 0;
     }

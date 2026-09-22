@@ -1,5 +1,6 @@
 #ifdef CUDA_SUPPORT
 #include "cuda_api.h"
+#include <cuda_profiler_api.h>
 
 namespace cuda {
 
@@ -67,6 +68,16 @@ std::string driverErrorString(CUresult code)
 std::string formatDriverError(CUresult code)
 {
 	return driverErrorString(code) + " (" + to_string(code) + ")";
+}
+
+void profilerStart()
+{
+	CUDA_SAFE_CALL(cudaProfilerStart());
+}
+
+void profilerStop()
+{
+	CUDA_SAFE_CALL(cudaProfilerStop());
 }
 
 }

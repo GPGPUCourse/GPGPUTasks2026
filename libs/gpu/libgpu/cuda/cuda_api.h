@@ -26,4 +26,12 @@ namespace cuda {
 
 	#define CU_SAFE_CALL(expr)  cuda::reportErrorCU(expr, __LINE__)
 
+	void profilerStart();
+	void profilerStop();
+
+	struct ScopedProfile {
+		ScopedProfile() { profilerStart(); }
+		~ScopedProfile() { profilerStop(); }
+	};
+
 }
