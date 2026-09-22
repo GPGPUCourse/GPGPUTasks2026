@@ -54,7 +54,7 @@ void run(int argc, char** argv)
         for (int iter = 0; iter < 10; ++iter) {
             timer t;
 
-            gpu::WorkSize workSize(1, GROUP_SIZE, height, width);
+            gpu::WorkSize workSize(1, GROUP_SIZE, 1, height);
 
             if (context.type() == gpu::Context::TypeOpenCL) {
                 // ocl_aplusb_matrix_bad.exec(workSize, a_gpu, ...);
@@ -93,7 +93,7 @@ void run(int argc, char** argv)
         for (int iter = 0; iter < 10; ++iter) {
             timer t;
 
-            gpu::WorkSize workSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height);
+            gpu::WorkSize workSize(GROUP_SIZE, width);
 
             if (context.type() == gpu::Context::TypeOpenCL) {
                 // ocl_aplusb_matrix_good.exec(workSize, a_gpu, ...);

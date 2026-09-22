@@ -16,10 +16,13 @@ layout (push_constant) uniform PushConstants {
 layout (local_size_x = 1, local_size_y = 256) in;
 void main()
 {
-    const uint i = gl_GlobalInvocationID.y * params.height + gl_GlobalInvocationID.x;
+    const uint wi = gl_GlobalInvocationID.y;
 
-    rassert(as[i] == 3 * (i + 5) + 7, 435234223);
-    rassert(bs[i] == 11 * (i + 13) + 17, 435432367);
+    for(uint k = 0; k < params.width; ++k) {
+        uint i = wi*params.width + k;
+        rassert(as[i] == 3 * (i + 5) + 7, 435234223);
+        rassert(bs[i] == 11 * (i + 13) + 17, 435432367);
 
-    cs[i] = as[i] + bs[i];
+        cs[i] = as[i] + bs[i];
+    }
 }
