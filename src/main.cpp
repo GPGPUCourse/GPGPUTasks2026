@@ -26,6 +26,23 @@ void reportError(cl_int err, const std::string &filename, int line)
 	throw std::runtime_error(message);
 }
 
+std::string deviceTypeToString(cl_device_type type){
+	switch (type) {
+		case CL_DEVICE_TYPE_CPU : {
+			return "CPU";
+		}
+		case CL_DEVICE_TYPE_GPU  : {
+			return "GPU";
+		}
+		case CL_DEVICE_TYPE_ACCELERATOR : {
+			return "Accelerator";
+		}
+		default: {
+			return "Unknown";
+		}
+	}
+}
+
 #define OCL_SAFE_CALL(expr) reportError(expr, __FILE__, __LINE__)
 
 int main()
@@ -93,16 +110,28 @@ int main()
 
 			cl_device_type deviceType;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(deviceType), &deviceType, nullptr));
-			std::cout << "        Device type: " << deviceType << std::endl;
+			std::cout << "        Device type: " << deviceTypeToString(deviceType) << std::endl;
 
 			cl_ulong deviceMemorySize;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(deviceMemorySize), &deviceMemorySize, nullptr));
 			std::cout << "        Device memory size: " << (deviceMemorySize / (1024 * 1024)) << " MB" << std::endl;
 
+			size_t deviceVendorSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_VENDOR, 0, nullptr, &deviceVendorSize));
+			std::vector<unsigned char> deviceVendor(deviceVendorSize, 0);
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_VENDOR, deviceVendorSize, deviceVendor.data(), nullptr));
+			std::cout << "        Device vendor: " << deviceVendor.data() << std::endl;
+
+			size_t deviceMaxWorkGroupSize;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(deviceMaxWorkGroupSize), &deviceMaxWorkGroupSize, nullptr));
+			std::cout << "        Device max work group size: " << deviceMaxWorkGroupSize << std::endl;
+
 			cl_bool deviceAvailable;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_AVAILABLE, sizeof(deviceAvailable), &deviceAvailable, nullptr));
 			std::cout << "        Device available: " << (deviceAvailable ? "Yes" : "No") << std::endl;
 			std::cout << "        --------------------------" << std::endl;
+
+
 		}
 		std::cout << "--------------------------------------" << std::endl;
 	}
