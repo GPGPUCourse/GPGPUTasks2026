@@ -71,8 +71,9 @@ void run(int argc, char** argv)
             // Настраиваем размер рабочего пространства (n) и размер рабочих групп в этом рабочем пространстве (GROUP_SIZE=256)
             // Обратите внимание что сейчас указана рабочая группа размера 1х1 в рабочем пространстве width x height, это не то что вы хотите
             // TODO И в плохом и в хорошем кернеле рабочая группа обязана состоять из 256 work-items
-            uint32_t wgSizeX = 256;
-            uint32_t wgSizeY = 256/wgSizeX;
+            constexpr uint32_t wgSizeX = 256;
+            constexpr uint32_t wgSizeY = 256/wgSizeX;
+            static_assert(wgSizeX * wgSizeY == 256);
             gpu::WorkSize workSize(wgSizeX, wgSizeY, height, width);
 
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
@@ -125,8 +126,9 @@ void run(int argc, char** argv)
             // Настраиваем размер рабочего пространства (n) и размер рабочих групп в этом рабочем пространстве (GROUP_SIZE=256)
             // Обратите внимание что сейчас указана рабочая группа размера 1х1 в рабочем пространстве width x height, это не то что вы хотите
             // TODO И в плохом и в хорошем кернеле рабочая группа обязана состоять из 256 work-items
-            uint32_t wgSizeX = 32;
-            uint32_t wgSizeY = 256/wgSizeX;
+            constexpr uint32_t wgSizeX = 32;
+            constexpr uint32_t wgSizeY = 256/wgSizeX;
+            static_assert(wgSizeX * wgSizeY == 256);
             gpu::WorkSize workSize(wgSizeX, wgSizeY, width, height);
 
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
