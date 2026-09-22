@@ -21,10 +21,13 @@ __global__ void aplusb_matrix_bad(const unsigned int* a,
     // TODO реализуйте этот кернел - просуммируйте две матрицы так чтобы получить максимально ПЛОХУЮ производительность с точки зрения memory coalesced паттерна доступа
 
   const uint32_t y = blockIdx.x * blockDim.x + threadIdx.x;
-  const uint32_t x = blockIdx.y * blockDim.y + threadIdx.y;
+  uint32_t x = blockIdx.y * blockDim.y + threadIdx.y;
   if (y >= height || x >= width) {
     return;
   }
+
+  const uint32_t k = 8191;
+  x = (x * k) % width;
 
   const uint32_t elemOffset = y * width + x;
   c[elemOffset] = a[elemOffset] + b[elemOffset];
