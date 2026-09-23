@@ -94,8 +94,7 @@ void run(int argc, char** argv)
 
         // Сверяем результат
         for (size_t i = 0; i < width * height; ++i) {
-            // rassert(cs[i] == as[i] + bs[i], 321418230421312512, cs[i], as[i] + bs[i], i);
-            // rassert(cs[0] == as[0] + bs[0], 321418230365731436, cs[0], as[i] + bs[i], 0);
+            rassert(cs[i] == as[i] + bs[i], 321418230421312512, cs[i], as[i] + bs[i], i);
         }
     }
 
@@ -135,8 +134,7 @@ void run(int argc, char** argv)
 
         // Сверяем результат
         for (size_t i = 0; i < width * height; ++i) {
-            // rassert(cs[i] == as[i] + bs[i], 321418230365731436, cs[i], as[i] + bs[i], i);
-            // rassert(cs[0] == as[0] + bs[0], 321418230365731436, cs[0], as[i] + bs[i], 0);
+            rassert(cs[i] == as[i] + bs[i], 321418230365731436, cs[i], as[i] + bs[i], i);
         }
     }
 }
