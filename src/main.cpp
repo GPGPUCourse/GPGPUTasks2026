@@ -147,6 +147,11 @@ int main()
 			cl_uint deviceCacheLineSize = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(deviceId, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, sizeof(deviceCacheLineSize), &deviceCacheLineSize, nullptr));
 			std::cout << "        Cache line size: " << deviceCacheLineSize << " bytes" << std::endl;
+
+			// Запрашиваем число вычислительных блоков
+			cl_uint deviceComputeUnits = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(deviceId, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(deviceComputeUnits), &deviceComputeUnits, nullptr));
+			std::cout << "        Compute units: " << deviceComputeUnits << std::endl;
 		}
 	}
 
