@@ -12,6 +12,13 @@ __global__ void aplusb_matrix_bad(const unsigned int* a,
                              unsigned int  width,
                              unsigned int  height)
 {
+    const unsigned int row = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int col = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (row >= height or col >= width)
+        return;
+
+    c[row * width + col] = a[row * width + col] + b[row * width + col];
     // все три массива - линейно выложенные двумерные матрицы размера width (число столбиков) x height (число рядов)
     // при этом в памяти подряд идут элементы являющимися соседями в рамках одного ряда,
     // т.е. матрица выложена в памяти линейно ряд за рядом
