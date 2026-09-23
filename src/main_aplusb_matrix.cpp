@@ -88,6 +88,8 @@ void run(int argc, char** argv)
         }
         std::cout << "a + b matrix kernel times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 
+        std::cout << "a + b matrix kernel median VRAM bandwidth: " << (sizeof(unsigned int) * 3 * width * height / 1024.0 / 1024.0 / 1024.0) / stats::median(times) << " GB/s" << std::endl;
+
         // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
         std::vector<unsigned int> cs(width * height, 0);
         c_gpu.readN(cs.data(), width * height);
@@ -128,6 +130,8 @@ void run(int argc, char** argv)
             times.push_back(t.elapsed());
         }
         std::cout << "a + b matrix kernel times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+
+        std::cout << "a + b matrix kernel median VRAM bandwidth: " << (sizeof(unsigned int) * 3 * width * height / 1024.0 / 1024.0 / 1024.0) / stats::median(times) << " GB/s" << std::endl;
 
         std::vector<unsigned int> cs(width * height, 0);
         c_gpu.readN(cs.data(), width * height);
