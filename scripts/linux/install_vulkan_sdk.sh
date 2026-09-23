@@ -16,7 +16,7 @@ install_prefix=/usr/local
 sudo apt update
 sudo apt install -yq libgraphicsmagick++1-dev # we need Magick++.h so that CImg.h can load jpg files
 sudo apt install -yq build-essential pkg-config libx11-dev libxrandr-dev # to fix #include <X11/extensions/Xrandr.h> when compiling Vulkan-Loader
-sudo apt install -yq libx11-xcb-dev libxkbcommon-dev libxrandr-dev libegl1-mesa-dev # to fix "The following required packages were not found: - wayland-client" when compiling Validation-Layers - see https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-ValidationLayers/%2B/refs/tags/v1.1.107/BUILD.md#linux-build-requirements
+sudo apt install -yq libx11-xcb-dev libxkbcommon-dev libxrandr-dev libegl1-mesa-dev libwayland-dev wayland-protocols # to fix "The following required packages were not found: - wayland-client" when compiling Validation-Layers - see https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-ValidationLayers/%2B/refs/tags/v1.1.107/BUILD.md#linux-build-requirements
 sudo apt install -yq glslc libspirv-reflect-dev spirv-headers
 
 googletest_version=1.12.1
@@ -39,7 +39,7 @@ pushd googletest-release-${googletest_version}
 mkdir releasebuild
 cd releasebuild
 cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=${install_prefix} ..
-make -j${njobs} install
+sudo make -j${njobs} install
 popd
 rm -rf googletest-release-${googletest_version}
 
@@ -50,7 +50,7 @@ cd Vulkan-Headers-${vulkan_headers_version}
 mkdir releasebuild
 cd releasebuild
 cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${install_prefix} ..
-make -j$njobs install
+sudo make -j$njobs install
 cd ../..
 rm -rf Vulkan-Headers-${vulkan_headers_version}
 
@@ -61,12 +61,12 @@ cd Vulkan-Loader-${vulkan_loader_version}
 mkdir releasebuild
 cd releasebuild
 cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${install_prefix} -DVULKAN_HEADERS_INSTALL_DIR=${install_prefix} ..
-make -j$njobs install
+sudo make -j$njobs install
 cd ../..
 rm -rf Vulkan-Loader-${vulkan_loader_version}
 
-mkdir ${install_prefix}/include/vma
-mv vk_mem_alloc.h ${install_prefix}/include/vma/vk_mem_alloc.h
+sudo mkdir -p ${install_prefix}/include/vma
+sudo mv vk_mem_alloc.h ${install_prefix}/include/vma/vk_mem_alloc.h
 
 if [ "$SKIP_VALIDATION_LAYERS" -eq 0 ]; then
   echo "Installing Vulkan Validation Layers"
@@ -84,8 +84,8 @@ if [ "$SKIP_VALIDATION_LAYERS" -eq 0 ]; then
   #   Run this:
   # git config --global http.postBuffer 524288000
   cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=${install_prefix} -DUPDATE_DEPS=ON -DBUILD_WERROR=ON -DBUILD_TESTS=OFF ..
-  make -j$njobs install
-  cp ${install_prefix}/lib/libVkLayer_khronos_validation.so /usr/lib/
+  sudo make -j$njobs install
+  sudo cp ${install_prefix}/lib/libVkLayer_khronos_validation.so /usr/lib/
   cd ../..
   rm Vulkan-ValidationLayers-${vulkan_validation_layers_version}.zip
   rm -rf Vulkan-ValidationLayers-${vulkan_validation_layers_version}
