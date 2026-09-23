@@ -71,7 +71,7 @@ void run(int argc, char** argv)
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             // раскомментируйте вызов вашего API и поправьте его
             if (context.type() == gpu::Context::TypeOpenCL) {
-                ocl_aplusb_matrix_bad.exec(workSize, a_gpu, b_gpu, c_gpu, width, height, c_gpu.number());
+                ocl_aplusb_matrix_bad.exec(workSize, a_gpu, b_gpu, c_gpu, width, height);
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 // cuda::aplusb_matrix_bad(workSize, a_gpu, ...);
             } else if (context.type() == gpu::Context::TypeVulkan) {
@@ -114,7 +114,7 @@ void run(int argc, char** argv)
             gpu::WorkSize workSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height);
 
             if (context.type() == gpu::Context::TypeOpenCL) {
-                ocl_aplusb_matrix_good.exec(workSize, a_gpu, b_gpu, c_gpu, width, height, c_gpu.number());
+                ocl_aplusb_matrix_good.exec(workSize, a_gpu, b_gpu, c_gpu, width, height);
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 // cuda::aplusb_matrix_good(workSize, a_gpu, ...);
             } else if (context.type() == gpu::Context::TypeVulkan) {

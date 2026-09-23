@@ -8,8 +8,7 @@ __kernel void aplusb_matrix_good(__global const uint* a,
                      __global const uint* b,
                      __global       uint* c,
                      unsigned int width,
-                     unsigned int height,
-                     unsigned long n)
+                     unsigned int height)
 {
     // все три массива - линейно выложенные двумерные матрицы размера width (число столбиков) x height (число рядов)
     // при этом в памяти подряд идут элементы являющимися соседями в рамках одного ряда,
