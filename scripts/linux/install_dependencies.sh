@@ -22,6 +22,6 @@ pushd googletest-release-${googletest_version}
 mkdir releasebuild
 cd releasebuild
 cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=${install_prefix} ..
-make -j${njobs} install
+sudo make -j${njobs} install
 popd
 rm -rf googletest-release-${googletest_version}
