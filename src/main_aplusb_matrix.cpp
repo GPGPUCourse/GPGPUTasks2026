@@ -7,7 +7,6 @@
 
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
-#include "libgpu/opencl/engine.h"
 
 #include <fstream>
 
