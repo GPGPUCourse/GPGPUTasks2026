@@ -33,5 +33,5 @@ __kernel void aplusb_matrix_bad(__global const uint* a,
         return;
     }
 
-    c[0] = a[0] + b[0];
+    // c[0] = a[0] + b[0];
 }
