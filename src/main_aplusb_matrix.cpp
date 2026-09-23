@@ -143,21 +143,25 @@ void run(int argc, char** argv)
 
 int main(int argc, char** argv)
 {
+    int exit_code = 0;
     try {
         run(argc, argv);
     } catch (std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         if (e.what() == DEVICE_NOT_SUPPORT_API) {
             // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за выбора CUDA API (его нет на процессоре - т.е. в случае CI на GitHub Actions)
-            return 0;
-        } if (e.what() == CODE_IS_NOT_IMPLEMENTED) {
+            exit_code = 0;
+        } else if (e.what() == CODE_IS_NOT_IMPLEMENTED) {
             // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за того что задание еще не выполнено
-            return 0;
+            exit_code = 0;
         } else {
             // Выставляем ненулевой exit code, чтобы сообщить, что случилась ошибка
-            return 1;
+            exit_code = 1;
         }
     }
 
-    return 0;
+    // we need to gracefully clear Vulkan context before it is too late (otherwise we encounter segfault on some systems)
+    avk2::InstanceContext::clearGlobalInstanceContext();
+
+    return exit_code;
 }

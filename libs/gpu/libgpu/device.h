@@ -54,6 +54,10 @@ public:
 
 	bool operator< (const Device &other) const
 	{
+		// Keep all CPU devices together at the end.
+		if (isCPU() < other.isCPU())				return true;
+		if (isCPU() > other.isCPU())				return false;
+
 		if (name			< other.name)				return true;
 		if (name			> other.name)				return false;
 		if (pci_bus_id		< other.pci_bus_id)			return true;
