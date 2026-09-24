@@ -1,0 +1,32 @@
+name: Rust
+
+on: [push]
+
+jobs:
+  rust-task01:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: rust_task01
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install OpenCL CPU driver
+      run: sudo apt-get update && sudo apt-get install -y ocl-icd-libopencl1 ocl-icd-opencl-dev pocl-opencl-icd
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        components: rustfmt, clippy
+
+    - name: Check formatting
+      run: cargo fmt --check
+
+    - name: Clippy
+      run: cargo clippy --all-targets -- -D warnings
+
+    - name: Build release
+      run: cargo build --release
+
+    - name: Run matrix experiment
+      run: ./target/release/rust_task01
