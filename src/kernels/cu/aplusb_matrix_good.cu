@@ -22,6 +22,15 @@ __global__ void aplusb_matrix_good(const unsigned int* a,
 
     // TODO реализуйте этот кернел - просуммируйте две матрицы так чтобы получить максимально
     // ХОРОШУЮ производительность с точки зрения memory coalesced паттерна доступа
+    
+    // my code:
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x < width && y < height) {
+        unsigned int index = y * width + x;
+        c[index] = a[index] + b[index];
+    }
 }
 
 namespace cuda {

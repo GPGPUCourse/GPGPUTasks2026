@@ -20,19 +20,25 @@ void run(int argc, char** argv)
     // от 0 до N-1 - кинет ошибку
     //   - Если аргумент запуска есть и он от 0 до N-1 - вернет устройство под указанным
     // номером
+    // ну 0 - это видимакарта, значит мне нужен аргумент 0, потому что явно не на проце делать
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
-
     // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно 
     // заменить TypeOpenCL на TypeCUDA или TypeVulkan
     // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору
     // кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
+    // ой выбор stc/kernels/cu/aplusb.cu
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить
-    // -DGPU_CUDA_SUPPORT=ON в CMake options
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    // -DGPU_CUDA_SUPPORT=ON в CMake options - тут надо понять куда это все надо вставлять,
+    // я уже делал при установке `cmake -DGPU_CUDA_SUPPORT=ON ..`
+    // gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL); - original author string
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf,
     // есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
+
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, т.к. в таком случае вы сможете
-    // пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck), есть printf
+    // пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший
+    // cuda-memcheck), есть printf
+    
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL
     // на мой взгляд менее приятно чем в случае OpenCL/CUDA
     //          если же вас это не останавливает - профилировщик (nsight-systems) при запуске на
@@ -41,8 +47,8 @@ void run(int argc, char** argv)
     //          кроме того используемая библиотека поддерживает rassert-проверки
     //          (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
-    ocl::KernelSource ocl_aplusb(ocl::getAplusB());
-    avk2::KernelSource vk_aplusb(avk2::getAplusB());
+    // ocl::KernelSource ocl_aplusb(ocl::getAplusB()); - т.к. Cuda, это больше не надо
+    // avk2::KernelSource vk_aplusb(avk2::getAplusB()); - т.к. Cuda, это больше не надо
 
     unsigned int n = 100 * 1000 * 1000;
     std::vector<unsigned int> as(n, 0);
@@ -71,15 +77,17 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который
         // соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            ocl_aplusb.exec(workSize, a_gpu, b_gpu, c_gpu, n);
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            cuda::aplusb(workSize, a_gpu, b_gpu, c_gpu, n);
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            vk_aplusb.exec(n, workSize, a_gpu, b_gpu, c_gpu);
-        } else {
-            rassert(false, 4531412341, context.type());
-        }
+        // if (context.type() == gpu::Context::TypeOpenCL) {
+        //     ocl_aplusb.exec(workSize, a_gpu, b_gpu, c_gpu, n);
+        // } else if (context.type() == gpu::Context::TypeCUDA) {
+        //     cuda::aplusb(workSize, a_gpu, b_gpu, c_gpu, n);
+        // } else if (context.type() == gpu::Context::TypeVulkan) {
+        //     vk_aplusb.exec(n, workSize, a_gpu, b_gpu, c_gpu);
+        // } else {
+        //     rassert(false, 4531412341, context.type());
+        // }
+
+        cuda::aplusb(workSize, a_gpu, b_gpu, c_gpu, n);
 
         times.push_back(t.elapsed());
     }
