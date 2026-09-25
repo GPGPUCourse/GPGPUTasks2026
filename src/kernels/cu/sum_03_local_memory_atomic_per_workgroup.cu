@@ -12,16 +12,18 @@ __global__ void sum_03_local_memory_atomic_per_workgroup(
     unsigned int  n)
 {
     // Подсказки:
-    const uint32_t index = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint32_t index = blockIdx.x * blockDim.x * LOAD_K_VALUES_PER_ITEM + threadIdx.x;
     const uint32_t local_index = threadIdx.x;
     __shared__ unsigned int local_data[GROUP_SIZE];
 
-    if (index < n) {
-      local_data[local_index] = a[index];
-    } else {
-      local_data[local_index] = 0u;
+    uint32_t threadValue = 0;
+    for (uint32_t i = 0; i < LOAD_K_VALUES_PER_ITEM; ++i) {
+      if (index + GROUP_SIZE * i < n) {
+        threadValue += a[index + GROUP_SIZE * i];
+      }
     }
-
+    local_data[local_index] = threadValue;
+    
     uint32_t curThreads = GROUP_SIZE >> 1;
     while(curThreads > 0) {
       __syncthreads();

@@ -149,7 +149,13 @@ void run(int argc, char** argv)
                     } else if (algorithm == "03 local memory and atomicAdd from master thread") {
                         // TODO cuda::sum_03_local_memory_atomic_per_workgroup(...);
                         sum_accum_gpu.fill(0);
-                        cuda::sum_03_local_memory_atomic_per_workgroup(gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu, n);
+                        cuda::sum_03_local_memory_atomic_per_workgroup(
+                            gpu::WorkSize(
+                                GROUP_SIZE,
+                                div_ceil(
+                                    n,
+                                    LOAD_K_VALUES_PER_ITEM)),
+                            input_gpu, sum_accum_gpu, n);
                         sum_accum_gpu.readN(&gpu_sum, 1);
                         // throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
                     } else if (algorithm == "04 local reduction") {
