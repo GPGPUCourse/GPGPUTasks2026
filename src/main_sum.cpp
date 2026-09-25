@@ -69,6 +69,7 @@ void run(int argc, char** argv)
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u sum_accum_gpu(1);
+    gpu::gpu_mem_32u pingpong[2] = { gpu::gpu_mem_32u(n), gpu::gpu_mem_32u(n) };
     gpu::gpu_mem_32u reduction_buffer1_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
     gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
 
@@ -159,8 +160,23 @@ void run(int argc, char** argv)
                         sum_accum_gpu.readN(&gpu_sum, 1);
                         // throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
                     } else if (algorithm == "04 local reduction") {
-                        // TODO cuda::sum_04_local_reduction(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        uint32_t nReduced = n;
+                        uint32_t iter = 0;
+                        gpu::gpu_mem_32u *result = nullptr;
+                        while (nReduced > 1) {
+                          auto &src = iter ? pingpong[iter%2] : input_gpu;
+                          auto &dst = pingpong[(iter + 1) % 2];
+                          cuda::sum_04_local_reduction(
+                              gpu::WorkSize(
+                                  GROUP_SIZE,
+                                  div_ceil(nReduced, LOAD_K_VALUES_PER_ITEM)),
+                              src, dst, nReduced);
+                          nReduced = div_ceil(div_ceil(nReduced, LOAD_K_VALUES_PER_ITEM), GROUP_SIZE);
+                          iter += 1;
+                          result = &dst;
+                        }
+                        result->readN(&gpu_sum, 1);
+                        // throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }

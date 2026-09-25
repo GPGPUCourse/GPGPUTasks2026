@@ -14,12 +14,31 @@ __global__ void sum_04_local_reduction(
     unsigned int  n)
 {
     // Подсказки:
-    // const uint index = blockIdx.x * blockDim.x + threadIdx.x;
-    // const uint local_index = threadIdx.x;
-    // __shared__ unsigned int local_data[GROUP_SIZE];
-    // __syncthreads();
+    const uint32_t offset = blockIdx.x * blockDim.x * LOAD_K_VALUES_PER_ITEM + threadIdx.x;
+    const uint32_t local_index = threadIdx.x;
+    __shared__ unsigned int local_data[GROUP_SIZE];
 
-    // TODO
+    uint32_t threadValue = 0;
+    for (uint32_t i = 0; i < LOAD_K_VALUES_PER_ITEM; ++i) {
+      if (offset + GROUP_SIZE * i < n) {
+        threadValue += a[offset + GROUP_SIZE * i];
+      }
+    }
+    local_data[local_index] = threadValue;
+    
+    uint32_t curThreads = GROUP_SIZE >> 1;
+    while(curThreads > 0) {
+      __syncthreads();
+      if (local_index < curThreads) {
+        local_data[local_index] += local_data[local_index + curThreads];
+      }
+      curThreads >>= 1;
+    }
+    
+    __syncthreads();
+    if (local_index == 0) {
+      b[blockIdx.x] = local_data[0];
+    }
 }
 
 namespace cuda {
