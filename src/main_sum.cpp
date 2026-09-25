@@ -10,6 +10,7 @@
 
 #include <fstream>
 #include <iomanip>
+#include <algorithm>
 
 unsigned int cpu::sum(const unsigned int* values, unsigned int n)
 {
@@ -37,7 +38,7 @@ void run(int argc, char** argv)
     // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
     // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -68,14 +69,30 @@ void run(int argc, char** argv)
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u sum_accum_gpu(1);
+    gpu::gpu_mem_32u pingpong[2] = { gpu::gpu_mem_32u(n), gpu::gpu_mem_32u(n) };
     gpu::gpu_mem_32u reduction_buffer1_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
     gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
-    input_gpu.writeN(values.data(), n);
     // TODO 1) замерьте здесь какая достигнута пропускная пособность PCI-E шины
     // TODO 2) сделайте замер хотя бы три раза
     // TODO 3) и выведите рассчет на основании медианного времени (в легко понятной форме - GB/s)
+    {
+      constexpr uint32_t nSamples = 10;
+      std::vector<double> pcieTimes;
+      pcieTimes.reserve(nSamples);
+
+      for (uint32_t i = 0; i < nSamples; ++i) {
+        timer t;
+        input_gpu.writeN(values.data(), n);
+        auto time = t.elapsed();
+        pcieTimes.push_back(time);
+      }
+
+      double median = stats::median(pcieTimes);
+      std::cout << "______________________________________________________" << std::endl;
+      std::cout << "PCI-E Bandwidth: " << values.size() * sizeof(values[0]) / median / (1u << 30) << " GB/s" << std::endl;
+    }
 
     std::vector<std::string> algorithm_names = {
         "CPU",
@@ -133,10 +150,34 @@ void run(int argc, char** argv)
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "03 local memory and atomicAdd from master thread") {
                         // TODO cuda::sum_03_local_memory_atomic_per_workgroup(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        sum_accum_gpu.fill(0);
+                        cuda::sum_03_local_memory_atomic_per_workgroup(
+                            gpu::WorkSize(
+                                GROUP_SIZE,
+                                div_ceil(
+                                    n,
+                                    LOAD_K_VALUES_PER_ITEM)),
+                            input_gpu, sum_accum_gpu, n);
+                        sum_accum_gpu.readN(&gpu_sum, 1);
+                        // throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
                     } else if (algorithm == "04 local reduction") {
-                        // TODO cuda::sum_04_local_reduction(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        uint32_t nReduced = n;
+                        uint32_t iter = 0;
+                        gpu::gpu_mem_32u *result = nullptr;
+                        while (nReduced > 1) {
+                          auto &src = iter ? pingpong[iter%2] : input_gpu;
+                          auto &dst = pingpong[(iter + 1) % 2];
+                          cuda::sum_04_local_reduction(
+                              gpu::WorkSize(
+                                  GROUP_SIZE,
+                                  div_ceil(nReduced, LOAD_K_VALUES_PER_ITEM)),
+                              src, dst, nReduced);
+                          nReduced = div_ceil(div_ceil(nReduced, LOAD_K_VALUES_PER_ITEM), GROUP_SIZE);
+                          iter += 1;
+                          result = &dst;
+                        }
+                        result->readN(&gpu_sum, 1);
+                        // throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
