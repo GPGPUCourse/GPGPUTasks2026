@@ -4,3 +4,6 @@
 /build*/
 cmake-build*
 .vs
+CMakeUserPresets.json
+conanfile.py
+*.bmp
