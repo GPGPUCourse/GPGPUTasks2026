@@ -7,6 +7,9 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+#define THRESHOLD  256.0f
+#define THRESHOLD2 65536.0f   // 256*256
+
 __global__ void mandelbrot(float* results,
                         unsigned int width, unsigned int height,
                         float fromX, float fromY,
@@ -16,7 +19,35 @@ __global__ void mandelbrot(float* results,
     const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int j = blockIdx.y * blockDim.y + threadIdx.y;
 
-    // TODO
+
+    float x0 = fromX + (i + 0.5f)  * sizeX / width;
+    float y0 = fromY + (j + 0.5f)  * sizeY / height;
+
+    if (x0 * x0 + y0 * y0 > 4.0f) {
+        results[j * width + i] = 0;
+        return;
+    }
+
+    float x = x0;
+    float y = y0;
+
+    int iter = 0;
+    for (; iter < iters; ++iter) {
+        float xPrev = x;
+        x = x * x - y * y + x0;
+        y = 2.0f * xPrev * y + y0;
+        if ((x * x + y * y) > THRESHOLD2) {
+            break;
+        }
+    }
+
+    float result = iter;
+    if (isSmoothing && iter != iters) {
+        result = result - logf(logf(sqrtf(x * x + y * y)) / logf(THRESHOLD)) / logf(2.0f);
+    }
+
+    result = 1.0f * result / iters;
+    results[j * width + i] = result;
 }
 
 namespace cuda {
