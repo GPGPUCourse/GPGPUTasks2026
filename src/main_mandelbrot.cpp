@@ -131,7 +131,7 @@ void run(int argc, char** argv)
                     cuda::mandelbrot(wrkSize, gpu_results, width, height,
                                      centralX - sizeX / 2.0f,
                                      centralY - sizeY / 2.0f, sizeX, sizeY,
-                                     iterationsLimit, 1u);
+                                     iterationsLimit, uint32_t(isSmoothing));
                     // throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
 
                     // _______________________________Vulkan_________________________________________
