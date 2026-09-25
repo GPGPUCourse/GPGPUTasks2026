@@ -115,7 +115,7 @@ void run(int argc, char** argv)
 
         // Вычисляем достигнутую эффективную пропускную способность видеопамяти
         double memory_size_gb = sizeof(unsigned int) * 3 * width * height / 1024.0 / 1024.0 / 1024.0;
-        std::cout << "a + b matrix bad kernel median VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s" << std::endl;
+        std::cout << "a + b matrix good kernel median VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s" << std::endl;
 
         // TODO Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
         std::vector<unsigned int> cs(width * height, 0);
