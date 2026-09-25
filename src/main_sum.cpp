@@ -90,7 +90,8 @@ void run(int argc, char** argv)
       }
 
       double median = stats::median(pcieTimes);
-      std::cout << "PCI-E Bandwidth: " << values.size() * sizeof(values[0]) / median / (1u << 30) << " GiB/s" << std::endl;
+      std::cout << "______________________________________________________" << std::endl;
+      std::cout << "PCI-E Bandwidth: " << values.size() * sizeof(values[0]) / median / (1u << 30) << " GB/s" << std::endl;
     }
 
     std::vector<std::string> algorithm_names = {
