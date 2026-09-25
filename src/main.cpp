@@ -145,7 +145,7 @@ int main()
       std::cout << prefix_string << "type: " << getDeviceTypeString(readDeviceType(device)) << std::endl;
       std::cout << prefix_string << "mem size: " << readDeviceUlong(device, CL_DEVICE_GLOBAL_MEM_SIZE) / (1ull << 20) << std::endl;
       std::cout << prefix_string << "c version: " << readDeviceString(device, CL_DEVICE_OPENCL_C_VERSION).data() << std::endl;
-      std::cout << prefix_string << "device version: " << readDeviceString(device, CL_DEVICE_VERSION).data() << std::endl;
+      std::cout << prefix_string << "max mem alloc: " << readDeviceUlong(device, CL_DEVICE_MAX_MEM_ALLOC_SIZE) / (1ull << 20) << std::endl;
 		}
 	}
 
