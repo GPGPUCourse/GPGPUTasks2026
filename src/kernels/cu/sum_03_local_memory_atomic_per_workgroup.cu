@@ -14,7 +14,7 @@ __global__ void sum_03_local_memory_atomic_per_workgroup(
     // Подсказки:
     const uint32_t offset = blockIdx.x * blockDim.x * LOAD_K_VALUES_PER_ITEM + threadIdx.x;
     const uint32_t local_index = threadIdx.x;
-    __shared__ unsigned int local_data[GROUP_SIZE];
+    __shared__ unsigned int local_data[GROUP_SIZE/WARP_SIZE];
 
     uint32_t threadValue = 0;
     for (uint32_t i = 0; i < LOAD_K_VALUES_PER_ITEM; ++i) {
@@ -22,19 +22,23 @@ __global__ void sum_03_local_memory_atomic_per_workgroup(
         threadValue += a[offset + GROUP_SIZE * i];
       }
     }
-    local_data[local_index] = threadValue;
-    
-    uint32_t curThreads = GROUP_SIZE >> 1;
-    while(curThreads > 0) {
-      __syncthreads();
-      if (local_index < curThreads) {
-        local_data[local_index] += local_data[local_index + curThreads];
-      }
-      curThreads >>= 1;
-    }
 
+    threadValue += __shfl_xor_sync(0xffffffff, threadValue, 16);
+    threadValue += __shfl_xor_sync(0xffffffff, threadValue, 8);
+    threadValue += __shfl_xor_sync(0xffffffff, threadValue, 4);
+    threadValue += __shfl_xor_sync(0xffffffff, threadValue, 2);
+    threadValue += __shfl_xor_sync(0xffffffff, threadValue, 1);
+    if (local_index % WARP_SIZE == 0) {
+      local_data[local_index / WARP_SIZE] = threadValue;
+    }
+    
+    __syncthreads();
     if (local_index == 0) {
-      atomicAdd(sum, local_data[0]);
+      uint32_t res = 0;
+      for (int i = 0; i < GROUP_SIZE/WARP_SIZE; ++i) {
+        res += local_data[i];
+      }
+      atomicAdd(sum, res);
     }
 }
 
