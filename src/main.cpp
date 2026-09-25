@@ -56,6 +56,30 @@ cl_device_type readDeviceType(cl_device_id device) {
   return paramData;
 }
 
+std::string getDeviceTypeString(cl_device_type type) {
+  std::string str;
+  switch (type) {
+    case CL_DEVICE_TYPE_DEFAULT:
+      str = "default";
+      break;
+    case CL_DEVICE_TYPE_CPU:
+      str = "cpu";
+      break;
+    case CL_DEVICE_TYPE_GPU:
+      str = "gpu";
+      break;
+    case CL_DEVICE_TYPE_ACCELERATOR:
+      str = "accelerator";
+      break;
+    case CL_DEVICE_TYPE_CUSTOM:
+      str = "custom";
+      break;
+    default:
+      str = "all";
+  }
+  return str;
+}
+
 int main()
 {
 	// Пытаемся слинковаться с символами OpenCL API в runtime (через библиотеку libs/clew)
@@ -118,9 +142,10 @@ int main()
 
       constexpr std::string_view prefix_string = "        Device ";
       std::cout << prefix_string << "name: " << readDeviceString(device, CL_DEVICE_NAME).data() << std::endl;
-      std::cout << prefix_string << "type: " << readDeviceType(device) << std::endl;
+      std::cout << prefix_string << "type: " << getDeviceTypeString(readDeviceType(device)) << std::endl;
       std::cout << prefix_string << "mem size: " << readDeviceUlong(device, CL_DEVICE_GLOBAL_MEM_SIZE) / (1ull << 20) << std::endl;
       std::cout << prefix_string << "c version: " << readDeviceString(device, CL_DEVICE_OPENCL_C_VERSION).data() << std::endl;
+      std::cout << prefix_string << "device version: " << readDeviceString(device, CL_DEVICE_VERSION).data() << std::endl;
 		}
 	}
 
