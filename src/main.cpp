@@ -112,6 +112,18 @@ int main()
 			cl_bool deviceEndianLittle;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_ENDIAN_LITTLE, deviceEndianLittleSize, &deviceEndianLittle, nullptr));
 			std::cout << "Is little endian OpenCL device: " << deviceEndianLittle << std::endl;
+
+			size_t deviceComputeUnitsSize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_COMPUTE_UNITS, 0, nullptr, &deviceComputeUnitsSize));
+			cl_uint deviceComputeUnits;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_COMPUTE_UNITS, deviceComputeUnitsSize, &deviceComputeUnits, nullptr));
+			std::cout << "Maximum compute units of OpenCL device: " << deviceComputeUnits << std::endl;
+
+			size_t deviceMaxClockFrequencySize = 0;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_CLOCK_FREQUENCY, 0, nullptr, &deviceMaxClockFrequencySize));
+			cl_uint deviceMaxClockFrequency;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_CLOCK_FREQUENCY, deviceMaxClockFrequencySize, &deviceMaxClockFrequency, nullptr));
+			std::cout << "Maximum clock frequency of OpenCL device: " << deviceMaxClockFrequency << " MHz" << std::endl;
 		}
 	}
 
