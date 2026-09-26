@@ -22,6 +22,6 @@ __kernel void aplusb_matrix_good(__global const uint* a,
         return;
     }
 
-    const size_t index = y * size_t(width) + x;
+    const size_t index = y * (size_t)width + x;
     c[index] = a[index] + b[index];
 }
