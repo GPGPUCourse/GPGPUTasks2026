@@ -13,13 +13,32 @@ __global__ void sum_04_local_reduction(
     unsigned int* b,
     unsigned int  n)
 {
-    // Подсказки:
-    // const uint index = blockIdx.x * blockDim.x + threadIdx.x;
-    // const uint local_index = threadIdx.x;
-    // __shared__ unsigned int local_data[GROUP_SIZE];
-    // __syncthreads();
+    const uint index = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint local_index = threadIdx.x;
 
-    // TODO
+    __shared__ unsigned int local_data[GROUP_SIZE];
+    local_data[local_index] = (index < n) ? a[index] : 0;
+    __syncthreads();
+
+    // Дерево: на каждом уровне первые s потоков прибавляют к своей ячейке ячейку на s правее.
+    // Барьер нужен, пока уровень исполняют потоки разных варпов, то есть пока s >= WARP_SIZE.
+    for (unsigned int s = GROUP_SIZE / 2; s >= WARP_SIZE; s /= 2) {
+        if (local_index < s) {
+            local_data[local_index] += local_data[local_index + s];
+        }
+        __syncthreads();
+    }
+
+    // Осталось WARP_SIZE ячеек, их складывает один варп обменом регистрами, без shared-памяти и барьеров
+    if (local_index < WARP_SIZE) {
+        unsigned int value = local_data[local_index];
+        for (unsigned int s = WARP_SIZE / 2; s > 0; s /= 2) {
+            value += __shfl_down_sync(0xffffffffu, value, s);
+        }
+        if (local_index == 0) {
+            b[blockIdx.x] = value;
+        }
+    }
 }
 
 namespace cuda {
