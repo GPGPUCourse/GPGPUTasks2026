@@ -126,8 +126,7 @@ void run(int argc, char** argv)
 
                     // _______________________________CUDA___________________________________________
                 } else if (context.type() == gpu::Context::TypeCUDA) {
-                    // TODO cuda::mandelbrot(..);
-                    gpu::WorkSize workSize(GROUP_SIZE_X, GROUP_SIZE_Y, height, width);
+                    gpu::WorkSize workSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height);
                     cuda::mandelbrot(workSize, gpu_results, width, height, centralX - sizeX / 2.0f, centralY - sizeY / 2.0f, sizeX, sizeY, iterationsLimit, isSmoothing);
                     // _______________________________Vulkan_________________________________________
                 } else if (context.type() == gpu::Context::TypeVulkan) {

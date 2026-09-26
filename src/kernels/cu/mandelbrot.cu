@@ -21,7 +21,7 @@ __global__ void mandelbrot(float* results,
 
     const float threshold = 256.0f;
     const float threshold2 = threshold * threshold;
-    
+
     float x0 = fromX + (i + 0.5f) * sizeX / width;
     float y0 = fromY + (j + 0.5f) * sizeY / height;
 
