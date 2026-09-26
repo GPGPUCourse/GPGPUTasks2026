@@ -99,19 +99,29 @@ int main()
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, 0, nullptr, &deviceTypeSize));
 			cl_device_type deviceType;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, deviceTypeSize, &deviceType, nullptr));
-			std::cout << "Type of OpenCL device: " << deviceType << std::endl;
+			std::cout << "Type of OpenCL device: ";
+			if(deviceType == CL_DEVICE_TYPE_GPU) {
+				std::cout << "GPU";
+			} else if(deviceType == CL_DEVICE_TYPE_CPU) {
+				std::cout << "CPU";
+			} else if(deviceType == CL_DEVICE_TYPE_ACCELERATOR) {
+				std::cout << "ACCELERATOR";
+			} else {
+				std::cout << "OTHER";
+			}
+			std::cout << std::endl;
 
 			size_t deviceMemorySize = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, 0, nullptr, &deviceMemorySize));
 			cl_ulong deviceMemory;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, deviceMemorySize, &deviceMemory, nullptr));
-			std::cout << "Memory size of OpenCL device: " << deviceMemory/ (1 << 20) << std::endl;
+			std::cout << "Memory size of OpenCL device: " << deviceMemory/ (1 << 20) << " MB" << std::endl;
 
 			size_t deviceEndianLittleSize = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_ENDIAN_LITTLE, 0, nullptr, &deviceEndianLittleSize));
 			cl_bool deviceEndianLittle;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_ENDIAN_LITTLE, deviceEndianLittleSize, &deviceEndianLittle, nullptr));
-			std::cout << "Is little endian OpenCL device: " << deviceEndianLittle << std::endl;
+			std::cout << "Is little endian OpenCL device: " << (deviceEndianLittle ? "true" : "false") << std::endl;
 
 			size_t deviceComputeUnitsSize = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_COMPUTE_UNITS, 0, nullptr, &deviceComputeUnitsSize));
