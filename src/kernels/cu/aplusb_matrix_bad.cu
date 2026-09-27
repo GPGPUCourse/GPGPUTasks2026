@@ -23,7 +23,7 @@ __global__ void aplusb_matrix_bad(const unsigned int* a,
     int x = blockIdx.y * blockDim.y + threadIdx.y;
 
     if (x < width && y < height) {
-        int index = x * height + y;
+        int index = y * width + x;
         c[index] = a[index] + b[index];
     }
 
