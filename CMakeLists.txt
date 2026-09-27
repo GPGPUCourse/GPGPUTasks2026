@@ -104,4 +104,8 @@ target_link_libraries(main_aplusb_matrix ${PROJECT_NAME}_core)
 if (GPU_CUDA_SUPPORT)
     target_include_directories(main_aplusb PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
     target_include_directories(main_aplusb_matrix PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+
+    target_link_options(main_aplusb PRIVATE "LINKER:/FORCE:MULTIPLE")
+    target_link_options(main_aplusb_matrix PRIVATE "LINKER:/FORCE:MULTIPLE")
+    target_link_options(libgpu_test PRIVATE "LINKER:/FORCE:MULTIPLE")
 endif ()
