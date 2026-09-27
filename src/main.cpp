@@ -128,7 +128,7 @@ int main()
 
 			cl_ulong deviceMemSize;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(deviceMemSize), &deviceMemSize, nullptr));
-			std::cout << "        Global mem size: " << deviceMemSize / 1048576 << " MB and " <<  deviceMemSize / 1024 % 1024 << "KB and " << deviceMemSize % 1024 << " B" << std::endl;
+			std::cout << "        Global mem size: " << (deviceMemSize / 1048576) << " MB" << std::endl;
 		}
 	}
 
