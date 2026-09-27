@@ -499,10 +499,13 @@ vk::raii::CommandBuffer avk2::VulkanEngine::createCommandBuffer()
 	return command_buffer;
 }
 
-void avk2::VulkanEngine::submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer)
+void avk2::VulkanEngine::submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer, bool trace)
 {
+	if (trace) std::cerr << "[Vulkan] submitting command buffer to queue" << std::endl;
 	std::shared_ptr<vk::raii::Fence> fence = submitCommandBufferAsync(command_buffer);
+	if (trace) std::cerr << "[Vulkan] queue submit returned; waiting for fence" << std::endl;
 	VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 345123451241);
+	if (trace) std::cerr << "[Vulkan] fence signaled" << std::endl;
 }
 
 std::shared_ptr<vk::raii::Fence> avk2::VulkanEngine::submitCommandBufferAsync(const vk::raii::CommandBuffer &command_buffer)
@@ -1313,6 +1316,11 @@ void avk2::KernelSource::exec(const PushConstant &params, const gpu::WorkSize &w
 
 			buffers_info[i] = vk::DescriptorBufferInfo(args[i].buffer->vkBufferData()->getBuffer(), args[i].buffer->vkoffset(), buffer_size);
 			descriptor_writes[i].setBufferInfo(buffers_info[i]);
+			if (trace_kernel_exec) {
+				std::cerr << "[Vulkan] " << getProgramName() << ": binding " << binding
+					<< " buffer size=" << args[i].buffer->size()
+					<< " bytes, offset=" << args[i].buffer->vkoffset() << std::endl;
+			}
 		} else if (args[i].image) {
 			rassert(vk::DescriptorType::eStorageImage == descriptor_types[i] || vk::DescriptorType::eSampledImage == descriptor_types[i] || vk::DescriptorType::eCombinedImageSampler == descriptor_types[i], 423512341412);
 			// TODO ADD LAYOUTS SUPPORT: VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
@@ -1378,8 +1386,15 @@ void avk2::KernelSource::exec(const PushConstant &params, const gpu::WorkSize &w
 
 	timer gpu_t;
 	gpu_t.start();
+	if (trace_kernel_exec) {
+		const auto properties = context.vk()->getPhysicalDevice().getProperties();
+		std::cerr << "[Vulkan] " << getProgramName()
+			<< ": maxStorageBufferRange=" << properties.limits.maxStorageBufferRange
+			<< " bytes, group count=" << ws.vkGroupCount()[0] << "x"
+			<< ws.vkGroupCount()[1] << "x" << ws.vkGroupCount()[2] << std::endl;
+	}
 	trace("submitting and waiting for dispatch");
-	context.vk()->submitCommandBuffer(command_buffer);
+	context.vk()->submitCommandBuffer(command_buffer, trace_kernel_exec);
 	trace("dispatch completed");
 	last_exec_gpu_time_ = gpu_t.elapsed();
 
