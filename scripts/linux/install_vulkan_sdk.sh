@@ -13,11 +13,23 @@ njobs=`grep -c '^processor' /proc/cpuinfo`
 
 install_prefix=/usr/local
 
+echo "====== 1 ======"
+
 sudo apt update
+echo "====== 2 ======"
+
 sudo apt install -yq libgraphicsmagick++1-dev # we need Magick++.h so that CImg.h can load jpg files
+echo "====== 3 ======"
+
 sudo apt install -yq build-essential pkg-config libx11-dev libxrandr-dev # to fix #include <X11/extensions/Xrandr.h> when compiling Vulkan-Loader
+echo "====== 4 ======"
+
 sudo apt install -yq libx11-xcb-dev libxkbcommon-dev libxrandr-dev libegl1-mesa-dev # to fix "The following required packages were not found: - wayland-client" when compiling Validation-Layers - see https://chromium.googlesource.com/external/github.com/KhronosGroup/Vulkan-ValidationLayers/%2B/refs/tags/v1.1.107/BUILD.md#linux-build-requirements
-sudo apt install -yq glslc libspirv-reflect-dev spirv-headers
+echo "====== 5 ======"
+
+# sudo apt install -yq glslc libspirv-reflect-dev spirv-headers
+sudo apt install -yq glslc spirv-headers
+
 
 googletest_version=1.12.1
 vulkan_sdk_version=1.3.283
