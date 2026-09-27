@@ -9,5 +9,6 @@
 
 #define LOAD_K_VALUES_PER_ITEM 2
 #define SUM_03_VALUES_PER_ITEM 12
+#define SUM_04_VALUES_PER_ITEM 12
 
 #endif // pragma once

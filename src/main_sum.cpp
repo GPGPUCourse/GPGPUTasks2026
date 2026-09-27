@@ -133,9 +133,10 @@ void run(int argc, char** argv)
                         unsigned int reduction_size = n;
 
                         while (reduction_size > 1) {
-                            ocl_sum04LocalReduction.exec(gpu::WorkSize(GROUP_SIZE, reduction_size),
+                            const unsigned int work_items = div_ceil(reduction_size, (unsigned int)SUM_04_VALUES_PER_ITEM);
+                            ocl_sum04LocalReduction.exec(gpu::WorkSize(GROUP_SIZE, work_items),
                                                          *reduction_input, *reduction_output, reduction_size);
-                            reduction_size = div_ceil(reduction_size, (unsigned int)GROUP_SIZE);
+                            reduction_size = div_ceil(work_items, (unsigned int)GROUP_SIZE);
                             reduction_input = reduction_output;
                             reduction_output = reduction_output == &reduction_buffer1_gpu
                                 ? &reduction_buffer2_gpu
