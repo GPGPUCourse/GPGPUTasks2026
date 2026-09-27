@@ -9,6 +9,8 @@
 #include "kernels/kernels.h"
 
 #include <fstream>
+#include <cstdlib>
+#include <string>
 
 struct Params {
     unsigned work_size_x;
@@ -84,6 +86,11 @@ void run(int argc, char** argv)
     shader_params.work_size_y = GROUP_SIZE_Y_BAD;
 
     unsigned task_size = 64;
+    if (const char* requested_size = std::getenv("GPGPU_MATRIX_TASK_SIZE")) {
+        const unsigned long parsed_size = std::stoul(requested_size);
+        rassert(parsed_size >= 1 && parsed_size <= 64, 923854269);
+        task_size = static_cast<unsigned>(parsed_size);
+    }
     const unsigned width = shader_params.width = task_size * 256;
     const unsigned height = shader_params.height = task_size * 128;
     const unsigned size = width * height;
