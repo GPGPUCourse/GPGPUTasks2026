@@ -129,6 +129,26 @@ int main()
 			cl_ulong deviceMemSize;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(deviceMemSize), &deviceMemSize, nullptr));
 			std::cout << "        Global mem size: " << (deviceMemSize / 1048576) << " MB" << std::endl;
+
+			cl_uint maxComputeUnits;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_COMPUTE_UNITS, sizeof(maxComputeUnits), &maxComputeUnits, nullptr));
+			std::cout << "        Max compute units: " << maxComputeUnits << std::endl;
+
+			size_t maxWorkGroupSize;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_WORK_GROUP_SIZE, sizeof(maxWorkGroupSize), &maxWorkGroupSize, nullptr));
+			std::cout << "        Max work group size: " << maxWorkGroupSize << std::endl;
+
+			cl_ulong localMemSize;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_LOCAL_MEM_SIZE, sizeof(localMemSize), &localMemSize, nullptr));
+			std::cout << "        Local mem size: " << localMemSize / 1024 << " KB" << std::endl;
+
+			cl_ulong maxMemAllocSize;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_MEM_ALLOC_SIZE, sizeof(maxMemAllocSize), &maxMemAllocSize, nullptr));
+			std::cout << "        Max memory allocation size: " << (maxMemAllocSize / 1048576) << " MB" << std::endl;
+
+			cl_uint globalMemCachelineSize;
+			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_CACHELINE_SIZE, sizeof(globalMemCachelineSize), &globalMemCachelineSize, nullptr));
+			std::cout << "        Global mem cacheline size: " << globalMemCachelineSize << " B" << std::endl;
 		}
 	}
 
