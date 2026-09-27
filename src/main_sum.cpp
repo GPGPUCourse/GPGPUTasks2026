@@ -128,8 +128,20 @@ void run(int argc, char** argv)
                         ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(gpu::WorkSize(GROUP_SIZE, div_ceil(n, (unsigned int)SUM_03_VALUES_PER_ITEM)), input_gpu, sum_accum_gpu, n);
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "04 local reduction") {
-                        // TODO ocl_sum04LocalReduction.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        gpu::gpu_mem_32u* reduction_input = &input_gpu;
+                        gpu::gpu_mem_32u* reduction_output = &reduction_buffer1_gpu;
+                        unsigned int reduction_size = n;
+
+                        while (reduction_size > 1) {
+                            ocl_sum04LocalReduction.exec(gpu::WorkSize(GROUP_SIZE, reduction_size),
+                                                         *reduction_input, *reduction_output, reduction_size);
+                            reduction_size = div_ceil(reduction_size, (unsigned int)GROUP_SIZE);
+                            reduction_input = reduction_output;
+                            reduction_output = reduction_output == &reduction_buffer1_gpu
+                                ? &reduction_buffer2_gpu
+                                : &reduction_buffer1_gpu;
+                        }
+                        reduction_input->readN(&gpu_sum, 1);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
