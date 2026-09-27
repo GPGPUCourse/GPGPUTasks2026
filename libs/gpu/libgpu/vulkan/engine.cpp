@@ -1128,7 +1128,8 @@ vk::raii::ShaderModule avk2::KernelSource::createShaderModule(const std::shared_
 avk2::VulkanKernel *avk2::KernelSource::compileComputeKernel(const std::shared_ptr<VulkanEngine> &vk) {
 	const ProgramBinaries* compute_program = shaders_programs_[0];
 	rassert(compute_program->isProgramNameEndsWith("_comp"), 350141882);
-	const bool trace_kernel_exec = std::getenv("AVK_TRACE_KERNEL_EXEC") != nullptr;
+	const bool trace_kernel_exec = getProgramName().find("aplusb_matrix_") != std::string::npos ||
+		std::getenv("AVK_TRACE_KERNEL_EXEC") != nullptr;
 	if (trace_kernel_exec) std::cerr << "[Vulkan] " << getProgramName() << ": creating shader module" << std::endl;
 
 	avk2::ShaderModuleInfo shader_module_info;
@@ -1272,7 +1273,8 @@ std::vector<avk2::KernelSource::Arg> avk2::KernelSource::parseArgs(const Arg &ar
 void avk2::KernelSource::exec(const PushConstant &params, const gpu::WorkSize &ws, const Arg &arg0, const Arg &arg1, const Arg &arg2, const Arg &arg3, const Arg &arg4, const Arg &arg5, const Arg &arg6, const Arg &arg7, const Arg &arg8, const Arg &arg9, const Arg &arg10, const Arg &arg11, const Arg &arg12, const Arg &arg13, const Arg &arg14, const Arg &arg15, const Arg &arg16, const Arg &arg17, const Arg &arg18, const Arg &arg19, const Arg &arg20, const Arg &arg21, const Arg &arg22, const Arg &arg23, const Arg &arg24, const Arg &arg25, const Arg &arg26, const Arg &arg27, const Arg &arg28, const Arg &arg29, const Arg &arg30, const Arg &arg31, const Arg &arg32, const Arg &arg33, const Arg &arg34, const Arg &arg35, const Arg &arg36, const Arg &arg37, const Arg &arg38, const Arg &arg39, const Arg &arg40)
 {
 	rassert(isCompute(), 983645706);
-	const bool trace_kernel_exec = std::getenv("AVK_TRACE_KERNEL_EXEC") != nullptr;
+	const bool trace_kernel_exec = getProgramName().find("aplusb_matrix_") != std::string::npos ||
+		std::getenv("AVK_TRACE_KERNEL_EXEC") != nullptr;
 	const auto trace = [&](const char *stage) {
 		if (trace_kernel_exec) std::cerr << "[Vulkan] " << getProgramName() << ": " << stage << std::endl;
 	};
