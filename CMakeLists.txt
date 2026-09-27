@@ -2,6 +2,8 @@ cmake_minimum_required(VERSION 3.20)
 
 project(GPGPUTasks)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
 set(CMAKE_CXX_STANDARD 17)
 
 # Если вы установили CUDA SDK - можете включить поддержку CUDA
@@ -24,10 +26,24 @@ set(GTEST_MAIN_LIBRARIES GTest::gtest_main)
 set(GTEST_BOTH_LIBRARIES ${GTEST_LIBRARIES} ${GTEST_MAIN_LIBRARIES})
 
 # OpenMP позволит распараллеливать циклы на все ядра процессора простыми директивами
+if (APPLE AND CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang")
+    find_path(LIBOMP_INCLUDE_DIR omp.h
+            PATHS /opt/homebrew/opt/libomp/include /usr/local/opt/libomp/include)
+    find_library(LIBOMP_LIBRARY omp
+            PATHS /opt/homebrew/opt/libomp/lib /usr/local/opt/libomp/lib)
+    if (LIBOMP_INCLUDE_DIR AND LIBOMP_LIBRARY)
+        set(OpenMP_C_FLAGS "-Xpreprocessor -fopenmp -I${LIBOMP_INCLUDE_DIR}" CACHE STRING "" FORCE)
+        set(OpenMP_CXX_FLAGS "-Xpreprocessor -fopenmp -I${LIBOMP_INCLUDE_DIR}" CACHE STRING "" FORCE)
+        set(OpenMP_C_LIB_NAMES omp CACHE STRING "" FORCE)
+        set(OpenMP_CXX_LIB_NAMES omp CACHE STRING "" FORCE)
+        set(OpenMP_omp_LIBRARY "${LIBOMP_LIBRARY}" CACHE FILEPATH "" FORCE)
+    endif ()
+endif ()
 find_package(OpenMP)
 if (OpenMP_CXX_FOUND)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${OpenMP_CXX_FLAGS}")
     set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} ${OpenMP_EXE_LINKER_FLAGS}")
+    set(OPENMP_LIBRARIES OpenMP::OpenMP_CXX)
 else ()
     # Это не ошибка т.к. если нет OpenMP - код будет работать, просто директивы распараллеливания ничего не будут делать
     message(WARNING "OpenMP not found!")
@@ -119,9 +135,9 @@ add_executable(main_aplusb     src/main_aplusb.cpp)
 add_executable(main_mandelbrot src/main_mandelbrot.cpp)
 add_executable(main_sum        src/main_sum.cpp)
 
-target_link_libraries(main_aplusb     ${PROJECT_NAME}_core)
-target_link_libraries(main_mandelbrot ${PROJECT_NAME}_core)
-target_link_libraries(main_sum        ${PROJECT_NAME}_core)
+target_link_libraries(main_aplusb     ${PROJECT_NAME}_core ${OPENMP_LIBRARIES})
+target_link_libraries(main_mandelbrot ${PROJECT_NAME}_core ${OPENMP_LIBRARIES})
+target_link_libraries(main_sum        ${PROJECT_NAME}_core ${OPENMP_LIBRARIES})
 
 if (GPU_CUDA_SUPPORT)
     target_include_directories(main_aplusb     PRIVATE ${CUDAToolkit_INCLUDE_DIRS})

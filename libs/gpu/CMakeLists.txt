@@ -225,7 +225,7 @@ target_include_directories(${PROJECT_NAME} PUBLIC ${PROJECT_SOURCE_DIR} ${Vulkan
 target_link_libraries(${PROJECT_NAME} ${LIBRARIES})
 
 add_executable (${PROJECT_NAME}_test ${HEADERS_TEST} ${SOURCES_TEST})
-target_link_libraries (${PROJECT_NAME}_test ${LIBRARIES} ${GTEST_BOTH_LIBRARIES} ${CMAKE_DL_LIBS})
+target_link_libraries (${PROJECT_NAME}_test ${LIBRARIES} ${GTEST_BOTH_LIBRARIES} ${CMAKE_DL_LIBS} ${OPENMP_LIBRARIES})
 add_test(NAME ${PROJECT_NAME}_test COMMAND ${PROJECT_NAME}_test)
 if (GPU_CUDA_SUPPORT)
     target_include_directories(${PROJECT_NAME}_test PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
