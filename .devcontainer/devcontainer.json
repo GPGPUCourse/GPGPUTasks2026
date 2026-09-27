@@ -1,0 +1,14 @@
+{
+  "name": "GPGPU Local Container",
+  "build": {
+    "dockerfile": "./Containerfile",
+    "context": ".."
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools-extension-pack"
+      ]
+    }
+  }
+}
