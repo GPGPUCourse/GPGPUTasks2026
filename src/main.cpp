@@ -45,7 +45,7 @@ int main()
 		throw std::runtime_error("Can't init OpenCL driver!");
 
 	// Откройте
-	// https://www.khronos.org/registry/OpenCL/sdk/1.2/docs/man/xhtml/
+	// https://www.khronos.org/registry/Op	enCL/sdk/1.2/docs/man/xhtml/
 	// Нажмите слева: "OpenCL Runtime" -> "Query Platform Info" -> "clGetPlatformIDs"
 	// Прочитайте документацию clGetPlatformIDs и убедитесь, что этот способ узнать, сколько есть платформ, соответствует документации:
 	cl_uint platformsCount = 0;
@@ -119,7 +119,15 @@ int main()
 			cl_ulong memSize = 0;
 			OCL_SAFE_CALL(
 				clGetDeviceInfo(device, CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(memSize), &memSize, nullptr));
-			std::cout << "        Device memory size: " << memSize / (1 << 20) << std::endl;
+			std::cout << "        Device memory size: " << memSize / (1 << 20) << "MB" << std::endl;
+
+			size_t deviceVersionSize = 0;
+			OCL_SAFE_CALL(
+				clGetDeviceInfo(device, CL_DEVICE_VERSION, 0, nullptr, &deviceVersionSize));
+			std::string deviceVersion(deviceVersionSize, '0');
+			OCL_SAFE_CALL(
+				clGetDeviceInfo(device, CL_DEVICE_VERSION, deviceVersionSize, deviceVersion.data(), nullptr));
+			std::cout << "        OpenCL version: " << deviceVersion << std::endl;
 
 			size_t driverVersionSize = 0;
 			OCL_SAFE_CALL(
@@ -127,7 +135,7 @@ int main()
 			std::string driverVersion(driverVersionSize, '0');
 			OCL_SAFE_CALL(
 				clGetDeviceInfo(device, CL_DRIVER_VERSION, driverVersionSize, driverVersion.data(), nullptr));
-			std::cout << "        Driver version: " << driverVersion << std::endl;
+			std::cout << "        OpenCL implementation version: " << driverVersion << std::endl;
 
 			cl_bool imagesSupport = false;
 			OCL_SAFE_CALL(
