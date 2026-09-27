@@ -55,7 +55,7 @@ void run(int argc, char** argv)
     a_gpu.writeN(as.data(), width * height);
     b_gpu.writeN(bs.data(), width * height);
 
-    gpu::WorkSize workSize(32, 8, width, height);
+    gpu::WorkSize workSize(16, 16, width, height);
     auto kernelTestCall = [&](std::string_view message, auto kernelCall) {
         std::cout << message << std::endl;
 
