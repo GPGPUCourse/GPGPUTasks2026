@@ -4,11 +4,11 @@
 
 #include "../defines.h"
 
-__kernel void aplusb_matrix_good(__global const uint* a,
-                     __global const uint* b,
-                     __global       uint* c,
-                     unsigned int width,
-                     unsigned int height)
+__kernel void aplusb_matrix_good(__global const uint* restrict a,
+    __global const uint* restrict b,
+    __global uint* restrict c,
+    unsigned int width,
+    unsigned int height)
 {
     // все три массива - линейно выложенные двумерные матрицы размера width (число столбиков) x height (число рядов)
     // при этом в памяти подряд идут элементы являющимися соседями в рамках одного ряда,
