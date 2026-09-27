@@ -55,8 +55,7 @@ void run(int argc, char** argv)
     a_gpu.writeN(as.data(), width * height);
     b_gpu.writeN(bs.data(), width * height);
 
-    gpu::WorkSize workSize(16, 16, width, height);
-    auto kernelTestCall = [&](std::string_view message, auto kernelCall) {
+    auto kernelTestCall = [&](std::string_view message, const gpu::WorkSize& workSize, auto kernelCall) {
         std::cout << message << std::endl;
 
         // Запускаем кернел (несколько раз и с замером времени выполнения)
@@ -85,11 +84,14 @@ void run(int argc, char** argv)
         }
     };
 
-    kernelTestCall("Running BAD matrix kernel...", &cuda::aplusb_matrix_bad);
+    // 1 256 is worse, but still
+    gpu::WorkSize badWorkSize(8, 32, width, height);
+    kernelTestCall("Running BAD matrix kernel...", badWorkSize, &cuda::aplusb_matrix_bad);
 
     c_gpu.fill(0);
 
-    kernelTestCall("Running GOOD matrix kernel...", &cuda::aplusb_matrix_good);
+    gpu::WorkSize goodWorkSize(32, 8, width, height);
+    kernelTestCall("Running GOOD matrix kernel...", goodWorkSize, &cuda::aplusb_matrix_good);
 }
 
 int main(int argc, char** argv)
