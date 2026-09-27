@@ -18,7 +18,7 @@ jobs:
     - name: Install prerequisites
       run: |
         sudo apt update
-        sudo apt install -y g++-13
+        sudo apt install -y g++-13 gdb
         sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-13 90
         sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-13 90
 
@@ -65,4 +65,26 @@ jobs:
     - name: Run main_aplusb_matrix
       working-directory: ${{github.workspace}}/build
       run: |
-        ./main_aplusb_matrix 0
+        if ./main_aplusb_matrix 0; then
+          exit 0
+        fi
+        echo 'Original run failed; collecting a backtrace on the same runner'
+        vulkaninfo --summary || true
+        if [ -r /sys/fs/cgroup/memory.max ]; then
+          echo "Cgroup memory limit: $(cat /sys/fs/cgroup/memory.max)"
+        fi
+        gdb -q -batch -ex 'set pagination off' -ex 'set print thread-events off' \
+          -ex run -ex 'thread apply all bt 8' --args ./main_aplusb_matrix 0 || true
+        echo 'Retrying with 112.5 MiB buffers'
+        if GPGPU_MATRIX_TASK_SIZE=30 ./main_aplusb_matrix 0; then
+          echo 'Small-buffer run passed'
+        else
+          echo 'Small-buffer run failed'
+        fi
+        echo 'Retrying the original size with one llvmpipe thread'
+        if LP_NUM_THREADS=1 ./main_aplusb_matrix 0; then
+          echo 'Single-thread run passed'
+        else
+          echo 'Single-thread run failed'
+        fi
+        exit 1
