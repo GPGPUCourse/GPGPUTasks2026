@@ -348,7 +348,7 @@ namespace avk2 {
 		vk::raii::Queue &						getQueue();
 
 		vk::raii::CommandBuffer					createCommandBuffer();
-		void									submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer, bool trace = false);
+		void									submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer);
 		std::shared_ptr<vk::raii::Fence>		submitCommandBufferAsync(const vk::raii::CommandBuffer &command_buffer);
 		vk::raii::DescriptorSet					allocateDescriptor(vk::raii::DescriptorSetLayout& descriptor_set_layout, const std::vector<vk::DescriptorType> &descriptor_types);
 

@@ -12,7 +12,6 @@
 #include "data_image.h"
 
 #include <atomic>
-#include <cstdlib>
 #include <filesystem>
 
 #include "vk/common_host.h"
@@ -499,13 +498,10 @@ vk::raii::CommandBuffer avk2::VulkanEngine::createCommandBuffer()
 	return command_buffer;
 }
 
-void avk2::VulkanEngine::submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer, bool trace)
+void avk2::VulkanEngine::submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer)
 {
-	if (trace) std::cerr << "[Vulkan] submitting command buffer to queue" << std::endl;
 	std::shared_ptr<vk::raii::Fence> fence = submitCommandBufferAsync(command_buffer);
-	if (trace) std::cerr << "[Vulkan] queue submit returned; waiting for fence" << std::endl;
 	VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 345123451241);
-	if (trace) std::cerr << "[Vulkan] fence signaled" << std::endl;
 }
 
 std::shared_ptr<vk::raii::Fence> avk2::VulkanEngine::submitCommandBufferAsync(const vk::raii::CommandBuffer &command_buffer)
@@ -1131,13 +1127,9 @@ vk::raii::ShaderModule avk2::KernelSource::createShaderModule(const std::shared_
 avk2::VulkanKernel *avk2::KernelSource::compileComputeKernel(const std::shared_ptr<VulkanEngine> &vk) {
 	const ProgramBinaries* compute_program = shaders_programs_[0];
 	rassert(compute_program->isProgramNameEndsWith("_comp"), 350141882);
-	const bool trace_kernel_exec = getProgramName().find("aplusb_matrix_") != std::string::npos ||
-		std::getenv("AVK_TRACE_KERNEL_EXEC") != nullptr;
-	if (trace_kernel_exec) std::cerr << "[Vulkan] " << getProgramName() << ": creating shader module" << std::endl;
 
 	avk2::ShaderModuleInfo shader_module_info;
 	vk::raii::ShaderModule shader_module = createShaderModule(vk, *compute_program, &shader_module_info);
-	if (trace_kernel_exec) std::cerr << "[Vulkan] " << getProgramName() << ": shader module ready" << std::endl;
 
 	vk::PipelineShaderStageCreateInfo pipeline_stages_create_info({}, vk::ShaderStageFlagBits::eCompute, shader_module, name_.c_str());
 
@@ -1175,9 +1167,7 @@ avk2::VulkanKernel *avk2::KernelSource::compileComputeKernel(const std::shared_p
 
 	VulkanKernel *kernel = new VulkanKernel(compute_program->programName());
 //		vk::raii::PipelineCache pipeline_cache = vk->getDevice().createPipelineCache(vk::PipelineCacheCreateInfo()); // TODO use pipeline caching
-	if (trace_kernel_exec) std::cerr << "[Vulkan] " << getProgramName() << ": creating compute pipeline" << std::endl;
 	vk::raii::Pipeline pipeline = vk->getDevice().createComputePipeline(nullptr, compute_pipeline_create_info);
-	if (trace_kernel_exec) std::cerr << "[Vulkan] " << getProgramName() << ": compute pipeline ready" << std::endl;
 	kernel->create(std::move(descriptor_set_layout_raii), std::move(descriptor_set_layout_rassert_raii), std::move(pipeline_layout), std::move(pipeline), std::move(shader_module_info));
 	return kernel;
 }
@@ -1276,21 +1266,13 @@ std::vector<avk2::KernelSource::Arg> avk2::KernelSource::parseArgs(const Arg &ar
 void avk2::KernelSource::exec(const PushConstant &params, const gpu::WorkSize &ws, const Arg &arg0, const Arg &arg1, const Arg &arg2, const Arg &arg3, const Arg &arg4, const Arg &arg5, const Arg &arg6, const Arg &arg7, const Arg &arg8, const Arg &arg9, const Arg &arg10, const Arg &arg11, const Arg &arg12, const Arg &arg13, const Arg &arg14, const Arg &arg15, const Arg &arg16, const Arg &arg17, const Arg &arg18, const Arg &arg19, const Arg &arg20, const Arg &arg21, const Arg &arg22, const Arg &arg23, const Arg &arg24, const Arg &arg25, const Arg &arg26, const Arg &arg27, const Arg &arg28, const Arg &arg29, const Arg &arg30, const Arg &arg31, const Arg &arg32, const Arg &arg33, const Arg &arg34, const Arg &arg35, const Arg &arg36, const Arg &arg37, const Arg &arg38, const Arg &arg39, const Arg &arg40)
 {
 	rassert(isCompute(), 983645706);
-	const bool trace_kernel_exec = getProgramName().find("aplusb_matrix_") != std::string::npos ||
-		std::getenv("AVK_TRACE_KERNEL_EXEC") != nullptr;
-	const auto trace = [&](const char *stage) {
-		if (trace_kernel_exec) std::cerr << "[Vulkan] " << getProgramName() << ": " << stage << std::endl;
-	};
 
 	timer total_t;
 	total_t.start();
 
-	trace("getting context");
 	gpu::Context context;
 
-	trace("getting kernel");
 	VulkanKernel *kernel = getKernel(context.vk()); // constructing pipeline
-	trace("kernel ready");
 
 	std::vector<Arg> args = parseArgs(arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10, arg11, arg12, arg13, arg14, arg15, arg16, arg17, arg18, arg19, arg20, arg21, arg22, arg23, arg24, arg25, arg26, arg27, arg28, arg29, arg30, arg31, arg32, arg33, arg34, arg35, arg36, arg37, arg38, arg39, arg40);
 
@@ -1316,11 +1298,6 @@ void avk2::KernelSource::exec(const PushConstant &params, const gpu::WorkSize &w
 
 			buffers_info[i] = vk::DescriptorBufferInfo(args[i].buffer->vkBufferData()->getBuffer(), args[i].buffer->vkoffset(), buffer_size);
 			descriptor_writes[i].setBufferInfo(buffers_info[i]);
-			if (trace_kernel_exec) {
-				std::cerr << "[Vulkan] " << getProgramName() << ": binding " << binding
-					<< " buffer size=" << args[i].buffer->size()
-					<< " bytes, offset=" << args[i].buffer->vkoffset() << std::endl;
-			}
 		} else if (args[i].image) {
 			rassert(vk::DescriptorType::eStorageImage == descriptor_types[i] || vk::DescriptorType::eSampledImage == descriptor_types[i] || vk::DescriptorType::eCombinedImageSampler == descriptor_types[i], 423512341412);
 			// TODO ADD LAYOUTS SUPPORT: VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
@@ -1339,9 +1316,7 @@ void avk2::KernelSource::exec(const PushConstant &params, const gpu::WorkSize &w
 			descriptor_writes[i].setImageInfo(images_info[i]);
 		}
 	}
-	trace("updating descriptors");
 	context.vk()->getDevice().updateDescriptorSets(descriptor_writes, nullptr);
-	trace("descriptors ready");
 
 	vk::raii::CommandBuffer command_buffer = context.vk()->createCommandBuffer();
 
@@ -1377,28 +1352,16 @@ void avk2::KernelSource::exec(const PushConstant &params, const gpu::WorkSize &w
 		rassert(spirv_group_size[d] == ws.vkGroupSize()[d], 151466595490051);
 	}
 
-	trace("recording dispatch");
 	dispatchAutoSubdivided(command_buffer, ws);
-	trace("dispatch recorded");
 
 	command_buffer.end();
 	last_exec_prepairing_time_ = total_t.elapsed();
 
 	timer gpu_t;
 	gpu_t.start();
-	if (trace_kernel_exec) {
-		const auto properties = context.vk()->getPhysicalDevice().getProperties();
-		std::cerr << "[Vulkan] " << getProgramName()
-			<< ": maxStorageBufferRange=" << properties.limits.maxStorageBufferRange
-			<< " bytes, group count=" << ws.vkGroupCount()[0] << "x"
-			<< ws.vkGroupCount()[1] << "x" << ws.vkGroupCount()[2] << std::endl;
-	}
-	trace("submitting and waiting for dispatch");
-	context.vk()->submitCommandBuffer(command_buffer, trace_kernel_exec);
-	trace("dispatch completed");
+	context.vk()->submitCommandBuffer(command_buffer);
 	last_exec_gpu_time_ = gpu_t.elapsed();
 
-	trace("checking kernel result guards");
 	if (kernel->isRassertUsed()) {
 		kernel->checkRassertCode();
 	}
@@ -1411,7 +1374,6 @@ void avk2::KernelSource::exec(const PushConstant &params, const gpu::WorkSize &w
 			}
 		}
 	}
-	trace("kernel checks completed");
 
 	last_exec_total_time_ = total_t.elapsed();
 }
