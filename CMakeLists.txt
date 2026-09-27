@@ -5,7 +5,8 @@ project(GPGPUTasks)
 set(CMAKE_CXX_STANDARD 17)
 
 # Если вы установили CUDA SDK - можете включить поддержку CUDA
-option(GPU_CUDA_SUPPORT "CUDA support." OFF)
+option(GPU_CUDA_SUPPORT "CUDA support." ON)
+message(STATUS "GPU_CUDA_SUPPORT = '${GPU_CUDA_SUPPORT}'")
 
 # GLSLC_BIN используйтся для компиляции Vulkan шейдеров (GLSL)
 if (NOT DEFINED GLSLC_BIN)
