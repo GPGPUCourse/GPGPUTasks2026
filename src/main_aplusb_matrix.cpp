@@ -53,8 +53,11 @@ void run(int argc, char** argv)
         for (int iter = 0; iter < 10; ++iter) {
             timer t;
 
-            // Настраиваем размер рабочего пространства (n) и размер рабочих групп в этом рабочем пространстве (GROUP_SIZE=256)
-            gpu::WorkSize workSize(1, 256, ((width + 31) / 32) * 32, height);
+            // Перестановка индексов в BAD требует размера пространства, равного степени двойки
+            unsigned int paddedN = 256;
+            while (paddedN < width * height)
+                paddedN *= 2;
+            gpu::WorkSize workSize(256, paddedN);
 
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
             cuda::aplusb_matrix_bad(workSize, a_gpu, b_gpu, c_gpu, width, height);

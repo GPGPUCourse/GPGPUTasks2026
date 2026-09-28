@@ -12,15 +12,15 @@ __global__ void aplusb_matrix_bad(const unsigned int* a,
                              unsigned int  width,
                              unsigned int  height)
 {
-    const unsigned int columnGroups = (width + 31) / 32;
-    const unsigned int x = (blockIdx.x % columnGroups) * 32 + blockIdx.x / columnGroups;
-    const unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
-    
-    if (x >= width || y >= height)
+    const unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int mask = gridDim.x * blockDim.x - 1;
+    // тут по умному нечетный множитель переставляет индексы без повторов по модулю степени двойки, magic number в общем 
+    // https://stackoverflow.com/questions/11871245/knuths-multiplicative-hash
+    const unsigned int index = (tid * 2654435761u) & mask;
+
+    if (index >= width * height)
         return;
-    
-    const unsigned int index = y * width + x;
-    
+
     c[index] = a[index] + b[index];
 }
 
