@@ -24,11 +24,6 @@ __kernel void aplusb_matrix_bad(__global const uint* a,
     if (x >= width || y >= height)
         return;
 
-    uint stream_id = y * width + x;
-
-    uint bad_x = stream_id / height;
-    uint bad_y = stream_id % height;
-
-    uint idx = bad_y * width + bad_x;
+    uint idx = y * width + x;
     c[idx] = a[idx] + b[idx];
 }

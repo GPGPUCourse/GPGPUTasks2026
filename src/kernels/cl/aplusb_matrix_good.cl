@@ -19,11 +19,9 @@ __kernel void aplusb_matrix_good(__global const uint* a,
     // TODO реализуйте этот кернел - просуммируйте две матрицы так чтобы получить максимально ХОРОШУЮ производительность с точки зрения memory coalesced паттерна доступа
 
     uint x = get_global_id(0);
-    uint y = get_global_id(1);
 
-    if (x >= width || y >= height)
+    if (x >= (width * height))
         return;
 
-    uint idx = y * width + x;
-    c[idx] = a[idx] + b[idx];
+    c[x] = a[x] + b[x];
 }
