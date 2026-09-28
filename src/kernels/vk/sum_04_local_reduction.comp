@@ -15,16 +15,29 @@ layout (push_constant) uniform PushConstants {
 
 layout (local_size_x = GROUP_SIZE) in;
 
-// shared uint local_data[GROUP_SIZE];
+shared uint local_data[GROUP_SIZE];
 
 void main()
 {
-    // Подсказки:
-    // const uint index = gl_GlobalInvocationID.x;
-    // const uint local_index = gl_LocalInvocationID.x;
-    // локальная память объявлена выше (закомментировано)
-    // memoryBarrierShared();
-    // barrier();
+    const uint index = gl_GlobalInvocationID.x;
+    const uint local_index = gl_LocalInvocationID.x;
 
-    // TODO
+    local_data[local_index] = index < params.n ? a[index] : 0;
+
+    memoryBarrierShared();
+    barrier();
+
+    int level = GROUP_SIZE / 2;
+    while (level > 0) {
+        if (local_index < level) {
+            local_data[local_index] += local_data[local_index + level];
+        }
+        memoryBarrierShared();
+        barrier();
+        level /= 2;
+    }
+
+    if (local_index == 0) {
+        b[gl_WorkGroupID.x] = local_data[0];
+    }
 }
