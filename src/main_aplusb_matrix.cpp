@@ -56,6 +56,9 @@ void run(int argc, char** argv)
 
     gpu::WorkSize workSize(GROUP_SIZE, 1, width, height);
 
+    // два чтения и одна запись на каждый элемент
+    const double processed_gb = 3.0 * sizeof(unsigned int) * element_count / 1e9;
+
     {
         std::cout << "Running BAD matrix kernel..." << std::endl;
 
@@ -76,7 +79,9 @@ void run(int argc, char** argv)
 
             times.push_back(t.elapsed());
         }
+
         std::cout << "[BAD] a + b matrix kernel times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+        std::cout << "[BAD] median memory bandwidth: " << processed_gb / stats::median(times) << " GB/s" << std::endl;
 
         // TODO Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
         std::vector<unsigned int> cs(element_count, 0);
@@ -102,7 +107,9 @@ void run(int argc, char** argv)
 
             times.push_back(t.elapsed());
         }
+
         std::cout << "[GOOD] a + b matrix kernel times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+        std::cout << "[GOOD] mediann memory bandwidth: " << processed_gb / stats::median(times) << " GB/s" << std::endl;
 
         std::vector<unsigned int> cs(element_count, 0);
         c_gpu.readN(cs.data(), element_count);
