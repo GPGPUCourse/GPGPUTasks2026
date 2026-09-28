@@ -34,12 +34,12 @@ RUN apt-get update && apt-get install -y \
     clinfo
 
 # 3) Install task dependencies
-COPY ./scripts/linux/install_dependencies.sh /tmp/install_dependencies.sh
+COPY ./scripts/linux/install_dependencies_adapted.sh /tmp/install_dependencies.sh
 RUN chmod +x /tmp/install_dependencies.sh && \
     /tmp/install_dependencies.sh && \
     rm /tmp/install_dependencies.sh
 
-COPY ./scripts/linux/install_vulkan_sdk.sh /tmp/install_vulkan_sdk.sh
+COPY ./scripts/linux/install_vulkan_sdk_adapted.sh /tmp/install_vulkan_sdk.sh
 RUN chmod +x /tmp/install_vulkan_sdk.sh && \
     /tmp/install_vulkan_sdk.sh && \
     rm /tmp/install_vulkan_sdk.sh
