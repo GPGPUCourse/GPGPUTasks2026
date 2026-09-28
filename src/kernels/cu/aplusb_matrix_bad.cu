@@ -19,6 +19,17 @@ __global__ void aplusb_matrix_bad(const unsigned int* a,
     // т.е. если в матрице сделать шаг вверх или вниз на одну ячейку - то в памяти мы шагнем на так называемый stride=width*4 байта
 
     // TODO реализуйте этот кернел - просуммируйте две матрицы так чтобы получить максимально ПЛОХУЮ производительность с точки зрения memory coalesced паттерна доступа
+    const unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int y = blockIdx.y * GROUP_SIZE_Y + threadIdx.y;
+    const unsigned int index = y + x * height;
+    // я пообщался с нейронкой и она утверждает, что workItem'ам внутри warp'а threadIdx назначаются линейно
+    // то есть сначала растет threadIdx.x, после насыщения добавляется 1 к threadIdx.y а threadIdx.x ставится в 0 и продолжает расти
+    // Учитывая то, что я поставил GROUP_SIZE_X = 32, получится что в одном warp'е будет сидеть просто 32 пары (x, y), где все y одинаковые,
+    // а x - 32 последовательных числа. Так как height у нас достаточно большой, index будет всегда попадать в разные кэш линии,
+    // поэтому это обеспечивает наиболее неэффективность с точки memory coalesced. В good те же рассуждения, не вижу смысла копипастить
+    if (index >= width * height)
+        return;
+    c[index] = a[index] + b[index];
 }
 
 namespace cuda {
