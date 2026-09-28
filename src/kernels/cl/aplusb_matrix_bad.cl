@@ -7,8 +7,8 @@
 __kernel void aplusb_matrix_bad(__global const uint* a,
                      __global const uint* b,
                      __global       uint* c,
-                     unsigned int width,
-                     unsigned int height)
+                     unsigned int height,
+                     unsigned int width)
 {
     // все три массива - линейно выложенные двумерные матрицы размера width (число столбиков) x height (число рядов)
     // при этом в памяти подряд идут элементы являющимися соседями в рамках одного ряда,
@@ -19,11 +19,7 @@ __kernel void aplusb_matrix_bad(__global const uint* a,
     // TODO реализуйте этот кернел - просуммируйте две матрицы так чтобы получить максимально ПЛОХУЮ производительность с точки зрения memory coalesced паттерна доступа
     const unsigned int index_x = get_global_id(0);
     const unsigned int index_y = get_global_id(1);
-    const unsigned int index_total = index_y * width + index_x;
-
-    if (index_total >= width * height) {
-        return;
-    }
+    const unsigned int index_total = index_x * width + index_y;
 
     c[index_total] = a[index_total] + b[index_total];
 }

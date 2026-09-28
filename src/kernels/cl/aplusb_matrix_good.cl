@@ -21,9 +21,5 @@ __kernel void aplusb_matrix_good(__global const uint* a,
     const unsigned int index_y = get_global_id(1);
     const unsigned int index_total = index_y * width + index_x;
 
-    if (index_total >= width * height) {
-        return;
-    }
-
     c[index_total] = a[index_total] + b[index_total];
 }

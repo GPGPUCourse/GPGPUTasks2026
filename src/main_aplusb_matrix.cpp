@@ -67,12 +67,12 @@ void run(int argc, char** argv)
             // Настраиваем размер рабочего пространства (n) и размер рабочих групп в этом рабочем пространстве (GROUP_SIZE=256)
             // Обратите внимание что сейчас указана рабочая группа размера 1х1 в рабочем пространстве width x height, это не то что вы хотите
             // TODO И в плохом и в хорошем кернеле рабочая группа обязана состоять из 256 work-items
-            gpu::WorkSize workSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height);
+            gpu::WorkSize workSize(GROUP_SIZE_Y, GROUP_SIZE_X, height, width);
 
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             // TODO раскомментируйте вызов вашего API и поправьте его
-            ocl_aplusb_matrix_bad.exec(workSize, a_gpu, b_gpu, c_gpu, width, height);
+            ocl_aplusb_matrix_bad.exec(workSize, a_gpu, b_gpu, c_gpu, height, width);
 
             times.push_back(t.elapsed());
         }
@@ -80,6 +80,8 @@ void run(int argc, char** argv)
 
         // TODO Удалите этот rassert - вычислите достигнутую эффективную пропускную способность видеопамяти
         // rassert(false, 54623414231);
+        double memory_size_gb = sizeof(unsigned int) * 3 * width / 1024.0 / 1024.0 * height / 1024.0;
+        std::cout << "a + b matrix kernel median VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s" << std::endl;
 
         // TODO Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
         std::vector<unsigned int> cs(width * height, 0);
@@ -109,6 +111,9 @@ void run(int argc, char** argv)
             times.push_back(t.elapsed());
         }
         std::cout << "a + b matrix kernel times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+
+        double memory_size_gb = sizeof(unsigned int) * 3 * width / 1024.0 / 1024.0 * height / 1024.0;
+        std::cout << "a + b matrix kernel median VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s" << std::endl;
 
         // TODO Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
         std::vector<unsigned int> cs(width * height, 0);
