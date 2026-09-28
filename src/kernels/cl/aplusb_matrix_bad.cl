@@ -16,11 +16,10 @@ __kernel void aplusb_matrix_bad(__global const uint* a,
     // т.е. если в матрице сделать шаг вправо или влево на одну ячейку - то в памяти мы шагнем на 4 байта
     // т.е. если в матрице сделать шаг вверх или вниз на одну ячейку - то в памяти мы шагнем на так называемый stride=width*4 байта
     
-    // width = cnt_group X GROUP_SIZE, x_index = local_y * GROUP_SIZE + local_x
-    // transpose: width = GROUP_SIZE X cnt_group, new_x_index = local_x * cnt_group + local_y  
-    const unsigned int x_index = get_global_id(0) % GROUP_SIZE * (width / GROUP_SIZE) + get_global_id(0) / GROUP_SIZE;
+
+    const unsigned int x_index = get_global_id(0);
     const unsigned int y_index = get_global_id(1);
-    const unsigned int index = width * y_index + x_index;
+    const unsigned int index = height * x_index + y_index;
 
     if (x_index >= width || y_index >= height)
         return;
