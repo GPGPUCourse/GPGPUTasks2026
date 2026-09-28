@@ -10,7 +10,7 @@ install_prefix=/usr/local
 apt-get update
 apt-get install -yq graphicsmagick-libmagick-dev-compat # we need Magick++.h so that CImg.h can load jpg files
 
-googletest_version=1.10.0
+googletest_version=1.12.1
 
 echo "Downloading sources"
 wget https://github.com/google/googletest/archive/refs/tags/release-${googletest_version}.zip
