@@ -30,6 +30,20 @@ unsigned int cpu::sumOpenMP(const unsigned int* values, unsigned int n)
     return sum;
 }
 
+// Кернелы 03/04 берут плитки по GROUP_SIZE*4 вектора uint4.
+// На большом массиве держим 2560 групп (по 32 на SM V100), короткие массивы
+// не раздуваем: одна плитка на группу, но хотя бы одна группа на хвост.
+static unsigned int sumGroupsFor(unsigned int count)
+{
+    const unsigned int target = 2560u;
+    const unsigned int vectorsPerGroup = (unsigned int)GROUP_SIZE * 4u;
+    const unsigned int n4 = count >> 2;
+    unsigned int groups = div_ceil(n4, vectorsPerGroup);
+    if (groups < 1u)
+        groups = 1u;
+    return groups < target ? groups : target;
+}
+
 void run(int argc, char** argv)
 {
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
@@ -128,7 +142,12 @@ void run(int argc, char** argv)
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "03 local memory and atomicAdd from master thread") {
                         sum_accum_gpu.fill(0);
-                        ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu, n);
+                        {
+                            const unsigned int groups = sumGroupsFor(n);
+                            ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(
+                                gpu::WorkSize(GROUP_SIZE, (size_t)groups * GROUP_SIZE),
+                                input_gpu, sum_accum_gpu, n);
+                        }
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "04 local reduction") {
                         // Входной буфер не трогаем: частичные суммы прыгают между двумя рабочими буферами.
@@ -137,9 +156,11 @@ void run(int argc, char** argv)
                         gpu::gpu_mem_32u* buffers[2] = { &reduction_buffer1_gpu, &reduction_buffer2_gpu };
                         int dst_index = 0;
                         while (current_n > 1) {
-                            const unsigned int groups = div_ceil(current_n, (unsigned int) GROUP_SIZE);
+                            const unsigned int groups = sumGroupsFor(current_n);
                             gpu::gpu_mem_32u* dst = buffers[dst_index];
-                            ocl_sum04LocalReduction.exec(gpu::WorkSize(GROUP_SIZE, (size_t) groups * GROUP_SIZE), *src, *dst, current_n);
+                            ocl_sum04LocalReduction.exec(
+                                gpu::WorkSize(GROUP_SIZE, (size_t)groups * GROUP_SIZE),
+                                *src, *dst, current_n);
                             src = dst;
                             dst_index ^= 1;
                             current_n = groups;
