@@ -121,7 +121,7 @@ void run(int argc, char** argv)
             } else if (algorithm == "GPU") {
                 // _______________________________OpenCL_____________________________________________
                 if (context.type() == gpu::Context::TypeOpenCL) {
-                    ocl_mandelbrot.exec(gpu::WorkSize(32, 8, width, (height + 1) / 2),
+                    ocl_mandelbrot.exec(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height),
                                         gpu_results,
                                         width, height,
                                         centralX - sizeX / 2.0f, centralY - sizeY / 2.0f,

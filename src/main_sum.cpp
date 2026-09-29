@@ -30,18 +30,16 @@ unsigned int cpu::sumOpenMP(const unsigned int* values, unsigned int n)
     return sum;
 }
 
-// Кернелы 03/04 берут плитки по GROUP_SIZE*4 вектора uint4.
-// На большом массиве держим 2560 групп (по 32 на SM V100), короткие массивы
-// не раздуваем: одна плитка на группу, но хотя бы одна группа на хвост.
+// Кернелы 03/04 читают по 4 uint4 на поток: группа покрывает GROUP_SIZE*4 вектора.
+// Короче четырёх элементов всё равно нужна одна группа, чтобы забрать хвост.
 static unsigned int sumGroupsFor(unsigned int count)
 {
-    const unsigned int target = 2560u;
     const unsigned int vectorsPerGroup = (unsigned int)GROUP_SIZE * 4u;
     const unsigned int n4 = count >> 2;
     unsigned int groups = div_ceil(n4, vectorsPerGroup);
     if (groups < 1u)
         groups = 1u;
-    return groups < target ? groups : target;
+    return groups;
 }
 
 void run(int argc, char** argv)
