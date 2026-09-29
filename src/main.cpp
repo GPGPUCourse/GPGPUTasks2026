@@ -61,8 +61,8 @@ std::string get_device_meta(cl_device_id device_id, cl_device_info parametr_flag
 
 const char *device_type_name(cl_device_type t)
 {
-	if(t & CL_DEVICE_TYPE_GPU) return "gpu";
-	if(t & CL_DEVICE_TYPE_CPU) return "cpu";
+	if(t & CL_DEVICE_TYPE_GPU) return "GPU";
+	if(t & CL_DEVICE_TYPE_CPU) return "CPU";
 	return "unknown";
 }
 int main()
@@ -133,6 +133,9 @@ int main()
 			std::cout << "      Device Name: " << get_device_meta<std::string>(device, CL_DEVICE_NAME) << '\n';
 			std::cout << "      Device Type: " << device_type_name(get_device_meta<cl_device_type>(device, CL_DEVICE_TYPE)) << '\n';
 			std::cout << "      Device Global Mem [MB]: " << get_device_meta<cl_ulong>(device, CL_DEVICE_GLOBAL_MEM_SIZE) / BYTES_IN_MB << '\n';
+			std::cout << "      Device Extensions:  " << '\n';
+
+			std::cout << "      Device image support: " << (get_device_meta<cl_bool>(device, CL_DEVICE_IMAGE_SUPPORT) ? "yes" : "no") << '\n';
 			std::cout << "      Device Extensions:  " << '\n';
 
       std::string extensions = get_device_meta<std::string>(device, CL_DEVICE_EXTENSIONS);
