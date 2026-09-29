@@ -25,11 +25,9 @@ namespace {
 	// see https://vulkan-tutorial.com/Drawing_a_triangle/Setup/Validation_layers
 	// this is a debug callback for Vulkan Validation Layers
 	// when they find any problems - this callback will be triggered
-	static VKAPI_ATTR vk::Bool32 VKAPI_CALL
-	debugCallback(vk::DebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
-		      vk::DebugUtilsMessageTypeFlagsEXT messageType,
-		      const vk::DebugUtilsMessengerCallbackDataEXT *pCallbackData,
-		      void *pUserData)
+	static VKAPI_ATTR VkBool32 VKAPI_CALL
+	debugCallback(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity, VkDebugUtilsMessageTypeFlagsEXT messageType,
+				  const VkDebugUtilsMessengerCallbackDataEXT *pCallbackData, void *pUserData)
 	{
 		avk2::InstanceContext *instance_context = (avk2::InstanceContext*) pUserData;
 
@@ -69,11 +67,12 @@ namespace {
 		create_info.messageSeverity = any_severity;
 		vk::DebugUtilsMessageTypeFlagsEXT any_type = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance | vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding;
 		create_info.messageType = any_type;
-		create_info.pfnUserCallback = debugCallback;
 		create_info.pUserData = (void*) instance_context;
 
 		rassert(VKF.vkCreateDebugUtilsMessengerEXT, 378392459011272);
 		VkDebugUtilsMessengerCreateInfoEXT vk_create_info = create_info;
+		// set callback on the C struct: vk::DebugUtilsMessengerCreateInfoEXT::pfnUserCallback type differs between Vulkan-Hpp versions
+		vk_create_info.pfnUserCallback = debugCallback;
 		VK_CHECK_RESULT(VKF.vkCreateDebugUtilsMessengerEXT(*instance_context->instance(), &vk_create_info, nullptr, &debug_messenger), 56756784764);
 
 		return debug_messenger;
