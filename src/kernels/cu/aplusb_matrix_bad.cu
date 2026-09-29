@@ -17,7 +17,13 @@ __global__ void aplusb_matrix_bad(const unsigned int* a,
     // т.е. матрица выложена в памяти линейно ряд за рядом
     // т.е. если в матрице сделать шаг вправо или влево на одну ячейку - то в памяти мы шагнем на 4 байта
     // т.е. если в матрице сделать шаг вверх или вниз на одну ячейку - то в памяти мы шагнем на так называемый stride=width*4 байта
-
+    unsigned int row = blockIdx.x * blockDim.x + threadIdx.x;
+    if (row >= height)
+        return;
+    for (int col = 0; col < width; col++) {
+        unsigned int id = row * width + col;
+        c[id] = a[id] + b[id];
+    }
     // TODO реализуйте этот кернел - просуммируйте две матрицы так чтобы получить максимально ПЛОХУЮ производительность с точки зрения memory coalesced паттерна доступа
 }
 

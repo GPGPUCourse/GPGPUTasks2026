@@ -217,7 +217,7 @@ avk2::InstanceContext::InstanceContext(bool enable_validation_layers)
 	// because now was (optionally) created with enabled validation layers and debug extensions
 	// f.e. this init is required for vkCreateDebugUtilsMessengerEXT loading - see rassert 378392459011272
 	// also this init is required for vkCmdPushConstants loading - see rassert 315723128637936
-	VKF.init(vk::Instance(*instance_));
+	VKF.init(**instance_);
 
 	is_debug_callback_triggered_ = false;
 	if (enable_validation_layers) {
@@ -396,9 +396,9 @@ public:
 		}
 		// see https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/quick_start.html
 		allocatorCreateInfo.vulkanApiVersion = VULKAN_MIN_VERSION; // it should be equal to vk::ApplicationInfo.apiVersion
-		allocatorCreateInfo.physicalDevice = vk::PhysicalDevice(*physical_device_.get());
-		allocatorCreateInfo.device = vk::Device(*device_.get());
-		allocatorCreateInfo.instance = vk::Instance(*instance_context_->instance());
+		allocatorCreateInfo.physicalDevice = **physical_device_;
+		allocatorCreateInfo.device = **device_;
+		allocatorCreateInfo.instance = *instance_context_->instance();
 		allocatorCreateInfo.pVulkanFunctions = &vulkanFunctions;
 		vma_ = std::shared_ptr<VmaAllocator>(new VmaAllocator());
 		VK_CHECK_RESULT(vmaCreateAllocator(&allocatorCreateInfo, vma_.get()), 56748938637);
@@ -501,12 +501,12 @@ vk::raii::CommandBuffer avk2::VulkanEngine::createCommandBuffer()
 void avk2::VulkanEngine::submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer)
 {
 	std::shared_ptr<vk::raii::Fence> fence = submitCommandBufferAsync(command_buffer);
-	VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 345123451241);
+	VK_CHECK_RESULT(getDevice().waitForFences(**fence, true, VULKAN_TIMEOUT_NANOSECS), 345123451241);
 }
 
 std::shared_ptr<vk::raii::Fence> avk2::VulkanEngine::submitCommandBufferAsync(const vk::raii::CommandBuffer &command_buffer)
 {
-	vk::CommandBuffer command_buffer_non_raii = command_buffer;
+	vk::CommandBuffer command_buffer_non_raii = *command_buffer;
 	std::shared_ptr<vk::raii::Fence> fence = std::make_shared<vk::raii::Fence>(getDevice(), vk::FenceCreateInfo());
 
 	vk::SubmitInfo submit_info(nullptr, nullptr, command_buffer_non_raii);
@@ -742,7 +742,7 @@ void avk2::VulkanEngine::writeImage(const avk2::raii::ImageData &image_dst, cons
 			}
 
 			if (is_prev_chunk_exists) {
-				VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 4512341231);
+				VK_CHECK_RESULT(getDevice().waitForFences(**fence, true, VULKAN_TIMEOUT_NANOSECS), 4512341231);
 			}
 		}
 	}
@@ -834,7 +834,7 @@ void avk2::VulkanEngine::readImage(const avk2::raii::ImageData &image_src, const
 			}
 
 			if (is_cur_chunk_exists) {
-				VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 34124125123);
+				VK_CHECK_RESULT(getDevice().waitForFences(**fence, true, VULKAN_TIMEOUT_NANOSECS), 34124125123);
 			}
 		}
 	}
@@ -939,7 +939,7 @@ void avk2::VulkanEngine::writeBuffer(const avk2::raii::BufferData &buffer_dst, s
 		}
 
 		if (is_prev_chunk_exists) {
-			VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 453151251236);
+			VK_CHECK_RESULT(getDevice().waitForFences(**fence, true, VULKAN_TIMEOUT_NANOSECS), 453151251236);
 		}
 	}
 }
@@ -983,7 +983,7 @@ void avk2::VulkanEngine::readBuffer(const avk2::raii::BufferData &buffer_src, si
 		}
 
 		if (is_cur_chunk_exists) {
-			VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 675623543242141);
+			VK_CHECK_RESULT(getDevice().waitForFences(**fence, true, VULKAN_TIMEOUT_NANOSECS), 675623543242141);
 		}
 	}
 }
@@ -1345,7 +1345,7 @@ void avk2::KernelSource::exec(const PushConstant &params, const gpu::WorkSize &w
  
 	// we don't use C++ API here because we want to manually specify size of push constant (via passing push_constant.size())
 	rassert(VKF.vkCmdPushConstants, 315723128637936);
-	VKF.vkCmdPushConstants(vk::CommandBuffer(command_buffer), VkPipelineLayout(vk::PipelineLayout(kernel->pipelineLayout())), VK_SHADER_STAGE_COMPUTE_BIT, 0, push_constant.size(), push_constant.ptr());
+	VKF.vkCmdPushConstants(*command_buffer, VkPipelineLayout(vk::PipelineLayout(kernel->pipelineLayout())), VK_SHADER_STAGE_COMPUTE_BIT, 0, push_constant.size(), push_constant.ptr());
 
 	std::vector<size_t> spirv_group_size = kernel->shaderModuleInfo().getGroupSize(name_);
 	for (size_t d = 0; d < 3; ++d) {
@@ -1805,7 +1805,7 @@ void avk2::KernelSource::launchRender(const RenderBuilder &params, const Arg &ar
 		// we don't use C++ API here because we want to manually specify size of push constant (via passing push_constant_.size())
 		if (params.push_constant_.size() > 0) {
 			rassert(VKF.vkCmdPushConstants, 3157231286379363);
-			VKF.vkCmdPushConstants(vk::CommandBuffer(command_buffer), VkPipelineLayout(**pipeline_layout), VK_SHADER_STAGE_ALL_GRAPHICS, 0, params.push_constant_.size(), params.push_constant_.ptr());
+			VKF.vkCmdPushConstants(*command_buffer, VkPipelineLayout(**pipeline_layout), VK_SHADER_STAGE_ALL_GRAPHICS, 0, params.push_constant_.size(), params.push_constant_.ptr());
 		}
 
 		rassert(params.viewport_min_depth_ >= 0.0f && params.viewport_max_depth_ <= 1.0f, 691689354);
