@@ -30,6 +30,18 @@ unsigned int cpu::sumOpenMP(const unsigned int* values, unsigned int n)
     return sum;
 }
 
+// Кернелы 03/04 читают по 4 uint4 на поток: группа покрывает GROUP_SIZE*4 вектора.
+// Короче четырёх элементов всё равно нужна одна группа, чтобы забрать хвост.
+static unsigned int sumGroupsFor(unsigned int count)
+{
+    const unsigned int vectorsPerGroup = (unsigned int)GROUP_SIZE * 4u;
+    const unsigned int n4 = count >> 2;
+    unsigned int groups = div_ceil(n4, vectorsPerGroup);
+    if (groups < 1u)
+        groups = 1u;
+    return groups;
+}
+
 void run(int argc, char** argv)
 {
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
@@ -37,7 +49,7 @@ void run(int argc, char** argv)
     // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
     // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -73,9 +85,23 @@ void run(int argc, char** argv)
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(values.data(), n);
-    // TODO 1) замерьте здесь какая достигнута пропускная пособность PCI-E шины
-    // TODO 2) сделайте замер хотя бы три раза
-    // TODO 3) и выведите рассчет на основании медианного времени (в легко понятной форме - GB/s)
+
+    // Пропускная способность записи host -> device. Один и тот же буфер
+    // пишем несколько раз и берем медиану, чтобы одиночный выброс не решал.
+    {
+        const int pcie_iters = 10;
+        std::vector<double> pcie_times;
+        pcie_times.reserve(pcie_iters);
+        for (int i = 0; i < pcie_iters; ++i) {
+            timer t;
+            input_gpu.writeN(values.data(), n);
+            pcie_times.push_back(t.elapsed());
+        }
+        const double pcie_gb = sizeof(unsigned int) * (double) n / 1024.0 / 1024.0 / 1024.0;
+        std::cout << "PCI-E host->device payload: " << pcie_gb << " GB" << std::endl;
+        std::cout << "PCI-E write times (in seconds) - " << stats::valuesStatsLine(pcie_times) << std::endl;
+        std::cout << "PCI-E median bandwidth: " << (pcie_gb / stats::median(pcie_times)) << " GB/s" << std::endl;
+    }
 
     std::vector<std::string> algorithm_names = {
         "CPU",
@@ -113,11 +139,31 @@ void run(int argc, char** argv)
                         ocl_sum02AtomicsLoadK.exec(gpu::WorkSize(GROUP_SIZE, n / LOAD_K_VALUES_PER_ITEM), input_gpu, sum_accum_gpu, n);
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "03 local memory and atomicAdd from master thread") {
-                        // TODO ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        sum_accum_gpu.fill(0);
+                        {
+                            const unsigned int groups = sumGroupsFor(n);
+                            ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(
+                                gpu::WorkSize(GROUP_SIZE, (size_t)groups * GROUP_SIZE),
+                                input_gpu, sum_accum_gpu, n);
+                        }
+                        sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "04 local reduction") {
-                        // TODO ocl_sum04LocalReduction.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        // Входной буфер не трогаем: частичные суммы прыгают между двумя рабочими буферами.
+                        unsigned int current_n = n;
+                        gpu::gpu_mem_32u* src = &input_gpu;
+                        gpu::gpu_mem_32u* buffers[2] = { &reduction_buffer1_gpu, &reduction_buffer2_gpu };
+                        int dst_index = 0;
+                        while (current_n > 1) {
+                            const unsigned int groups = sumGroupsFor(current_n);
+                            gpu::gpu_mem_32u* dst = buffers[dst_index];
+                            ocl_sum04LocalReduction.exec(
+                                gpu::WorkSize(GROUP_SIZE, (size_t)groups * GROUP_SIZE),
+                                *src, *dst, current_n);
+                            src = dst;
+                            dst_index ^= 1;
+                            current_n = groups;
+                        }
+                        src->readN(&gpu_sum, 1);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
@@ -132,11 +178,30 @@ void run(int argc, char** argv)
                         cuda::sum_02_atomics_load_k(gpu::WorkSize(GROUP_SIZE, n / LOAD_K_VALUES_PER_ITEM), input_gpu, sum_accum_gpu, n);
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "03 local memory and atomicAdd from master thread") {
-                        // TODO cuda::sum_03_local_memory_atomic_per_workgroup(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        sum_accum_gpu.fill(0);
+                        {
+                            const unsigned int groups = sumGroupsFor(n);
+                            cuda::sum_03_local_memory_atomic_per_workgroup(
+                                gpu::WorkSize(GROUP_SIZE, (size_t)groups * GROUP_SIZE),
+                                input_gpu, sum_accum_gpu, n);
+                        }
+                        sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "04 local reduction") {
-                        // TODO cuda::sum_04_local_reduction(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        unsigned int current_n = n;
+                        gpu::gpu_mem_32u* src = &input_gpu;
+                        gpu::gpu_mem_32u* buffers[2] = { &reduction_buffer1_gpu, &reduction_buffer2_gpu };
+                        int dst_index = 0;
+                        while (current_n > 1) {
+                            const unsigned int groups = sumGroupsFor(current_n);
+                            gpu::gpu_mem_32u* dst = buffers[dst_index];
+                            cuda::sum_04_local_reduction(
+                                gpu::WorkSize(GROUP_SIZE, (size_t)groups * GROUP_SIZE),
+                                *src, *dst, current_n);
+                            src = dst;
+                            dst_index ^= 1;
+                            current_n = groups;
+                        }
+                        src->readN(&gpu_sum, 1);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }

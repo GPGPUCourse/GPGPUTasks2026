@@ -5,21 +5,16 @@
 #include <libgpu/cuda/cu/common.cu>
 
 #include "../defines.h"
-
-#define WARP_SIZE 32
+#include "sum_block_reduce.cuh"
 
 __global__ void sum_04_local_reduction(
-    const unsigned int* a,
-    unsigned int* b,
-    unsigned int  n)
+    const unsigned int* __restrict__ a,
+    unsigned int* __restrict__ b,
+    unsigned int n)
 {
-    // Подсказки:
-    // const uint index = blockIdx.x * blockDim.x + threadIdx.x;
-    // const uint local_index = threadIdx.x;
-    // __shared__ unsigned int local_data[GROUP_SIZE];
-    // __syncthreads();
-
-    // TODO
+    const unsigned int total = sum_block_total(a, n);
+    if (threadIdx.x == 0u)
+        b[blockIdx.x] = total;
 }
 
 namespace cuda {
