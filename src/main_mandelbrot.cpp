@@ -10,6 +10,21 @@
 
 #include <fstream>
 
+/**
+ * Считает множество Мандельброта: один пиксель — одна точка комплексной плоскости.
+ *
+ * Кадр — прямоугольник с левым нижним углом (fromX, fromY). sizeX и sizeY — его
+ * ширина и высота в координатах плоскости, не в пикселях. Центр пикселя (i, j):
+ *   x0 = fromX + (i + 0.5) * sizeX / width
+ *   y0 = fromY + (j + 0.5) * sizeY / height
+ * Это число c. От него повторяется z = z^2 + c, пока |z| не превысит 256
+ * или не будет сделано iters шагов.
+ *
+ * results[j * width + i] получает число шагов, делённое на iters, то есть значение
+ * около [0, 1]. Точка, не вышедшая за порог, даёт 1. При isSmoothing у вышедших
+ * раньше точек к целому числу шагов добавляется дробная поправка по |z|.
+ * useOpenMP раздаёт строки картинки нескольким потокам процессора.
+ */
 void cpu::mandelbrot(float* results,
                    unsigned int width, unsigned int height,
                    float fromX, float fromY,
@@ -51,6 +66,17 @@ void cpu::mandelbrot(float* results,
 
 image8u renderToColor(const float* results, unsigned int width, unsigned int height);
 
+/**
+ * Считает один кадр 2048x2048 на CPU, на CPU с OpenMP и на GPU, печатает время и сохраняет BMP.
+ *
+ * sizeX — ширина окна на комплексной плоскости. Окно стоит вокруг (centralX, centralY),
+ * в расчёт уходит левый край centralX - sizeX / 2. sizeY равен sizeX, картинка квадратная.
+ * Текущее окно узкое и лежит на границе множества.
+ *
+ * Оценка GFlops считает, будто каждый пиксель прошёл все iterationsLimit шагов без break.
+ * Картинка каждого алгоритма сравнивается с однопоточным CPU; среднее отличие больше 3%
+ * прерывает запуск. Считается OpenCL-ядро, по одной нити на пиксель.
+ */
 void run(int argc, char** argv)
 {
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
@@ -121,8 +147,7 @@ void run(int argc, char** argv)
             } else if (algorithm == "GPU") {
                 // _______________________________OpenCL_____________________________________________
                 if (context.type() == gpu::Context::TypeOpenCL) {
-                    // TODO ocl_mandelbrot.exec(...);
-                    throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                    ocl_mandelbrot.exec(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height), gpu_results, width, height, centralX - sizeX / 2.0f, centralY - sizeY / 2.0f, sizeX, sizeY, iterationsLimit, isSmoothing);
 
                     // _______________________________CUDA___________________________________________
                 } else if (context.type() == gpu::Context::TypeCUDA) {
@@ -186,6 +211,11 @@ void run(int argc, char** argv)
     // если захотите сделать интерактивное красивое - скажите, я дам вам заготовку которую будет несложно доделать
 }
 
+/**
+ * Вызывает run и ставит код возврата.
+ * Неподдерживаемый API и ещё не написанный код дают 0, чтобы CI не падал.
+ * Любая другая ошибка даёт 1. Перед выходом сбрасывается глобальный контекст Vulkan.
+ */
 int main(int argc, char** argv)
 {
     int exit_code = 0;
@@ -211,36 +241,52 @@ int main(int argc, char** argv)
     return exit_code;
 }
 
+/** Цвет из трёх компонент: x — красный, y — зелёный, z — синий. */
 struct vec3f {
     vec3f(float x, float y, float z) : x(x), y(y), z(z) {}
 
     float x; float y; float z;
 };
 
+/** Покомпонентная сумма двух цветов. */
 vec3f operator+(const vec3f &a, const vec3f &b) {
     return {a.x + b.x, a.y + b.y, a.z + b.z};
 }
 
+/** Покомпонентное произведение двух цветов. */
 vec3f operator*(const vec3f &a, const vec3f &b) {
     return {a.x * b.x, a.y * b.y, a.z * b.z};
 }
 
+/** Умножает каждую компоненту цвета на число. */
 vec3f operator*(const vec3f &a, float t) {
     return {a.x * t, a.y * t, a.z * t};
 }
 
+/** То же умножение, когда число стоит слева: t * цвет. */
 vec3f operator*(float t, const vec3f &a) {
     return a * t;
 }
 
+/** Синус каждой компоненты. */
 vec3f sin(const vec3f &a) {
     return {sinf(a.x), sinf(a.y), sinf(a.z)};
 }
 
+/** Косинус каждой компоненты. */
 vec3f cos(const vec3f &a) {
     return {cosf(a.x), cosf(a.y), cosf(a.z)};
 }
 
+/**
+ * Перекрашивает яркость Мандельброта в RGB-картинку.
+ *
+ * results[j * width + i] — значение около [0, 1], его пишет cpu::mandelbrot.
+ * Цвет берётся из косинусной палитры:
+ *   color = a + b * cos(2π * (c * t + d))
+ * Компоненты a, b, c, d фиксированы и задают переход оттенков вдоль t.
+ * Каждая компонента домножается на 255 и кладётся в порядок R, G, B.
+ */
 image8u renderToColor(const float* results, unsigned int width, unsigned int height)
 {
     image8u image(width, height, 3);
