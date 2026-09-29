@@ -2,8 +2,18 @@
 
 // Четыре uint4 на поток, соседние нити читают соседние векторы.
 // Хост запускает div_ceil(n/4, GROUP_SIZE*4) блоков по GROUP_SIZE.
-// Полный тайл читается без предиката: так компилятор оставляет 128-битную загрузку.
+// Полный тайл читается без предиката. Инструкция ld.global.cs.v4 — 16 байт и streaming:
+// строка кэша помечается к вытеснению, массив в L2 не помещается.
 // cudaMalloc выровнен на 256, защита буфера выключена, поэтому cuptr() кратен 16.
+
+__device__ __forceinline__ uint4 ld_uint4(const uint4* p)
+{
+    uint4 v;
+    asm volatile("ld.global.cs.v4.u32 {%0, %1, %2, %3}, [%4];"
+                 : "=r"(v.x), "=r"(v.y), "=r"(v.z), "=r"(v.w)
+                 : "l"(p));
+    return v;
+}
 
 __device__ __forceinline__ unsigned int fold_uint4(uint4 v)
 {
@@ -32,23 +42,24 @@ __device__ __forceinline__ unsigned int sum_warp_partial(const unsigned int* __r
     unsigned int a2 = 0u;
     unsigned int a3 = 0u;
     if (blockBase <= n4 && span <= n4 - blockBase) {
-        const uint4 v0 = a4[blockBase + tid];
-        const uint4 v1 = a4[blockBase + blockDim.x + tid];
-        const uint4 v2 = a4[blockBase + 2u * blockDim.x + tid];
-        const uint4 v3 = a4[blockBase + 3u * blockDim.x + tid];
+        const uint4* p0 = a4 + (blockBase + tid);
+        const uint4 v0 = ld_uint4(p0);
+        const uint4 v1 = ld_uint4(p0 + blockDim.x);
+        const uint4 v2 = ld_uint4(p0 + 2u * blockDim.x);
+        const uint4 v3 = ld_uint4(p0 + 3u * blockDim.x);
         a0 = fold_uint4(v0);
         a1 = fold_uint4(v1);
         a2 = fold_uint4(v2);
         a3 = fold_uint4(v3);
     } else {
         if (blockBase + tid < n4)
-            a0 = fold_uint4(a4[blockBase + tid]);
+            a0 = fold_uint4(ld_uint4(a4 + (blockBase + tid)));
         if (blockBase + blockDim.x + tid < n4)
-            a1 = fold_uint4(a4[blockBase + blockDim.x + tid]);
+            a1 = fold_uint4(ld_uint4(a4 + (blockBase + blockDim.x + tid)));
         if (blockBase + 2u * blockDim.x + tid < n4)
-            a2 = fold_uint4(a4[blockBase + 2u * blockDim.x + tid]);
+            a2 = fold_uint4(ld_uint4(a4 + (blockBase + 2u * blockDim.x + tid)));
         if (blockBase + 3u * blockDim.x + tid < n4)
-            a3 = fold_uint4(a4[blockBase + 3u * blockDim.x + tid]);
+            a3 = fold_uint4(ld_uint4(a4 + (blockBase + 3u * blockDim.x + tid)));
     }
 
     unsigned int acc = (a0 + a1) + (a2 + a3);
