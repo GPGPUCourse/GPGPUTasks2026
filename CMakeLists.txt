@@ -4,6 +4,12 @@ project(GPGPUTasks)
 
 set(CMAKE_CXX_STANDARD 17)
 
+if (APPLE)
+    set(ENV{VULKAN_SDK} "$ENV{HOME}/VulkanSDK/1.4.357.1/macOS")
+    set(VULKAN_SDK "$ENV{HOME}/VulkanSDK/1.4.357.1/macOS")
+
+    message(STATUS "Vulkan SDK: ${VULKAN_SDK}")
+endif ()
 # Если вы установили CUDA SDK - можете включить поддержку CUDA
 option(GPU_CUDA_SUPPORT "CUDA support." OFF)
 
@@ -34,6 +40,12 @@ else ()
 endif ()
 
 add_subdirectory(libs)
+
+if (APPLE)
+    target_include_directories(libgpu PUBLIC
+        "${VULKAN_SDK}/include"
+    )
+endif ()
 
 set(HEADERS
         src/kernels/kernels.h
