@@ -122,7 +122,7 @@ void run(int argc, char** argv)
 
     std::cout << "matrices size: "
               << width << "x" << height
-              << " = 3 * "
+              << " = "
               << (sizeof(unsigned int) * 3.0 * matrix_cell_cnt
                   / 1024.0 / 1024.0)
               << " MiB\n";

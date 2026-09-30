@@ -13,6 +13,8 @@ __kernel void aplusb_matrix_good(__global const uint* a,
 
 	const size_t x = get_global_id(0);
 	const size_t y = get_global_id(1);
+	if (x >= width || y >= height) 
+		return;
 
 	const size_t index = y * width + x;
 
