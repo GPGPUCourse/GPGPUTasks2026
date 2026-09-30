@@ -19,17 +19,9 @@ void main()
 {
     const uint index = gl_GlobalInvocationID.x;
     const uint local_index = gl_LocalInvocationID.x;
-    const uint values_per_item = params.n / GROUP_SIZE;
 
-    uint my_sum = 0;
-    if (index < values_per_item) {
+    local_data[local_index] = index < params.n ? a[index] : 0;
 
-        for (uint i = 0; i < GROUP_SIZE; ++i) {
-            my_sum += a[i * values_per_item + index];
-        }
-
-    }
-    local_data[local_index] = my_sum;
     memoryBarrierShared();
     barrier();
 
