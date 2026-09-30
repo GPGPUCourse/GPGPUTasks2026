@@ -204,7 +204,8 @@ compile_vulkan(HEADERS libgpu/vulkan/tests/kernels/write_value_at_index.comp VUL
 compile_vulkan_templated(HEADERS libgpu/vulkan/tests/kernels/image_interpolation.comp VULKAN_DEFINES TEMPLATE_DEFINES_NC_TYPES TEMPLATE_SUFFIXES_NC_TYPES)
 compile_vulkan_templated(HEADERS libgpu/vulkan/tests/kernels/image_conversion_from_float_to_T.comp VULKAN_DEFINES TEMPLATE_DEFINES_TYPES TEMPLATE_SUFFIXES_TYPES)
 
-find_package(Vulkan REQUIRED)
+set(Vulkan_INCLUDE_DIRS "/opt/vulkan-headers-1.3.295/include")
+set(Vulkan_LIBRARIES "/usr/lib/libvulkan.so")
 
 if (GPU_CUDA_SUPPORT)
     enable_language(CUDA)

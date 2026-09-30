@@ -1,3 +1,5 @@
+#include <bit>
+
 #include <libgpu/context.h>
 #include <libgpu/work_size.h>
 #include <libgpu/shared_device_buffer.h>
@@ -11,13 +13,28 @@ __global__ void sum_03_local_memory_atomic_per_workgroup(
     unsigned int* sum,
     unsigned int  n)
 {
-    // Подсказки:
-    // const uint index = blockIdx.x * blockDim.x + threadIdx.x;
-    // const uint local_index = threadIdx.x;
-    // __shared__ unsigned int local_data[GROUP_SIZE];
-    // __syncthreads();
+    // Indexes
+    const uint index = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint local_index = threadIdx.x;
 
-    // TODO
+    // Load data
+    __shared__ unsigned int local_data[GROUP_SIZE];
+    if(index < n) {
+        local_data[local_index] = a[index];
+    }
+
+    __syncthreads();
+    for(uint i = blockDim.x >> 1; i != 0; i >>= 1) { // GROUP_SIZE must be power of 2
+        if(local_index < i && index < n) {
+            local_data[local_index] += local_data[local_index + i];
+        }
+
+        __syncthreads();
+    }
+
+    if(local_index == 0) {
+        atomicAdd(sum, local_data[0]);
+    }
 }
 
 namespace cuda {
