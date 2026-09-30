@@ -102,15 +102,15 @@ void run(int argc, char** argv)
     bool I_Want_Super_Puper_Prestige_Points = true;
     if (I_Want_Super_Puper_Prestige_Points) {
         if (context.type() == gpu::Context::TypeCUDA) {
-            algorithm_names.push_back("03 using WMMA (Tensor Cores) [+Prestige Points]");
-            algorithm_names.push_back("04 using mma.sync [+Prestige Points]");
-            algorithm_names.push_back("05 using mma.sync column A [+Prestige Points]");
+            algorithm_names.push_back("03 using WMMA (Tensor Cores)");
+            algorithm_names.push_back("04 using mma.sync");
+            algorithm_names.push_back("05 using mma.sync column A");
         }
         if (context.type() == gpu::Context::TypeVulkan) {
             rassert(context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix"), 32452365324632);
             auto device_supported_cooperative_matrix_sizes = context.vk()->device().supportedCooperativeMatrixSizes();
             rassert(context.vk()->device().isCooperativeMatrixSizeSupported(DataType16f, DataType32f, 16, 16, 16), 235243524356);
-            algorithm_names.push_back("03 using cooperative matrix [+Prestige Points]");
+            algorithm_names.push_back("03 using cooperative matrix");
         }
     }
 
@@ -149,13 +149,13 @@ void run(int argc, char** argv)
                     } else if (algorithm == "02 using local memory") {
                         // 16x16 threads, each owns 8x8 outputs: one CTA covers a 128x128 tile.
                         cuda::matrix_multiply_via_local_memory(gpu::WorkSize(16, 16, w / 8, h / 8), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
+                    } else if (algorithm == "03 using WMMA (Tensor Cores)") {
                         // 32x4 threads (128). One CTA covers a 64x64 tile.
                         cuda::matrix_multiply_wmma(gpu::WorkSize(32, 4, w / 2, h / 16), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else if (algorithm == "04 using mma.sync [+Prestige Points]") {
+                    } else if (algorithm == "04 using mma.sync") {
                         // 128 threads. One CTA covers a 128x128 tile.
                         cuda::matrix_multiply_mma(gpu::WorkSize(128, 1, w, h / 128), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else if (algorithm == "05 using mma.sync column A [+Prestige Points]") {
+                    } else if (algorithm == "05 using mma.sync column A") {
                         // 128 threads. One CTA covers a 128x128 tile. A is cached column-major.
                         cuda::matrix_multiply_mma_col(gpu::WorkSize(128, 1, w, h / 128), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else {
@@ -173,7 +173,7 @@ void run(int argc, char** argv)
 //                        vk_matrix03MultiplyNaive.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
                     } else if (algorithm == "02 using local memory") {
 //                        vk_matrix04MultiplyViaLocalMemory.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
-                    } else if (algorithm == "03 using cooperative matrix [+Prestige Points]") {
+                    } else if (algorithm == "03 using cooperative matrix") {
                         vk_matrix05MultiplyCooperativeMatrix.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
                     } else {
                         rassert(false, 7652345234321, algorithm, algorithm_index);
