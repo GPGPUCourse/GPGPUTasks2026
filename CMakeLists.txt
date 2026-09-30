@@ -106,7 +106,8 @@ if (GPU_CUDA_SUPPORT)
             src/kernels/cu/matrix_04_multiply_via_local_memory.cu
             src/kernels/cu/matrix_05_multiply_wmma.cu
             src/kernels/cu/matrix_06_multiply_mma.cu
-            src/kernels/cu/matrix_07_multiply_mma_col.cu)
+            src/kernels/cu/matrix_07_multiply_mma_col.cu
+            src/kernels/cu/matrix_08_multiply_wmma_col.cu)
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})

@@ -105,6 +105,7 @@ void run(int argc, char** argv)
             algorithm_names.push_back("03 using WMMA (Tensor Cores)");
             algorithm_names.push_back("04 using mma.sync");
             algorithm_names.push_back("05 using mma.sync column A");
+            algorithm_names.push_back("06 using WMMA column A");
         }
         if (context.type() == gpu::Context::TypeVulkan) {
             rassert(context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix"), 32452365324632);
@@ -158,6 +159,9 @@ void run(int argc, char** argv)
                     } else if (algorithm == "05 using mma.sync column A") {
                         // 128 threads. One CTA covers a 128x128 tile. A is cached column-major.
                         cuda::matrix_multiply_mma_col(gpu::WorkSize(128, 1, w, h / 128), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                    } else if (algorithm == "06 using WMMA column A") {
+                        // 32x4 threads (128). One CTA covers a 64x64 tile. A is cached column-major.
+                        cuda::matrix_multiply_wmma_col(gpu::WorkSize(32, 4, w / 2, h / 16), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
