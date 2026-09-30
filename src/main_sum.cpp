@@ -37,7 +37,7 @@ void run(int argc, char** argv)
     // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
     // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeVulkan);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -72,10 +72,20 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
-    input_gpu.writeN(values.data(), n);
-    // TODO 1) замерьте здесь какая достигнута пропускная пособность PCI-E шины
-    // TODO 2) сделайте замер хотя бы три раза
-    // TODO 3) и выведите рассчет на основании медианного времени (в легко понятной форме - GB/s)
+    std::vector<double> PCI_E_times;
+
+    for (size_t i = 0; i < 5; ++i)
+    {
+        timer t;
+        input_gpu.writeN(values.data(), n);
+        PCI_E_times.push_back(t.elapsed());
+    }
+
+    double memory_size_gb = sizeof(unsigned int) * n / 1024.0 / 1024.0 / 1024.0;
+    std::cout << "PCI-E median CPU RAM -> GPU VRAM bandwidth: " << memory_size_gb / stats::median(PCI_E_times) << " GB/s" << std::endl;
+
+
+
 
     std::vector<std::string> algorithm_names = {
         "CPU",
@@ -151,11 +161,28 @@ void run(int argc, char** argv)
                         vk_sum02AtomicsLoadK.exec(n, gpu::WorkSize(GROUP_SIZE, n / LOAD_K_VALUES_PER_ITEM), input_gpu, sum_accum_gpu);
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "03 local memory and atomicAdd from master thread") {
-                        // TODO vk_sum03LocalMemoryAtomicPerWorkgroup.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        sum_accum_gpu.fill(0);
+                        vk_sum03LocalMemoryAtomicPerWorkgroup.exec(n, gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu);
+                        sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "04 local reduction") {
-                        // TODO vk_sum04LocalReduction.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        auto local_n = n;
+
+                        const gpu::gpu_mem_32u* src = &input_gpu;
+                        gpu::gpu_mem_32u* dst = &reduction_buffer1_gpu;
+
+                        while (local_n > 1) {
+                            gpu::WorkSize workSize(GROUP_SIZE, local_n);
+
+                            vk_sum04LocalReduction.exec(local_n, workSize, *src, *dst);
+
+                            local_n = div_ceil(local_n, static_cast<unsigned int>(GROUP_SIZE));
+
+                            src = dst;
+                            dst = (dst == &reduction_buffer1_gpu)
+                                ? &reduction_buffer2_gpu
+                                : &reduction_buffer1_gpu;
+                        }
+                        (*src).readN(&gpu_sum, 1);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
@@ -169,7 +196,7 @@ void run(int argc, char** argv)
         std::cout << "algorithm times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 
         // Вычисляем достигнутую эффективную пропускную способность алгоритма (из соображений что мы отработали в один проход по входному массиву)
-        double memory_size_gb = sizeof(unsigned int) * n / 1024.0 / 1024.0 / 1024.0;
+        // double memory_size_gb = sizeof(unsigned int) * n / 1024.0 / 1024.0 / 1024.0;
         std::cout << "sum median effective algorithm bandwidth: " << memory_size_gb / stats::median(times) << " GB/s" << std::endl;
 
         // Сверяем результат
