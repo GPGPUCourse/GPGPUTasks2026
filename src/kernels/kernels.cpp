@@ -57,6 +57,12 @@ void matrix_multiply_mma(const gpu::WorkSize &workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 546237686412415);
 }
+void matrix_multiply_mma_col(const gpu::WorkSize &workSize,
+            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k)
+{
+    // dummy implementation if CUDA_SUPPORT is disabled
+    rassert(false, 546237686412416);
+}
 } // namespace cuda
 #endif
 
