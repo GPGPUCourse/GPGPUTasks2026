@@ -4,3 +4,8 @@
 /build*/
 cmake-build*
 .vs
+.vscode/
+CMakeFiles/
+*.o
+gmock_*
+scripts/linux/googletest-release-*/
