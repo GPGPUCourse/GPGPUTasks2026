@@ -3,6 +3,7 @@
 
 #include <libgpu/opencl/enum.h>
 #include <libgpu/vulkan/enum.h>
+#include <libgpu/vulkan/vulkan_api_headers.h>
 #include <libbase/string_utils.h>
 #include <libbase/runtime_assert.h>
 #include <libbase/timer.h>
@@ -121,7 +122,7 @@ std::vector<Device> enumDevices(bool cuda_silent, bool opencl_silent, bool vk_si
 			Device device;
 			device.name						= vulkan_device.name;
 			device.plain_name				= vulkan_device.name;
-			device.opencl_device_type		= vulkan_device.device_type;
+			device.opencl_device_type		= static_cast<vk::PhysicalDeviceType>(vulkan_device.device_type) == vk::PhysicalDeviceType::eCpu ? CL_DEVICE_TYPE_CPU : CL_DEVICE_TYPE_GPU;
 			device.vendor_id				= vulkan_device.vendor_id;
 			device.vendor_name				= vulkan_device.vendor_name;
 			device.vulkan_api_version		= vulkan_device.api_version;
@@ -171,10 +172,14 @@ void mergeApisOnDevices(std::vector<Device> &devices)
 
 	// merge corresponding devices
 	for (size_t k = 0; k + 1 < devices.size(); k++) {
+		const bool first_opencl_vulkan_cpu_merge = devices[k].supports_opencl && !devices[k].supports_vulkan && devices[k].isCPU() && !devices[k + 1].supports_opencl && devices[k + 1].supports_vulkan && devices[k + 1].isCPU();
+
 		// if (#K) differs from the next (#K+1) - they can't be merged, moving forward
-		if (devices[k].name				!= devices[k + 1].name)				continue;
-		if (devices[k].pci_bus_id		!= devices[k + 1].pci_bus_id)		continue;
-		if (devices[k].pci_device_id	!= devices[k + 1].pci_device_id)	continue;
+		if (!first_opencl_vulkan_cpu_merge) {
+			if (devices[k].name				!= devices[k + 1].name)				continue;
+			if (devices[k].pci_bus_id		!= devices[k + 1].pci_bus_id)		continue;
+			if (devices[k].pci_device_id	!= devices[k + 1].pci_device_id)	continue;
+		}
 
 		// Order of APIs (thanks to sorting): CUDA, OpenCL, Vulkan
 		if (!devices[k].supports_opencl && devices[k + 1].supports_opencl) { // If (#K) is CUDA and the next (#K+1) is OpenCL - we assimilate it into (#K)
