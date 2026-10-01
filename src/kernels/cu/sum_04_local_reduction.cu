@@ -19,7 +19,25 @@ __global__ void sum_04_local_reduction(
     // __shared__ unsigned int local_data[GROUP_SIZE];
     // __syncthreads();
 
-    // TODO
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int local_index = threadIdx.x;
+
+    __shared__ unsigned int local_data[GROUP_SIZE];
+
+    if (index < n) local_data[local_index] = a[index];
+    else local_data[local_index] = 0;
+    __syncthreads();
+
+    for (unsigned int s = GROUP_SIZE / 2; s > 0; s >>= 1) {
+        if (local_index < s) {
+            local_data[local_index] += local_data[local_index + s];
+        }
+        __syncthreads();
+    }
+
+    if (local_index == 0) {
+        b[blockIdx.x] = local_data[0];
+    }
 }
 
 namespace cuda {
