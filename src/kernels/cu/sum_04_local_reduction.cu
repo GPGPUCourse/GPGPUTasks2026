@@ -20,6 +20,23 @@ __global__ void sum_04_local_reduction(
     // __syncthreads();
 
     // TODO
+    const uint index = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint local_index = threadIdx.x;
+    __shared__ unsigned int local_data[GROUP_SIZE];
+    local_data[local_index] = 0;
+
+    if(index < n) {
+        local_data[local_index] = a[index];
+    }
+    
+    __syncthreads();
+    if(local_index == 0) {
+        unsigned int block_sum = 0;
+        for(int i = 0; i < GROUP_SIZE; i++) {
+            block_sum += local_data[i];
+        }
+        b[blockIdx.x] = block_sum;
+    }
 }
 
 namespace cuda {
