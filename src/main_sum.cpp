@@ -68,7 +68,7 @@ void run(int argc, char** argv)
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u sum_accum_gpu(1);
-    gpu::gpu_mem_32u reduction_buffer1_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
+    gpu::gpu_mem_32u reduction_buffer1_gpu(n);
     gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -147,7 +147,7 @@ void run(int argc, char** argv)
                         cuda::sum_03_local_memory_atomic_per_workgroup(WorkSize, input_gpu, sum_accum_gpu, n);
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "04 local reduction") {
-                        reduction_buffer1_gpu = input_gpu;
+                        input_gpu.copyToN(reduction_buffer1_gpu, n);                        
                         reduction_buffer2_gpu.fill(0);
                         unsigned int Nk = n;
                         bool isFirst = true;
@@ -203,6 +203,7 @@ void run(int argc, char** argv)
         std::cout << "sum median effective algorithm bandwidth: " << memory_size_gb / stats::median(times) << " GB/s" << std::endl;
 
         // Сверяем результат
+
         rassert(cpu_sum == gpu_sum, 3452341235234456, cpu_sum, gpu_sum);
 
         // Проверяем что входные данные остались нетронуты (ведь мы их будем переиспользовать в других алгоритмах)
