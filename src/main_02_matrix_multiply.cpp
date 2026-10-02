@@ -94,7 +94,7 @@ void run(int argc, char** argv)
 
     std::vector<std::string> algorithm_names = {
         "CPU with OpenMP",
-        // "01 naive",
+        "01 naive",
         "02 using local memory",
     };
 
@@ -122,7 +122,7 @@ void run(int argc, char** argv)
 
         // Запускаем алгоритм (несколько раз и с замером времени выполнения)
         std::vector<double> times;
-        int iters_count = (algorithm == "CPU with OpenMP") ? 1 : 5; // CPU is too slow
+        int iters_count = (algorithm == "CPU with OpenMP") ? 1 : 10; // CPU is too slow
         for (int iter = 0; iter < iters_count; ++iter) {
             timer t;
 
