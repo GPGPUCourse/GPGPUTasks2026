@@ -9,34 +9,24 @@
 
 #define HD __host__ __device__
 
-
-HD float2 operator*(const float2 &a, float b) {
-  return float2{a.x * b, a.y * b};
-}
-
-HD float2 operator+(const float2 &a, const float2 &b) {
-  return float2{a.x + b.x, a.y + b.y};
-}
-
 struct float2x2 {
   HD float2x2(float2 row1, float2 row2) {
     col[0] = { row1.x, row2.x };
     col[1] = { row1.y, row2.y };
   }
   float2x2() = default;
-  HD float2x2 operator+=(const float2x2 &other) {
-    col[0] = col[0] + other.col[0];
-    col[1] = col[1] + other.col[1];
-    return *this;
-  }
   float2 col[2];
 };
 
-HD float2x2 operator*(const float2x2 &a, const float2x2 &b) {
-  float2x2 res = {};
-  res.col[0] = (a.col[0] * b.col[0].x) + (a.col[1] * b.col[0].y);
-  res.col[1] = (a.col[0] * b.col[1].x) + (a.col[1] * b.col[1].y);
-  return res;
+HD void fma2x2(const float2x2 &a, const float2x2 &b, float2x2 &acc) {
+  acc.col[0].x += a.col[0].x * b.col[0].x;
+  acc.col[0].x += a.col[1].x * b.col[0].y;
+  acc.col[0].y += a.col[0].y * b.col[0].x;
+  acc.col[0].y += a.col[1].y * b.col[0].y;
+  acc.col[1].x += a.col[0].x * b.col[1].x;
+  acc.col[1].x += a.col[1].x * b.col[1].y;
+  acc.col[1].y += a.col[0].y * b.col[1].x;
+  acc.col[1].y += a.col[1].y * b.col[1].y;
 }
 
 __global__ void matrix_multiply_via_local_memory(
@@ -64,7 +54,7 @@ __global__ void matrix_multiply_via_local_memory(
       __syncthreads();
       if (x < w/2 && y < h/2) {
         for (int j = 0; j < MATMUL_DIM; ++j) {
-          res += alocal[localY][j] * blocal[j][localX];
+          fma2x2(alocal[localY][j], blocal[j][localX], res);
         }
       }
       __syncthreads();
