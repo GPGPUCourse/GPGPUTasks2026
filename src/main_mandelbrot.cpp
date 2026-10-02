@@ -176,6 +176,9 @@ int main(int argc, char** argv)
         }
     }
 
+    // we need to gracefully clear Vulkan context before it is too late (otherwise we encounter segfault on some systems)
+    avk2::InstanceContext::clearGlobalInstanceContext();
+
     return exit_code;
 }
 
