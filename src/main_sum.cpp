@@ -83,7 +83,7 @@ void run(int argc, char** argv)
         "04 local reduction",
     };
 
-    constexpr std::size_t kMaxGroupsCount = 65535;
+    constexpr std::size_t kMaxGroupsCount = 32768;
     const std::size_t groups_count = (n / GROUP_SIZE) + (n % GROUP_SIZE != 0);
     const std::size_t groups_x = std::min(groups_count, kMaxGroupsCount);
     const std::size_t groups_y = (groups_count / groups_x) + (groups_count % groups_x != 0);
