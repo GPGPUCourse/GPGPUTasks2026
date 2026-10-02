@@ -46,13 +46,17 @@ __global__ void matrix_multiply_via_local_memory(
     uint32_t localY = threadIdx.y;
     float2x2 res = {};
 
-    for (int bi = 0; bi < k/2/MATMUL_DIM; ++bi) {
-      if (x < w/2 && y < h/2) {
-        alocal[localY][localX] = { a[y*2 * k/2 + bi * MATMUL_DIM + localX], a[(y*2+1) * k/2 + bi * MATMUL_DIM + localX] };
-        blocal[localY][localX] = { b[(bi * MATMUL_DIM + localY) * 2 * w/2 + x], b[((bi * MATMUL_DIM + localY)*2 + 1) * w/2 + x] };
+    uint32_t w2 = w/2;
+    uint32_t h2 = h/2;
+    uint32_t k2 = k/2;
+
+    for (int bi = 0; bi < k2/MATMUL_DIM; ++bi) {
+      if (x < w2 && y < h2) {
+        alocal[localY][localX] = { a[y*2 * k2 + bi * MATMUL_DIM + localX], a[(y*2+1) * k2 + bi * MATMUL_DIM + localX] };
+        blocal[localY][localX] = { b[(bi * MATMUL_DIM + localY) * 2 * w2 + x], b[((bi * MATMUL_DIM + localY)*2 + 1) * w2 + x] };
       }
       __syncthreads();
-      if (x < w/2 && y < h/2) {
+      if (x < w2 && y < h2) {
         for (int j = 0; j < MATMUL_DIM; ++j) {
           fma2x2(alocal[localY][j], blocal[j][localX], res);
         }
@@ -60,9 +64,9 @@ __global__ void matrix_multiply_via_local_memory(
       __syncthreads();
     }
 
-    if (x < w/2 && y < h/2) {
-      c[y * 2 * w/2 + x] = { res.col[0].x, res.col[1].x };
-      c[(y*2+1) * w/2 + x] = { res.col[0].y, res.col[1].y }; 
+    if (x < w2 && y < h2) {
+      c[y * 2 * w2 + x] = { res.col[0].x, res.col[1].x };
+      c[(y*2+1) * w2 + x] = { res.col[0].y, res.col[1].y }; 
     }
 }
 
