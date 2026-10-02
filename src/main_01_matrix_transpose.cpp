@@ -84,7 +84,7 @@ void run(int argc, char** argv)
                 // _______________________________CUDA___________________________________________
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 if (algorithm == "01 naive transpose (non-coalesced)") {
-                    cuda::matrix_transpose_naive(gpu::WorkSize(32, 8, w, h), input_matrix_gpu, output_matrix_gpu, w, h);
+                    cuda::matrix_transpose_naive(gpu::WorkSize(4, 64, w, h), input_matrix_gpu, output_matrix_gpu, w, h);
                 } else if (algorithm == "02 transpose via local memory (coalesced)") {
                     cuda::matrix_transpose_coalesced_via_local_memory(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), input_matrix_gpu, output_matrix_gpu, w, h);
                 } else {
