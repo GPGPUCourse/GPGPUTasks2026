@@ -83,6 +83,11 @@ void run(int argc, char** argv)
         "04 local reduction",
     };
 
+    constexpr std::size_t kMaxGroupsCount = 65535;
+    const std::size_t groups_count = (n / GROUP_SIZE) + (n % GROUP_SIZE != 0);
+    const std::size_t groups_x = std::min(groups_count, kMaxGroupsCount);
+    const std::size_t groups_y = (groups_count / groups_x) + (groups_count % groups_x != 0);
+
     for (size_t algorithm_index = 0; algorithm_index < algorithm_names.size(); ++algorithm_index) {
         const std::string& algorithm = algorithm_names[algorithm_index];
         std::cout << "______________________________________________________" << std::endl;
@@ -101,7 +106,7 @@ void run(int argc, char** argv)
             } else {
                 if (algorithm == "01 atomicAdd from each workItem") {
                     sum_accum_gpu.fill(0);
-                    vk_sum01Atomics.exec(n, gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu);
+                    vk_sum01Atomics.exec(n, gpu::WorkSize(GROUP_SIZE, 1, groups_x * GROUP_SIZE, groups_y), input_gpu, sum_accum_gpu);
                     sum_accum_gpu.readN(&gpu_sum, 1);
                 } else if (algorithm == "02 atomicAdd but each workItem loads K values") {
                     sum_accum_gpu.fill(0);

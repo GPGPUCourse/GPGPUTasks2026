@@ -14,7 +14,8 @@ layout (push_constant) uniform PushConstants {
 layout (local_size_x = GROUP_SIZE) in;
 void main()
 {
-    const uint index = gl_GlobalInvocationID.x;
+    const uint width = gl_NumWorkGroups.x * gl_WorkGroupSize.x;
+    const uint index = gl_GlobalInvocationID.y * width + gl_GlobalInvocationID.x;
 
     if (index >= params.n)
         return;
