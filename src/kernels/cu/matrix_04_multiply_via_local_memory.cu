@@ -20,17 +20,15 @@ struct float4x4 {
   float f[18];
 };
 
-HD void fma2x2(const float4x4 &a, const float4x4 &b, float4x4 &acc) {
+HD void fma4x4(const float4x4 &a, const float4x4 &b, float4x4 &acc) {
   #pragma unroll
   for (int i = 0; i < 4; ++i) {
     #pragma unroll
     for (int j = 0; j < 4; ++j) {
-      float sum = 0.0f;
       #pragma unroll
       for (int t = 0; t < 4; ++t) {
-        sum += a.f[t * 4 + i] * b.f[j * 4 + t];
+        acc.f[j * 4 + i] += a.f[t * 4 + i] * b.f[j * 4 + t];
       }
-      acc.f[j * 4 + i] += sum;
     }
   }
 }
@@ -74,7 +72,7 @@ __global__ void matrix_multiply_via_local_memory(
       __syncthreads();
       if (x < w4 && y < h4) {
         for (int j = 0; j < MATMUL_DIM; ++j) {
-          fma2x2(alocal[localY][j], blocal[j][localX], res);
+          fma4x4(alocal[localY][j], blocal[j][localX], res);
         }
       }
       __syncthreads();
