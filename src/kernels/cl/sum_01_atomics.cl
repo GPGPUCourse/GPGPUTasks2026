@@ -5,9 +5,10 @@
 #include "../defines.h"
 
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
-__kernel void sum_01_atomics(__global const uint* a,
-                             __global       uint* sum,
-                                    unsigned int  n)
+__kernel void sum_01_atomics(
+    __global const uint* a,
+    __global uint* sum,
+    unsigned int n)
 {
     const uint index = get_global_id(0);
 
