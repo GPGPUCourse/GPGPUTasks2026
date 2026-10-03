@@ -17,7 +17,7 @@ struct float4x4 {
     f[12] = row0.w; f[13] = row1.w; f[14] = row2.w; f[15] = row3.w;
   }
   float4x4() = default;
-  float f[16];
+  float f[18];
 };
 
 HD void fma2x2(const float4x4 &a, const float4x4 &b, float4x4 &acc) {
