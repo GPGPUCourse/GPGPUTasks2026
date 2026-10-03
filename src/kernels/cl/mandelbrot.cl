@@ -14,6 +14,7 @@ __kernel void mandelbrot(__global float* results,
 {
     const unsigned int i = get_global_id(0);
     const unsigned int j = get_global_id(1);
-
-    // TODO
+    get_local_id(0);
+    get_local_size(0)
+    for i in range()
 }
