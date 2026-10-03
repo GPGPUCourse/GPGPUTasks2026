@@ -74,9 +74,11 @@ void run(int argc, char** argv)
             // _______________________________OpenCL_____________________________________________
             if (context.type() == gpu::Context::TypeOpenCL) {
                 if (algorithm == "01 naive transpose (non-coalesced)") {
-                    ocl_matrix01TransposeNaive.exec(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), input_matrix_gpu, output_matrix_gpu, w, h);
+                    ocl_matrix01TransposeNaive.exec(gpu::WorkSize(TRANSPOSE_TILE_SIZE, TRANSPOSE_BLOCK_ROWS, w,
+                        div_ceil(h, static_cast<unsigned int>(TRANSPOSE_TILE_SIZE)) * TRANSPOSE_BLOCK_ROWS), input_matrix_gpu, output_matrix_gpu, w, h);
                 } else if (algorithm == "02 transpose via local memory (coalesced)") {
-                    ocl_matrix02TransposeCoalescedViaLocalMemory.exec(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), input_matrix_gpu, output_matrix_gpu, w, h);
+                    ocl_matrix02TransposeCoalescedViaLocalMemory.exec(gpu::WorkSize(TRANSPOSE_TILE_SIZE, TRANSPOSE_BLOCK_ROWS, w,
+                        div_ceil(h, static_cast<unsigned int>(TRANSPOSE_TILE_SIZE)) * TRANSPOSE_BLOCK_ROWS), input_matrix_gpu, output_matrix_gpu, w, h);
                 } else {
                     rassert(false, 652345234321, algorithm, algorithm_index);
                 }

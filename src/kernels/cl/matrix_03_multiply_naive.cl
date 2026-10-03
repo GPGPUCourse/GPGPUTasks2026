@@ -19,9 +19,12 @@ __kernel void matrix_03_multiply_naive(
         return;
     }
 
+    __global const float* row_a = a + y * k;
+    __global const float* row_b = b;
     float sum = 0.0f;
     for (unsigned int i = 0; i < k; ++i) {
-        sum += a[y * k + i] * b[i * (size_t)w + x];
+        sum = fma(row_a[i], row_b[x], sum);
+        row_b += w;
     }
     c[y * w + x] = sum;
 }

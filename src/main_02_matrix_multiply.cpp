@@ -136,7 +136,9 @@ void run(int argc, char** argv)
                     if (algorithm == "01 naive") {
                         ocl_matrix03MultiplyNaive.exec(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else if (algorithm == "02 using local memory") {
-                        ocl_matrix04MultiplyViaLocalMemory.exec(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                        ocl_matrix04MultiplyViaLocalMemory.exec(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y,
+                            div_ceil(w, static_cast<unsigned int>(MULTIPLY_OUTPUTS_PER_THREAD)),
+                            div_ceil(h, static_cast<unsigned int>(MULTIPLY_OUTPUTS_PER_THREAD))), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else {
                         rassert(false, 7652345234321, algorithm, algorithm_index);
                     }
