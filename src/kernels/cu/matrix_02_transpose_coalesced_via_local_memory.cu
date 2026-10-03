@@ -13,7 +13,18 @@ __global__ void matrix_transpose_coalesced_via_local_memory(
                              unsigned int w,
                              unsigned int h)
 {
-    // TODO
+    __shared__ float tile[32][33];
+    unsigned int x = blockIdx.x * 32u + threadIdx.x;
+    unsigned int y = blockIdx.y * 32u + threadIdx.y;
+    if (x < w && y < h) {
+        tile[threadIdx.y][threadIdx.x] = matrix[(size_t)y * w + x];
+    }
+    __syncthreads();
+    unsigned int col = blockIdx.x * 32u + threadIdx.y;
+    unsigned int row = blockIdx.y * 32u + threadIdx.x;
+    if (col < w && row < h) {
+        transposed_matrix[(size_t)col * h + row] = tile[threadIdx.x][threadIdx.y];
+    }
 }
 
 namespace cuda {
