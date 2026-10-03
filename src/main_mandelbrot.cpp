@@ -10,12 +10,17 @@
 
 #include <fstream>
 
-void cpu::mandelbrot(float* results,
-                   unsigned int width, unsigned int height,
-                   float fromX, float fromY,
-                   float sizeX, float sizeY,
-                   unsigned int iters, unsigned int isSmoothing,
-                   bool useOpenMP)
+void cpu::mandelbrot(
+    float* results,
+    unsigned int width,
+    unsigned int height,
+    float fromX,
+    float fromY,
+    float sizeX,
+    float sizeY,
+    unsigned int iters,
+    unsigned int isSmoothing,
+    bool useOpenMP)
 {
     const float threshold = 256.0f;
     const float threshold2 = threshold * threshold;
@@ -113,16 +118,52 @@ void run(int argc, char** argv)
             timer t;
 
             if (algorithm == "CPU") {
-                cpu::mandelbrot(current_results.ptr(), width, height, centralX - sizeX / 2.0f, centralY - sizeY / 2.0f, sizeX, sizeY, iterationsLimit, isSmoothing, false);
+                cpu::mandelbrot(
+                    current_results.ptr(),
+                    width,
+                    height,
+                    centralX - sizeX / 2.0f,
+                    centralY - sizeY / 2.0f,
+                    sizeX,
+                    sizeY,
+                    iterationsLimit,
+                    isSmoothing,
+                    false);
                 cpu_results = current_results;
+
             } else if (algorithm == "CPU with OpenMP") {
-                if (iter == 0) std::cout << "OpenMP threads: x" << getOpenMPThreadsCount() << " threads" << std::endl;
-                cpu::mandelbrot(current_results.ptr(), width, height, centralX - sizeX / 2.0f, centralY - sizeY / 2.0f, sizeX, sizeY, iterationsLimit, isSmoothing, true);
+                if (iter == 0) {
+                    std::cout << "OpenMP threads: x" << getOpenMPThreadsCount() << " threads" << std::endl;
+                }
+                cpu::mandelbrot(
+                    current_results.ptr(),
+                    width,
+                    height,
+                    centralX - sizeX / 2.0f,
+                    centralY - sizeY / 2.0f,
+                    sizeX,
+                    sizeY,
+                    iterationsLimit,
+                    isSmoothing,
+                    true
+                );
+
             } else if (algorithm == "GPU") {
+                auto workSize = gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height);
+
                 // _______________________________OpenCL_____________________________________________
                 if (context.type() == gpu::Context::TypeOpenCL) {
-                    // TODO ocl_mandelbrot.exec(...);
-                    throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                    ocl_mandelbrot.exec(
+                        workSize,
+                        gpu_results,
+                        width,
+                        height,
+                        centralX - sizeX / 2.0f,
+                        centralY - sizeY / 2.0f,
+                        sizeX,
+                        sizeY,
+                        iterationsLimit,
+                        isSmoothing);
 
                     // _______________________________CUDA___________________________________________
                 } else if (context.type() == gpu::Context::TypeCUDA) {
@@ -156,11 +197,11 @@ void run(int argc, char** argv)
         // Вычисляем достигнутую эффективную пропускную способность алгоритма (из соображений что мы все итерации делались полностью, без быстрого выхода через break)
         size_t flopsInLoop = 10;
         size_t maxApproximateFlops = width * height * iterationsLimit * flopsInLoop;
-        size_t gflops = 1000*1000*1000;
+        size_t gflops = 1000 * 1000 * 1000;
         std::cout << "Mandelbrot effective algorithm GFlops: " << maxApproximateFlops / gflops / stats::median(times) << " GFlops" << std::endl;
 
         // Сохраняем картинку
-        image8u image = renderToColor(cpu_results.ptr(), width, height);
+        image8u image = renderToColor(current_results.ptr(), width, height);
         std::string filename = "mandelbrot " + algorithm + ".bmp";
         std::cout << "saving image to '" << filename << "'..." << std::endl;
         image.saveBMP(filename);
