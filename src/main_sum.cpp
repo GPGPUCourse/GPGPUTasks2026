@@ -136,8 +136,19 @@ void run(int argc, char** argv)
                         cuda::sum_03_local_memory_atomic_per_workgroup(gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu, n);
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "04 local reduction") {
-                        // TODO cuda::sum_04_local_reduction(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        // each pass reduces count values into div_ceil(count, 2 * GROUP_SIZE) partial sums (one per block),
+                        // ping-ponging between the two reduction buffers until a single value is left
+                        unsigned int count = n;
+                        const gpu::gpu_mem_32u* from = &input_gpu;
+                        gpu::gpu_mem_32u* to = &reduction_buffer1_gpu;
+                        gpu::gpu_mem_32u* spare = &reduction_buffer2_gpu;
+                        while (count > 1) {
+                            cuda::sum_04_local_reduction(gpu::WorkSize(GROUP_SIZE, div_ceil(count, 2u)), *from, *to, count);
+                            count = div_ceil(count, 2u * GROUP_SIZE);
+                            from = to;
+                            std::swap(to, spare);
+                        }
+                        from->readN(&gpu_sum, 1);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
