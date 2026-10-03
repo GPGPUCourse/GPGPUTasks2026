@@ -6,8 +6,6 @@
 
 #include "../defines.h"
 
-#define WARP_SIZE 32
-
 __global__ void sum_04_local_reduction(
     const unsigned int* a,
     unsigned int* b,
@@ -19,7 +17,24 @@ __global__ void sum_04_local_reduction(
     // __shared__ unsigned int local_data[GROUP_SIZE];
     // __syncthreads();
 
-    // TODO
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int local_index = threadIdx.x;
+
+    __shared__ unsigned int local_data[GROUP_SIZE];
+
+    local_data[local_index] = index < n ? a[index] : 0;
+    __syncthreads();
+
+    for (unsigned int offset = blockDim.x / 2; offset > 0; offset >>= 1) {
+        if (local_index < offset) {
+            local_data[local_index] += local_data[local_index + offset];
+        }
+        __syncthreads();
+    }
+
+    if (local_index == 0) {
+        b[blockIdx.x] = local_data[0];
+    }
 }
 
 namespace cuda {

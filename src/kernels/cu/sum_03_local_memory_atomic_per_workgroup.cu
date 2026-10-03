@@ -17,7 +17,23 @@ __global__ void sum_03_local_memory_atomic_per_workgroup(
     // __shared__ unsigned int local_data[GROUP_SIZE];
     // __syncthreads();
 
-    // TODO
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int local_index = threadIdx.x;
+
+    __shared__ unsigned int local_data[GROUP_SIZE];
+    local_data[local_index] = index < n ? a[index] : 0;
+    __syncthreads();
+
+
+    __syncthreads();
+
+    if (local_index == 0) {
+        unsigned int local_sum = local_data[0];
+        for (unsigned int i = 1; i < GROUP_SIZE; i++) {
+            local_sum += local_data[i];
+        }
+        atomicAdd(sum, local_sum);
+    }
 }
 
 namespace cuda {
