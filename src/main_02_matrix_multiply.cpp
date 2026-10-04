@@ -40,28 +40,6 @@ void multiply(
     }
 }
 
-void multiply_fma(
-    const std::vector<float> &a,
-    const std::vector<float> &b,
-          std::vector<float> &c,
-                 unsigned int w,
-                 unsigned int h,
-                 unsigned int k,
-                  bool with_omp)
-{
-    #pragma omp parallel for schedule(dynamic, 1) if (with_omp)
-    for (ptrdiff_t j = 0; j < h; ++j) {
-        for (ptrdiff_t i = 0; i < w; ++i) {
-            float acc = 0.0f;
-
-            for (unsigned int ki = 0; ki < k; ++ki) {
-                acc = std::fma(a[j * k + ki], b[ki * w + i], acc);
-            }
-
-            c[j * w + i] = acc;
-        }
-    }
-}
 }
 
 void run(int argc, char** argv)
@@ -99,7 +77,6 @@ void run(int argc, char** argv)
     std::vector<float> input_a_cpu(h * k, 0);  // rows=H x cols=K
     std::vector<float> input_b_cpu(k * w, 0);  // rows=K x cols=W
     std::vector<float> output_c_cpu(h * w, 0); // rows=H x cols=W
-    std::vector<float> output_c_cpu_fma(h * w, 0);
     std::vector<float> output_c_gpu(h * w, 0); // rows=H x cols=W
     FastRandom r;
     for (size_t i = 0; i < input_a_cpu.size(); ++i) {
@@ -120,7 +97,6 @@ void run(int argc, char** argv)
 
     std::vector<std::string> algorithm_names = {
         "CPU with OpenMP",
-        "CPU with OpenMP and FMA",
         "01 naive",
         "02 using local memory",
     };
@@ -149,15 +125,12 @@ void run(int argc, char** argv)
 
         // Запускаем алгоритм (несколько раз и с замером времени выполнения)
         std::vector<double> times;
-        const bool is_cpu = algorithm == "CPU with OpenMP" || algorithm == "CPU with OpenMP and FMA";
-        int iters_count = is_cpu ? 1 : 10; // CPU is too slow
+        int iters_count = (algorithm == "CPU with OpenMP") ? 1 : 10; // CPU is too slow
         for (int iter = 0; iter < iters_count; ++iter) {
             timer t;
 
             if (algorithm == "CPU with OpenMP") {
                 cpu::multiply(input_a_cpu, input_b_cpu, output_c_cpu, w, h, k, true);
-            } else if (algorithm == "CPU with OpenMP and FMA") {
-                cpu::multiply_fma(input_a_cpu, input_b_cpu, output_c_cpu_fma, w, h, k, true);
             } else {
                 // _______________________________OpenCL_____________________________________________
                 if (context.type() == gpu::Context::TypeOpenCL) {
@@ -216,31 +189,26 @@ void run(int argc, char** argv)
 
         // Сверяем результат
         if (algorithm != "CPU with OpenMP") {
-            std::vector<float> results = is_cpu ? output_c_cpu_fma : matrix_c_gpu.readVector();
-            const int reference_count = !is_cpu && context.type() == gpu::Context::TypeOpenCL ? 2 : 1;
-            for (int reference_index = 0; reference_index < reference_count; ++reference_index) {
-                const auto& reference = reference_index == 0 ? output_c_cpu : output_c_cpu_fma;
-                const char* reference_name = reference_index == 0 ? "CPU" : "CPU+FMA";
-                std::vector<float> relative_errors;
-                for (size_t j = 0; j < h; ++j) {
-                    for (size_t i = 0; i < w; ++i) {
-                        float gpu_value = results[j * w + i];
-                        float cpu_value = reference[j * w + i];
-                        float error = std::abs(gpu_value - cpu_value);
-                        // rassert(std::isfinite(gpu_value), 6573452433, i, j, gpu_value);
-                        float relative_error = error / std::max(std::abs(cpu_value), 1e-6f);
-                        // rassert(relative_error < 1e-1f, 6573452434, i, j, relative_error); // Lowered relative error for test
-                        relative_errors.push_back(relative_error);
-                    }
+            std::vector<float> results = matrix_c_gpu.readVector();
+            std::vector<float> relative_errors;
+            for (size_t j = 0; j < h; ++j) {
+                for (size_t i = 0; i < w; ++i) {
+                    float gpu_value = results[j * w + i];
+                    float cpu_value = output_c_cpu[j * w + i];
+                    float error = std::abs(gpu_value - cpu_value);
+                    // rassert(std::isfinite(gpu_value), 6573452433, i, j, gpu_value);
+                    float relative_error = error / std::max(std::abs(cpu_value), 1e-6f);
+                    // rassert(relative_error < 1e-1f, 6573452434, i, j, relative_error); // Lowered relative error for test
+                    relative_errors.push_back(relative_error);
                 }
-                std::cout << "relative differences with " << reference_name << ": " << stats::valuesStatsLine(relative_errors) << std::endl;
-                float median_relative_error = stats::median(relative_errors);
-                float perc99_relative_error = stats::percentile(relative_errors, 99);
-                std::cout << "median relative difference with " << reference_name << ": " << median_relative_error << std::endl;
-                std::cout << "99% percentile relative difference with " << reference_name << ": " << perc99_relative_error << std::endl;
-                //  rassert(median_relative_error < 1e-1f, 15321452412431, median_relative_error); // Lowered relative error for test
-                //  rassert(perc99_relative_error < 1e-1f, 54623452334232, perc99_relative_error);
             }
+            std::cout << "relative differences with CPU: " << stats::valuesStatsLine(relative_errors) << std::endl;
+            float median_relative_error = stats::median(relative_errors);
+            float perc99_relative_error = stats::percentile(relative_errors, 99);
+            std::cout << "median relative difference with CPU: " << median_relative_error << std::endl;
+            std::cout << "99% percentile relative difference with CPU: " << perc99_relative_error << std::endl;
+            //  rassert(median_relative_error < 1e-1f, 15321452412431, median_relative_error); // Lowered relative error for test
+            //  rassert(perc99_relative_error < 1e-1f, 54623452334232, perc99_relative_error);
         }
     }
 }
