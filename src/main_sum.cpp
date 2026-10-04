@@ -72,14 +72,16 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
-    std::vector<double> times;
-    for (int iter = 0; iter < 10; ++iter) {
-        timer t;
-        input_gpu.writeN(values.data(), n);
-        times.push_back(t.elapsed());
+    {
+        std::vector<double> times;
+        for (int iter = 0; iter < 10; ++iter) {
+            timer t;
+            input_gpu.writeN(values.data(), n);
+            times.push_back(t.elapsed());
+        }
+        double memory_size_gb = sizeof(unsigned int) * n / 1024.0 / 1024.0 / 1024.0;
+        std::cout << "sum median CPU -> GPU VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s" << std::endl;
     }
-    double memory_size_gb = sizeof(unsigned int) * n / 1024.0 / 1024.0 / 1024.0;
-    std::cout << "sum median CPU -> GPU VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s" << std::endl;
 
     std::vector<std::string> algorithm_names = {
         "CPU",
@@ -123,10 +125,12 @@ void run(int argc, char** argv)
                     } else if (algorithm == "04 local reduction") {
                         unsigned int workSizeX = n;
                         bool useOddBuffer = false; 
-                        for (; workSizeX > 1; workSizeX = div_ceil(workSizeX, (unsigned int)GROUP_SIZE), useOddBuffer = !useOddBuffer) {
+                        while (workSizeX > 1) {
                             auto& source = (workSizeX == n) ? input_gpu : (useOddBuffer ? reduction_buffer1_gpu : reduction_buffer2_gpu);
                             auto& destination = useOddBuffer ? reduction_buffer2_gpu : reduction_buffer1_gpu;
                             ocl_sum04LocalReduction.exec(gpu::WorkSize(GROUP_SIZE, workSizeX), source, destination, workSizeX);
+                            workSizeX = div_ceil(workSizeX, (unsigned int)GROUP_SIZE);
+                            useOddBuffer = !useOddBuffer;
                         }
                         (useOddBuffer ? reduction_buffer1_gpu : reduction_buffer2_gpu).readN(&gpu_sum, 1);
                     } else {
