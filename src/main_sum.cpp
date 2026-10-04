@@ -7,6 +7,8 @@
 
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
+#include "libgpu/shared_device_buffer.h"
+#include "libgpu/work_size.h"
 
 #include <fstream>
 #include <iomanip>
@@ -23,7 +25,7 @@ unsigned int cpu::sum(const unsigned int* values, unsigned int n)
 unsigned int cpu::sumOpenMP(const unsigned int* values, unsigned int n)
 {
     unsigned int sum = 0;
-    #pragma omp parallel for schedule(dynamic, 1024) reduction(+ : sum)
+#pragma omp parallel for schedule(dynamic, 1024) reduction(+ : sum)
     for (ptrdiff_t i = 0; i < n; ++i) {
         sum += values[i];
     }
@@ -71,8 +73,28 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u reduction_buffer1_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
     gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
 
+    size_t globalSize = ((size_t(n) + GROUP_SIZE - 1) / GROUP_SIZE) * GROUP_SIZE;
+    size_t firstSize = globalSize / GROUP_SIZE;
+    size_t secondSize = (firstSize + GROUP_SIZE - 1) / GROUP_SIZE;
+
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(values.data(), n);
+
+    std::vector<double> transferTimes;
+    for (int repeat = 0; repeat < 10; ++repeat) {
+        timer t;
+        input_gpu.writeN(values.data(), n);
+        transferTimes.push_back(t.elapsed());
+    }
+
+    const double medianSeconds = stats::median(transferTimes);
+    const double bytes = double(n) * sizeof(values[0]);
+    const double gbPerSecond = bytes / medianSeconds / 1e9;
+
+    std::cout << "CPU RAM -> GPU VRAM: "
+              << bytes / 1e9 << " GB за "
+              << medianSeconds * 1000 << " мс (медиана 10 замеров), "
+              << gbPerSecond << " GB/s" << std::endl;
     // TODO 1) замерьте здесь какая достигнута пропускная пособность PCI-E шины
     // TODO 2) сделайте замер хотя бы три раза
     // TODO 3) и выведите рассчет на основании медианного времени (в легко понятной форме - GB/s)
@@ -113,11 +135,26 @@ void run(int argc, char** argv)
                         ocl_sum02AtomicsLoadK.exec(gpu::WorkSize(GROUP_SIZE, n / LOAD_K_VALUES_PER_ITEM), input_gpu, sum_accum_gpu, n);
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "03 local memory and atomicAdd from master thread") {
-                        // TODO ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        sum_accum_gpu.fill(0);
+                        gpu::WorkSize workSize(GROUP_SIZE, 1, globalSize, 1);
+                        ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(workSize, input_gpu, sum_accum_gpu, n);
+                        sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "04 local reduction") {
-                        // TODO ocl_sum04LocalReduction.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        size_t currentN = n;
+                        auto* src = &input_gpu;
+                        auto* dst = &reduction_buffer1_gpu;
+
+                        while (currentN > 1) {
+                            size_t groups = ((size_t(currentN) + GROUP_SIZE - 1) / GROUP_SIZE);
+                            globalSize = groups * GROUP_SIZE;
+                            gpu::WorkSize workSize(GROUP_SIZE, 1, globalSize, 1);
+                            ocl_sum04LocalReduction.exec(workSize, *src, *dst, static_cast<unsigned int>(currentN));
+
+                            currentN = groups;
+                            src = dst;
+                            dst = (dst == &reduction_buffer1_gpu) ? &reduction_buffer2_gpu : &reduction_buffer1_gpu;
+                        }
+                        src->readN(&gpu_sum, 1);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
