@@ -34,9 +34,7 @@ void run(int argc, char** argv)
 {
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
-    // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
-    // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
-    // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
+    // Для задания выбран OpenCL.
     gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
@@ -71,11 +69,23 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u reduction_buffer1_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
     gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
 
-    // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
+    // Прогрев: выделение/первое использование памяти не включаем в замер.
     input_gpu.writeN(values.data(), n);
-    // TODO 1) замерьте здесь какая достигнута пропускная пособность PCI-E шины
-    // TODO 2) сделайте замер хотя бы три раза
-    // TODO 3) и выведите рассчет на основании медианного времени (в легко понятной форме - GB/s)
+    std::vector<double> transfer_times;
+    for (int iter = 0; iter < 5; ++iter) {
+        timer t;
+        // writeN блокируется до завершения передачи, поэтому измеряем всю операцию.
+        input_gpu.writeN(values.data(), n);
+        transfer_times.push_back(t.elapsed());
+    }
+    const double input_size_gb = sizeof(unsigned int) * (double)n / 1e9;
+    std::cout << "Array: " << n << " uint elements, " << input_size_gb << " GB" << std::endl;
+    std::cout << "Host-to-device transfer times (in seconds): " << stats::valuesStatsLine(transfer_times) << std::endl;
+    std::cout << "Host-to-device median bandwidth: " << input_size_gb / stats::median(transfer_times) << " GB/s" << std::endl;
+    if (device.isGPU() && !device.opencl_unified_memory)
+        std::cout << "Discrete GPU: this measures effective CPU RAM -> GPU VRAM transfer over PCI-E." << std::endl;
+    else
+        std::cout << "Unified-memory/CPU device: this transfer is not a PCI-E bandwidth measurement." << std::endl;
 
     std::vector<std::string> algorithm_names = {
         "CPU",
@@ -113,11 +123,20 @@ void run(int argc, char** argv)
                         ocl_sum02AtomicsLoadK.exec(gpu::WorkSize(GROUP_SIZE, n / LOAD_K_VALUES_PER_ITEM), input_gpu, sum_accum_gpu, n);
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "03 local memory and atomicAdd from master thread") {
-                        // TODO ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        sum_accum_gpu.fill(0);
+                        ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu, n);
+                        sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "04 local reduction") {
-                        // TODO ocl_sum04LocalReduction.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        ocl_sum04LocalReduction.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, reduction_buffer1_gpu, n);
+                        unsigned int count = div_ceil(n, (unsigned int)GROUP_SIZE);
+                        gpu::gpu_mem_32u* current = &reduction_buffer1_gpu;
+                        gpu::gpu_mem_32u* next = &reduction_buffer2_gpu;
+                        while (count > 1) {
+                            ocl_sum04LocalReduction.exec(gpu::WorkSize(GROUP_SIZE, count), *current, *next, count);
+                            count = div_ceil(count, (unsigned int)GROUP_SIZE);
+                            std::swap(current, next);
+                        }
+                        current->readN(&gpu_sum, 1);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
@@ -169,11 +188,12 @@ void run(int argc, char** argv)
         std::cout << "algorithm times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 
         // Вычисляем достигнутую эффективную пропускную способность алгоритма (из соображений что мы отработали в один проход по входному массиву)
-        double memory_size_gb = sizeof(unsigned int) * n / 1024.0 / 1024.0 / 1024.0;
+        double memory_size_gb = sizeof(unsigned int) * (double)n / 1e9;
         std::cout << "sum median effective algorithm bandwidth: " << memory_size_gb / stats::median(times) << " GB/s" << std::endl;
 
         // Сверяем результат
         rassert(cpu_sum == gpu_sum, 3452341235234456, cpu_sum, gpu_sum);
+        std::cout << "Sum verified: " << gpu_sum << std::endl;
 
         // Проверяем что входные данные остались нетронуты (ведь мы их будем переиспользовать в других алгоритмах)
         std::vector<unsigned int> input_values = input_gpu.readVector();
@@ -192,9 +212,6 @@ int main(int argc, char** argv)
         std::cerr << "Error: " << e.what() << std::endl;
         if (e.what() == DEVICE_NOT_SUPPORT_API) {
             // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за выбора CUDA API (его нет на процессоре - т.е. в случае CI на GitHub Actions)
-            exit_code = 0;
-        } else if (e.what() == CODE_IS_NOT_IMPLEMENTED) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за того что задание еще не выполнено
             exit_code = 0;
         } else {
             // Выставляем ненулевой exit code, чтобы сообщить, что случилась ошибка
