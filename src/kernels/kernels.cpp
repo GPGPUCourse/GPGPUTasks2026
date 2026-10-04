@@ -1,6 +1,6 @@
 #include "kernels.h"
 
-#include "cl/generated_kernels/aplusb.h"
+/*#include "cl/generated_kernels/aplusb.h"
 #include "cl/generated_kernels/mandelbrot.h"
 #include "cl/generated_kernels/sum_01_atomics.h"
 #include "cl/generated_kernels/sum_02_atomics_load_k.h"
@@ -12,7 +12,7 @@
 #include "vk/generated_kernels/sum_01_atomics_comp.h"
 #include "vk/generated_kernels/sum_02_atomics_load_k_comp.h"
 #include "vk/generated_kernels/sum_03_local_memory_atomic_per_workgroup_comp.h"
-#include "vk/generated_kernels/sum_04_local_reduction_comp.h"
+#include "vk/generated_kernels/sum_04_local_reduction_comp.h"*/
 
 #ifndef CUDA_SUPPORT
 namespace cuda {
@@ -59,7 +59,7 @@ void sum_04_local_reduction(const gpu::WorkSize& workSize,
 } // namespace cuda
 #endif
 
-namespace ocl {
+/*namespace ocl {
 const ocl::ProgramBinaries& getAplusB()
 {
     return opencl_binaries_aplusb;
@@ -111,4 +111,4 @@ const ProgramBinaries& getSum04LocalReduction()
 {
     return vulkan_binaries_sum_04_local_reduction_comp;
 }
-} // namespace avk2
+} // namespace avk2*/

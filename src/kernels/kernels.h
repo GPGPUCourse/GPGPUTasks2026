@@ -27,9 +27,10 @@ void sum_01_atomics(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, gp
 void sum_02_atomics_load_k(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, gpu::gpu_mem_32u& sum, unsigned int n);
 void sum_03_local_memory_atomic_per_workgroup(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, gpu::gpu_mem_32u& sum, unsigned int n);
 void sum_04_local_reduction(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, gpu::gpu_mem_32u& b, unsigned int n);
+    void sum_04_atomics(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, gpu::gpu_mem_32u& b, unsigned int n);
 }
 
-namespace ocl {
+/*namespace ocl {
 const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getMandelbrot();
@@ -49,4 +50,4 @@ const ProgramBinaries& getSum01Atomics();
 const ProgramBinaries& getSum02AtomicsLoadK();
 const ProgramBinaries& getSum03LocalMemoryAtomicPerWorkgroup();
 const ProgramBinaries& getSum04LocalReduction();
-}
+}*/
