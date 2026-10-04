@@ -4,7 +4,7 @@
 
 #include "../defines.h"
 
-__attribute__((reqd_work_group_size(1, 1, 1)))
+__attribute__((reqd_work_group_size(GROUP_SIZE_X, GROUP_SIZE_Y, 1)))
 __kernel void matrix_03_multiply_naive(
                        __global const float* a, // rows=h x cols=k
                        __global const float* b, // rows=k x cols=w
@@ -13,5 +13,18 @@ __kernel void matrix_03_multiply_naive(
                                 unsigned int h,
                                 unsigned int k)
 {
-    // TODO
+    size_t x = get_global_id(0);
+    size_t y = get_global_id(1);
+    if (x >= w || y >= h) {
+        return;
+    }
+
+    __global const float* row_a = a + y * k;
+    __global const float* row_b = b;
+    float sum = 0.0f;
+    for (unsigned int i = 0; i < k; ++i) {
+        sum = fma(row_a[i], row_b[x], sum);
+        row_b += w;
+    }
+    c[y * w + x] = sum;
 }

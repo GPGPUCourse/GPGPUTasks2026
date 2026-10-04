@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD 17)
 
 # Если вы установили CUDA SDK - можете включить поддержку CUDA
 option(GPU_CUDA_SUPPORT "CUDA support." OFF)
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # GLSLC_BIN используйтся для компиляции Vulkan шейдеров (GLSL)
 if (NOT DEFINED GLSLC_BIN)
@@ -118,6 +119,11 @@ endif ()
 add_executable(main_aplusb           src/main_aplusb.cpp)
 add_executable(main_matrix_transpose src/main_01_matrix_transpose.cpp)
 add_executable(main_matrix_multiply  src/main_02_matrix_multiply.cpp)
+
+target_compile_options(main_matrix_multiply PRIVATE
+        "$<$<COMPILE_LANG_AND_ID:CXX,GNU,Clang,AppleClang>:-ffp-contract=off>"
+        "$<$<COMPILE_LANG_AND_ID:CXX,MSVC>:/fp:strict>"
+)
 
 target_link_libraries(main_aplusb           ${PROJECT_NAME}_core)
 target_link_libraries(main_matrix_transpose ${PROJECT_NAME}_core)
