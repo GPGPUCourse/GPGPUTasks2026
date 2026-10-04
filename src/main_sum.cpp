@@ -148,7 +148,7 @@ void run(int argc, char** argv)
                             size_t groups = ((size_t(currentN) + GROUP_SIZE - 1) / GROUP_SIZE);
                             globalSize = groups * GROUP_SIZE;
                             gpu::WorkSize workSize(GROUP_SIZE, 1, globalSize, 1);
-                            ocl_sum04LocalReduction.exec(workSize, *src, *dst, static_cast<unsigned int>(currentN));
+                            ocl_sum04LocalReduction.execAsynchronized(workSize, *src, *dst, static_cast<unsigned int>(currentN));
 
                             currentN = groups;
                             src = dst;
