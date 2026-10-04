@@ -15,11 +15,14 @@ __kernel void matrix_04_multiply_via_local_memory(
 {
     __local float tile_a[GROUP_SIZE_Y * MULTIPLY_OUTPUTS_PER_THREAD][GROUP_SIZE_X];
     __local float tile_b[GROUP_SIZE_Y][GROUP_SIZE_X * MULTIPLY_OUTPUTS_PER_THREAD];
+
     size_t lx = get_local_id(0);
     size_t ly = get_local_id(1);
     size_t x = get_group_id(0) * GROUP_SIZE_X * MULTIPLY_OUTPUTS_PER_THREAD + lx;
     size_t y = get_group_id(1) * GROUP_SIZE_Y * MULTIPLY_OUTPUTS_PER_THREAD + ly;
+
     // Каждый поток считает четыре элемента блока C размером 32x32.
+    // [a][b], [a][b+16], [a+16][b], [a+16][b+16]
     float sum00 = 0.0f, sum01 = 0.0f;
     float sum10 = 0.0f, sum11 = 0.0f;
 
