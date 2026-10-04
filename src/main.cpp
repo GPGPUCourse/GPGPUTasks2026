@@ -1,6 +1,8 @@
+#include "CL/cl_platform.h"
 #include <CL/cl.h>
 #include <libclew/ocl_init.h>
 
+#include <cstddef>
 #include <iostream>
 #include <sstream>
 #include <stdexcept>
@@ -208,14 +210,26 @@ int main()
 				nullptr));
 			std::cout << "    device compute units: " << computeUnits << "\n";
 
-			cl_uint maxClockMHz = 0;
+			// cl_uint maxClockMHz = 0;
+			// OCL_SAFE_CALL(clGetDeviceInfo(
+			// 	device, 
+			// 	CL_DEVICE_MAX_CLOCK_FREQUENCY,
+			// 	sizeof(maxClockMHz), 
+			// 	&maxClockMHz, 
+			// 	nullptr));
+			// std::cout << "    device max clock: " << maxClockMHz << "MHz\n";
+
+			// 	CL_DEVICE_MAX_CLOCK_FREQUENCY - implenetation defined from OpenGL ver 2.2 (khronos.org)
+
+			size_t maxParamSize = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(
 				device, 
-				CL_DEVICE_MAX_CLOCK_FREQUENCY,
-				sizeof(maxClockMHz), 
-				&maxClockMHz, 
-				nullptr));
-			std::cout << "    device max clock: " << computeUnits << "MHz\n";
+				CL_DEVICE_MAX_PARAMETER_SIZE, 
+				sizeof(size_t), 
+				&maxParamSize, 
+			nullptr));
+
+			std::cout << "    device max size of all arguments that can be passed to a kernel: " << maxParamSize << " bytes\n";
 		}
 	}
 
