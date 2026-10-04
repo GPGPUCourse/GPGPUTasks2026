@@ -111,6 +111,7 @@ void run(int argc, char** argv)
         int iters_count = (algorithm == "CPU") ? 1 : 10; // single-threaded CPU is too slow
         for (int iter = 0; iter < iters_count; ++iter) {
             timer t;
+            gpu::WorkSize workSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height);
 
             if (algorithm == "CPU") {
                 cpu::mandelbrot(current_results.ptr(), width, height, centralX - sizeX / 2.0f, centralY - sizeY / 2.0f, sizeX, sizeY, iterationsLimit, isSmoothing, false);
@@ -121,14 +122,10 @@ void run(int argc, char** argv)
             } else if (algorithm == "GPU") {
                 // _______________________________OpenCL_____________________________________________
                 if (context.type() == gpu::Context::TypeOpenCL) {
-                    // TODO ocl_mandelbrot.exec(...);
-                    throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-
-                    // _______________________________CUDA___________________________________________
+                    ocl_mandelbrot.exec(workSize, gpu_results, width, height, centralX - sizeX / 2.0f, centralY - sizeY / 2.0f, sizeX, sizeY, iterationsLimit, isSmoothing);
                 } else if (context.type() == gpu::Context::TypeCUDA) {
                     // TODO cuda::mandelbrot(..);
                     throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-
                     // _______________________________Vulkan_________________________________________
                 } else if (context.type() == gpu::Context::TypeVulkan) {
                     typedef unsigned int uint;
