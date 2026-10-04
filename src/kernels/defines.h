@@ -6,7 +6,7 @@
 #define GROUP_SIZE_Y 16
 
 #define MUL_GROUP_SIZE_X 16
-#define MUL_GROUP_SIZE_Y 16
+#define MUL_GROUP_SIZE_Y 32
 #define MUL_THREAD_Y 8
 
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
