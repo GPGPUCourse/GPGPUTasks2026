@@ -1,27 +1,51 @@
 #include <libgpu/context.h>
-#include <libgpu/work_size.h>
 #include <libgpu/shared_device_buffer.h>
+#include <libgpu/work_size.h>
 
 #include <libgpu/cuda/cu/common.cu>
 
-#include "helpers/rassert.cu"
 #include "../defines.h"
+#include "helpers/rassert.cu"
 
 __global__ void mandelbrot(float* results,
-                        unsigned int width, unsigned int height,
-                        float fromX, float fromY,
-                        float sizeX, float sizeY,
-                        unsigned int iters, unsigned int isSmoothing)
+    unsigned int width, unsigned int height,
+    float fromX, float fromY,
+    float sizeX, float sizeY,
+    unsigned int iters, unsigned int isSmoothing)
 {
     const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int j = blockIdx.y * blockDim.y + threadIdx.y;
 
-    // TODO
+    const float threshold = 256.0f;
+    const float threshold2 = threshold * threshold;
+    const float logf_hreshold = logf(threshold);
+    const auto log2 = logf(2.0f);
+
+    float x0 = fromX + (i + 0.5f) * sizeX / width;
+    float y0 = fromY + (j + 0.5f) * sizeY / height;
+
+    float x = x0;
+    float y = y0;
+
+    int iter = 0;
+    bool toBreak = false;
+#pragma unroll
+    for (; (iter < iters) and not toBreak; ++iter) {
+        float xPrev = x;
+        x = x * x - y * y + x0;
+        y = 2.0f * xPrev * y + y0;
+        toBreak = (x * x + y * y) > threshold2;
+    }
+    float result = iter;
+    result -= (isSmoothing && iter != iters) ? logf(logf(sqrtf(x * x + y * y)) / logf_hreshold) / log2 : 0;
+
+    result = 1.0f * result / iters;
+    results[j * width + i] = result;
 }
 
 namespace cuda {
-void mandelbrot(const gpu::WorkSize &workSize,
-    const gpu::gpu_mem_32f &results,
+void mandelbrot(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32f& results,
     unsigned int width, unsigned int height,
     float fromX, float fromY,
     float sizeX, float sizeY,
