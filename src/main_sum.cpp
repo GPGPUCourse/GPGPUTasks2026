@@ -98,7 +98,7 @@ void run(int argc, char** argv)
         // Запускаем алгоритм (несколько раз и с замером времени выполнения)
         std::vector<double> times;
         unsigned int gpu_sum = 0;
-        for (int iter = 0; iter < 1; ++iter) {
+        for (int iter = 0; iter < 10; ++iter) {
             timer t;
 
             if (algorithm == "CPU") {
