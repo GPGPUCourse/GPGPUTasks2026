@@ -1,0 +1,9 @@
+{
+	"InstallScripts" : 
+	[
+		"/Users/likhachevalex/homework/GPGPUTasks2026/scripts/macos/googletest-release-1.10.0/releasebuild/cmake_install.cmake",
+		"/Users/likhachevalex/homework/GPGPUTasks2026/scripts/macos/googletest-release-1.10.0/releasebuild/googlemock/cmake_install.cmake",
+		"/Users/likhachevalex/homework/GPGPUTasks2026/scripts/macos/googletest-release-1.10.0/releasebuild/googletest/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
