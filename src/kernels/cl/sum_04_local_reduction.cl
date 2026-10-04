@@ -11,11 +11,34 @@ __kernel void sum_04_local_reduction(__global const uint* a,
                                      __global       uint* b,
                                             unsigned int  n)
 {
-    // Подсказки:
-    // const uint index = get_global_id(0);
-    // const uint local_index = get_local_id(0);
-    // __local uint local_data[GROUP_SIZE];
-    // barrier(CLK_LOCAL_MEM_FENCE);
+    const uint index = get_global_id(0);
+    const uint local_index = get_local_id(0);
+    const uint group_index = get_group_id(0);
 
-    // TODO
+    __local uint local_data[GROUP_SIZE];
+    local_data[local_index] = 0;
+    uint local_part = 0;
+    for (uint i = 0; i < WARP_SIZE; ++i) {
+        const uint shift = group_index * GROUP_SIZE * WARP_SIZE;
+        const uint idx = shift + local_index + i * GROUP_SIZE;
+        if (idx < n) {
+            local_part += a[idx];
+        }
+    }
+    local_data[local_index] = local_part;
+
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    uint offset = GROUP_SIZE / 2;
+    while (offset > 0) {
+        if (local_index < offset) {
+            local_data[local_index] = local_data[local_index] + local_data[local_index + offset];
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+        offset = offset / 2;
+    }
+
+    if (local_index == 0) {
+        b[group_index] = local_data[0];
+    }
 }
