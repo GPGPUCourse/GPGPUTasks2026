@@ -234,8 +234,8 @@ void run(int argc, char** argv)
             float perc99_relative_error = stats::percentile(relative_errors, 99);
             std::cout << "median relative difference with CPU: " << median_relative_error << std::endl;
             std::cout << "99% percentile relative difference with CPU: " << perc99_relative_error << std::endl;
-            // rassert(median_relative_error < 1e-1f, 15321452412431, median_relative_error); // Lowered relative error for test
-            // rassert(perc99_relative_error < 1e-1f, 54623452334232, perc99_relative_error);
+            //  rassert(median_relative_error < 1e-1f, 15321452412431, median_relative_error); // Lowered relative error for test
+            //  rassert(perc99_relative_error < 1e-1f, 54623452334232, perc99_relative_error);
         }
     }
 }
