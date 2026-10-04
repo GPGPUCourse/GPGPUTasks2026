@@ -217,30 +217,25 @@ void run(int argc, char** argv)
         // Сверяем результат
         if (algorithm != "CPU with OpenMP") {
             std::vector<float> results = is_cpu ? output_c_cpu_fma : matrix_c_gpu.readVector();
-            const int reference_count = !is_cpu && context.type() == gpu::Context::TypeOpenCL ? 2 : 1;
-            for (int reference_index = 0; reference_index < reference_count; ++reference_index) {
-                const auto& reference = reference_index == 0 ? output_c_cpu : output_c_cpu_fma;
-                const char* reference_name = reference_index == 0 ? "CPU" : "CPU+FMA";
-                std::vector<float> relative_errors;
-                for (size_t j = 0; j < h; ++j) {
-                    for (size_t i = 0; i < w; ++i) {
-                        float gpu_value = results[j * w + i];
-                        float cpu_value = reference[j * w + i];
-                        float error = std::abs(gpu_value - cpu_value);
-                        // rassert(std::isfinite(gpu_value), 6573452433, i, j, gpu_value);
-                        float relative_error = error / std::max(std::abs(cpu_value), 1e-6f);
-                        // rassert(relative_error < 1e-1f, 6573452434, i, j, relative_error); // Lowered relative error for test
-                        relative_errors.push_back(relative_error);
-                    }
+            std::vector<float> relative_errors;
+            for (size_t j = 0; j < h; ++j) {
+                for (size_t i = 0; i < w; ++i) {
+                    float gpu_value = results[j * w + i];
+                    float cpu_value = output_c_cpu[j * w + i];
+                    float error = std::abs(gpu_value - cpu_value);
+                    // rassert(std::isfinite(gpu_value), 6573452433, i, j, gpu_value);
+                    float relative_error = error / std::max(std::abs(cpu_value), 1e-6f);
+                    // rassert(relative_error < 1e-1f, 6573452434, i, j, relative_error); // Lowered relative error for test
+                    relative_errors.push_back(relative_error);
                 }
-                std::cout << "relative differences with " << reference_name << ": " << stats::valuesStatsLine(relative_errors) << std::endl;
-                float median_relative_error = stats::median(relative_errors);
-                float perc99_relative_error = stats::percentile(relative_errors, 99);
-                std::cout << "median relative difference with " << reference_name << ": " << median_relative_error << std::endl;
-                std::cout << "99% percentile relative difference with " << reference_name << ": " << perc99_relative_error << std::endl;
-                //  rassert(median_relative_error < 1e-1f, 15321452412431, median_relative_error); // Lowered relative error for test
-                //  rassert(perc99_relative_error < 1e-1f, 54623452334232, perc99_relative_error);
             }
+            std::cout << "relative differences with CPU: " << stats::valuesStatsLine(relative_errors) << std::endl;
+            float median_relative_error = stats::median(relative_errors);
+            float perc99_relative_error = stats::percentile(relative_errors, 99);
+            std::cout << "median relative difference with CPU: " << median_relative_error << std::endl;
+            std::cout << "99% percentile relative difference with CPU: " << perc99_relative_error << std::endl;
+            //  rassert(median_relative_error < 1e-1f, 15321452412431, median_relative_error); // Lowered relative error for test
+            //  rassert(perc99_relative_error < 1e-1f, 54623452334232, perc99_relative_error);
         }
     }
 }
