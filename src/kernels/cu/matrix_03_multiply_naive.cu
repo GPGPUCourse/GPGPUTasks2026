@@ -7,6 +7,10 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+__device__ uint idx(uint y, uint x, uint h, uint w) {
+    return y * w + x;
+}
+
 __global__ void matrix_multiply_naive(
                        const float* a, // rows=h x cols=k
                        const float* b, // rows=k x cols=w
@@ -15,7 +19,14 @@ __global__ void matrix_multiply_naive(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO
+    const unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+    const unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+
+    float res = 0;
+    for (int i = 0; i < k; i++) {
+        res += a[idx(y, i, h, k)] * b[idx(i, x, k, w)];
+    }
+    c[idx(y, x, h, w)] = res;
 }
 
 namespace cuda {

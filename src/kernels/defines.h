@@ -4,7 +4,13 @@
 #define GROUP_SIZE   256
 #define GROUP_SIZE_X 16
 #define GROUP_SIZE_Y 16
+#define GROUP_SIZE_S 16
+
+#define CUDA_KERNELS_ACCURATE_ERRORS_CHECKS true
 
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
+
+#define DEBUG_PRINT 1
+#define DEBUG_SIZE 4
 
 #endif // pragma once
