@@ -134,7 +134,7 @@ int main()
 
 			cl_ulong local_mem_size = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_LOCAL_MEM_SIZE, sizeof(local_mem_size), &local_mem_size, nullptr));
-			std::cout << "    Local memory: " << local_mem_size << std::endl;
+			std::cout << "    Local memory: " << (local_mem_size / 1024) << " KB" << std::endl;
 
 			cl_uint max_freq = 0;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_MAX_CLOCK_FREQUENCY, sizeof(max_freq), &max_freq, nullptr));
