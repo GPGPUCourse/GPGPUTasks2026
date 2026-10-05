@@ -65,7 +65,7 @@ void run(int argc, char** argv)
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u sum_accum_gpu(1);
-    gpu::gpu_mem_32u reduction_buffer1_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
+    gpu::gpu_mem_32u reduction_buffer1_gpu(n);
     gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -112,8 +112,20 @@ void run(int argc, char** argv)
                     vk_sum03LocalMemoryAtomicPerWorkgroup.exec(n, gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu);
                     sum_accum_gpu.readN(&gpu_sum, 1);
                 } else if (algorithm == "04 local reduction") {
-                    // TODO vk_sum04LocalReduction.exec(...);
-                    throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                    unsigned reduction_size = n;
+                    sum_accum_gpu.fill(0);
+
+                    reduction_buffer1_gpu.writeN(values.data(), n);
+
+                    auto* src = &reduction_buffer1_gpu;
+                    auto* dest = &reduction_buffer2_gpu;
+
+                    while (reduction_size > 1) {
+                        vk_sum04LocalReduction.exec(reduction_size, gpu::WorkSize(GROUP_SIZE, reduction_size), *src, *dest);
+                        std::swap(src, dest);
+                        reduction_size = div_ceil(reduction_size, (unsigned)GROUP_SIZE);
+                    }
+                    src->readN(&gpu_sum, 1); 
                 } else {
                     rassert(false, 652345234321, algorithm, algorithm_index);
                 }
