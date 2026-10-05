@@ -70,8 +70,9 @@ void run(int argc, char** argv)
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u sum_accum_gpu(1);
-    gpu::gpu_mem_32u reduction_buffer1_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
-    gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
+    auto div = div_ceil(n, (unsigned int)GROUP_SIZE);
+    gpu::gpu_mem_32u reduction_buffer1_gpu(div);
+    gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(div, (unsigned int)GROUP_SIZE));
 
     size_t globalSize = ((size_t(n) + GROUP_SIZE - 1) / GROUP_SIZE) * GROUP_SIZE;
     size_t firstSize = globalSize / GROUP_SIZE;
@@ -136,8 +137,15 @@ void run(int argc, char** argv)
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "03 local memory and atomicAdd from master thread") {
                         sum_accum_gpu.fill(0);
-                        gpu::WorkSize workSize(GROUP_SIZE, 1, globalSize, 1);
-                        ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(workSize, input_gpu, sum_accum_gpu, n);
+                        const size_t neededGroups = (size_t(n) + GROUP_SIZE - 1) / GROUP_SIZE;
+                        const size_t groupCount = std::min(neededGroups, size_t(4096));
+
+                        gpu::WorkSize workSize(
+                            GROUP_SIZE, 1,
+                            groupCount * GROUP_SIZE, 1);
+
+                        ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(
+                            workSize, input_gpu, sum_accum_gpu, n);
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "04 local reduction") {
                         size_t currentN = n;
@@ -145,11 +153,17 @@ void run(int argc, char** argv)
                         auto* dst = &reduction_buffer1_gpu;
 
                         while (currentN > 1) {
-                            size_t groups = ((size_t(currentN) + GROUP_SIZE - 1) / GROUP_SIZE);
-                            globalSize = groups * GROUP_SIZE;
-                            gpu::WorkSize workSize(GROUP_SIZE, 1, globalSize, 1);
-                            ocl_sum04LocalReduction.execAsynchronized(workSize, *src, *dst, static_cast<unsigned int>(currentN));
+                            size_t groups;
+                            if (currentN == n) {
+                                const size_t needed = (currentN + GROUP_SIZE - 1) / GROUP_SIZE;
+                                groups = std::min(needed, size_t(4096));
+                            } else {
+                                groups = 1;
+                            }
 
+                            gpu::WorkSize workSize(GROUP_SIZE, 1, groups * GROUP_SIZE, 1);
+                            ocl_sum04LocalReduction.execAsynchronized(
+                                workSize, *src, *dst, static_cast<unsigned int>(currentN));
                             currentN = groups;
                             src = dst;
                             dst = (dst == &reduction_buffer1_gpu) ? &reduction_buffer2_gpu : &reduction_buffer1_gpu;
