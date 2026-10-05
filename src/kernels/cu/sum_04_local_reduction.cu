@@ -5,6 +5,7 @@
 #include <libgpu/cuda/cu/common.cu>
 
 #include "../defines.h"
+#include "libgpu/cuda/sdk/helper_math.h"
 
 #define WARP_SIZE 32
 
@@ -20,6 +21,25 @@ __global__ void sum_04_local_reduction(
     // __syncthreads();
 
     // TODO
+
+    const uint index = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint local_index = threadIdx.x;
+
+    __shared__ uint local_data[GROUP_SIZE];
+
+    local_data[local_index] = (index < n) ? a[index] : 0;
+
+    __syncthreads();
+
+    if (local_index == 0) {
+        uint localSum{0};
+        for (unsigned int el : local_data) {
+            localSum += el;
+        }
+        b[blockIdx.x] = localSum;
+
+    }
+
 }
 
 namespace cuda {

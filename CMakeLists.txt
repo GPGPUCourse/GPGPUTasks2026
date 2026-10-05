@@ -127,4 +127,17 @@ if (GPU_CUDA_SUPPORT)
     target_include_directories(main_aplusb     PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
     target_include_directories(main_mandelbrot PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
     target_include_directories(main_sum        PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+
+
+    if(MSVC)
+        target_link_options(main_aplusb PRIVATE "LINKER:/FORCE:MULTIPLE")
+        target_link_options(main_mandelbrot PRIVATE "LINKER:/FORCE:MULTIPLE")
+        target_link_options(main_sum PRIVATE "LINKER:/FORCE:MULTIPLE")
+    else()
+        target_link_options(main_aplusb PRIVATE "-Wl,-z,muldefs")
+        target_link_options(main_mandelbrot PRIVATE "-Wl,-z,muldefs")
+        target_link_options(main_sum PRIVATE "-Wl,-z,muldefs")
+    endif()
 endif ()
+
+
