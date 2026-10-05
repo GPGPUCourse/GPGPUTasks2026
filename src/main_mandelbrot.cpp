@@ -155,7 +155,7 @@ void run(int argc, char** argv)
         std::cout << "Mandelbrot effective algorithm GFlops: " << maxApproximateFlops / gflops / stats::median(times) << " GFlops" << std::endl;
 
         // Сохраняем картинку
-        image8u image = renderToColor(cpu_results.ptr(), width, height);
+        image8u image = renderToColor(current_results.ptr(), width, height);
         std::string filename = "mandelbrot " + algorithm + ".bmp";
         std::cout << "saving image to '" << filename << "'..." << std::endl;
         image.saveBMP(filename);
