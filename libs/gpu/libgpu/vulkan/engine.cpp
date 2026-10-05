@@ -32,7 +32,7 @@ namespace {
 		do {
 			result = device.waitForFences(vk::Fence(fence), true, VULKAN_TIMEOUT_NANOSECS);
 			if (result == vk::Result::eTimeout && !reported_timeout) {
-				std::cerr << "[Vulkan] fence wait timed out; work is still pending, continuing to wait" << std::endl;
+				//std::cerr << "[Vulkan] fence wait timed out; work is still pending, continuing to wait" << std::endl;
 				reported_timeout = true;
 			}
 		} while (result == vk::Result::eTimeout);

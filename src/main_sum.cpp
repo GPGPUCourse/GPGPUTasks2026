@@ -69,10 +69,16 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
-    input_gpu.writeN(values.data(), n);
-    // TODO 1) замерьте здесь какая достигнута пропускная пособность PCI-E шины
-    // TODO 2) сделайте замер хотя бы три раза
-    // TODO 3) и выведите рассчет на основании медианного времени (в легко понятной форме - GB/s)
+    std::vector<double> pci_times(10);
+    for (auto& time : pci_times) {
+        timer t;
+        input_gpu.writeN(values.data(), n);
+        time = t.elapsed();
+    }
+
+    std::uint64_t bytes_cnt = std::uint64_t{n} * sizeof(unsigned);
+    double seconds = stats::median(pci_times);
+    std::cout << "CPU -> GPU: " << bytes_cnt / seconds / 1e9 << " GB/s\n";
 
     std::vector<std::string> algorithm_names = {
         "CPU",
@@ -92,6 +98,7 @@ void run(int argc, char** argv)
         std::vector<double> times;
         unsigned int gpu_sum = 0;
         for (int iter = 0; iter < 10; ++iter) {
+            reduction_buffer1_gpu.writeN(values.data(), n);
             timer t;
 
             if (algorithm == "CPU") {
@@ -114,8 +121,6 @@ void run(int argc, char** argv)
                 } else if (algorithm == "04 local reduction") {
                     unsigned reduction_size = n;
                     sum_accum_gpu.fill(0);
-
-                    reduction_buffer1_gpu.writeN(values.data(), n);
 
                     auto* src = &reduction_buffer1_gpu;
                     auto* dest = &reduction_buffer2_gpu;
