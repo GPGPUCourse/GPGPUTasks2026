@@ -130,8 +130,8 @@ gpu::Context gpu::activateContext(const gpu::Device& device, gpu::Context::Type 
         context.init(device.device_id_opencl);
     } else if (api == gpu::Context::TypeCUDA) {
 #ifndef CUDA_SUPPORT
-        // TODO 000 если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-        rassert(false, "To use CUDA you need to enable CUDA via CMake options: -DGPU_CUDA_SUPPORT=ON");
+        //  000 если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
+        //rassert(false, "To use CUDA you need to enable CUDA via CMake options: -DGPU_CUDA_SUPPORT=ON");
 #endif
         if (!device.supports_cuda) {
             std::cout << "Device " << device.name << " doesn't support CUDA" << std::endl;

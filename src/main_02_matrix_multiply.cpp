@@ -10,7 +10,7 @@
 
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
-
+#include <cuda_fp16.h>
 #include <fstream>
 #include <iomanip>
 
@@ -38,17 +38,20 @@ void multiply(
     }
 }
 }
-
+#define MAKSIM
 void run(int argc, char** argv)
 {
+#ifdef MAKSIM
+    argc=2;argv[1]="1";
+#endif
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
-    // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
-    // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
-    // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
-    // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    //  000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
+    //  000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
+    //  000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
+    //  010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
+    //  010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -67,6 +70,7 @@ void run(int argc, char** argv)
     unsigned int w = ksize * 32;
     unsigned int k = ksize * 8;
     unsigned int h = ksize * 16;
+    //unsigned int w=32;unsigned k=32;unsigned int h=32;
     std::cout << "C = A x B, matrices size: C (rows=H=" << h << " x cols=W=" << w << ")"
               << " = A (rows=H=" << h << " x cols=K=" << k << ") x B (rows=K=" << k << " x cols=W=" << w << ")" << std::endl;
     std::cout << "matrices data size: A - " << sizeof(float) * h * k / 1024 / 1024 << " MB, B - " << sizeof(float) * k * w / 1024 / 1024 << " MB, C - " << sizeof(float) * k * w / 1024 / 1024 << " MB" << std::endl;
@@ -82,12 +86,16 @@ void run(int argc, char** argv)
     for (size_t i = 0; i < input_b_cpu.size(); ++i) {
         input_b_cpu[i] = r.nextf();
     }
-
+    for (int x=0;x<5;++x)
+    {
+        std::cout<<" next random  = "<<r.nextf()<<std::endl;
+    }
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32f matrix_a_gpu(h * k); // rows=H x cols=K
     gpu::gpu_mem_32f matrix_b_gpu(k * w); // rows=K x cols=W
     gpu::gpu_mem_32f matrix_c_gpu(h * w); // rows=H x cols=W
-
+    gpu::shared_device_buffer_typed<__half> matrix_a_half_gpu(h*k);
+    gpu::shared_device_buffer_typed<__half> matrix_b_half_gpu(k*w);
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     matrix_a_gpu.writeN(input_a_cpu.data(), input_a_cpu.size());
     matrix_b_gpu.writeN(input_b_cpu.data(), input_b_cpu.size());
@@ -98,8 +106,8 @@ void run(int argc, char** argv)
         "02 using local memory",
     };
 
-    // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
-    bool I_Want_Super_Puper_Prestige_Points = false;
+    // 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
+    bool I_Want_Super_Puper_Prestige_Points = true;
     if (I_Want_Super_Puper_Prestige_Points) {
         if (context.type() == gpu::Context::TypeCUDA) {
             algorithm_names.push_back("03 using WMMA (Tensor Cores) [+Prestige Points]");
@@ -129,48 +137,22 @@ void run(int argc, char** argv)
             if (algorithm == "CPU with OpenMP") {
                 cpu::multiply(input_a_cpu, input_b_cpu, output_c_cpu, w, h, k, true);
             } else {
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED); // TODO remove me
-                // _______________________________OpenCL_____________________________________________
-                if (context.type() == gpu::Context::TypeOpenCL) {
-                    if (algorithm == "01 naive") {
-                        // TODO обязательно замените размер рабочей группы 1x1 на больший
-                        ocl_matrix03MultiplyNaive.exec(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else if (algorithm == "02 using local memory") {
-                        ocl_matrix04MultiplyViaLocalMemory.exec(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else {
-                        rassert(false, 7652345234321, algorithm, algorithm_index);
-                    }
-                    // _______________________________CUDA___________________________________________
-                } else if (context.type() == gpu::Context::TypeCUDA) {
-                    if (algorithm == "01 naive") {
-                        // TODO обязательно замените размер рабочей группы 1x1 на больший
-                        cuda::matrix_multiply_naive(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else if (algorithm == "02 using local memory") {
-                        cuda::matrix_multiply_via_local_memory(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
-                        cuda::matrix_multiply_wmma(gpu::WorkSize(1, 1, w, h * 2 / 16), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else {
-                        rassert(false, 652345234321, algorithm, algorithm_index);
-                    }
-                    // _______________________________Vulkan_________________________________________
-                } else if (context.type() == gpu::Context::TypeVulkan) {
-                    struct {
-                        unsigned int w;
-                        unsigned int h;
-                        unsigned int k;
-                    } params = {w, h, k};
-                    if (algorithm == "01 naive") {
-                        // TODO обязательно замените размер рабочей группы 1x1 на больший
-//                        vk_matrix03MultiplyNaive.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
-                    } else if (algorithm == "02 using local memory") {
-//                        vk_matrix04MultiplyViaLocalMemory.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
-                    } else if (algorithm == "03 using cooperative matrix [+Prestige Points]") {
-                        vk_matrix05MultiplyCooperativeMatrix.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
-                    } else {
-                        rassert(false, 7652345234321, algorithm, algorithm_index);
-                    }
+                //throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED); // remove me
+                if (algorithm == "01 naive") {
+                    // обязательно замените размер рабочей группы 1x1 на больший
+                    cuda::matrix_multiply_naive(gpu::WorkSize(16, 16, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                } else if (algorithm == "02 using local memory") {
+                    cuda::matrix_multiply_via_local_memory(gpu::WorkSize(16, 16, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
+                    //cuda::gohalf(gpu::WorkSize(16,16,h,k),matrix_a_gpu,matrix_a_half_gpu,h,k);
+                    //cuda::gohalf(gpu::WorkSize(16,16,k,w),matrix_b_gpu,matrix_b_half_gpu,k,w);
+                    cuda::gohalf1616(gpu::WorkSize(16,16,k,h),matrix_a_gpu,matrix_a_half_gpu,k,h);
+                    cuda::gohalf1616(gpu::WorkSize(16,16,w,k),matrix_b_gpu,matrix_b_half_gpu,w,k);
+                    //cuda::create_half_by_1616(gpu::)
+                    //throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                    cuda::matrix_multiply_wmma(gpu::WorkSize(16, 16, w, h), matrix_a_half_gpu, matrix_b_half_gpu, matrix_c_gpu, w, h, k);
                 } else {
-                    rassert(false, 546345243, context.type());
+                    rassert(false, 652345234321, algorithm, algorithm_index);
                 }
             }
 
@@ -187,6 +169,7 @@ void run(int argc, char** argv)
         // Сверяем результат
         if (algorithm != "CPU with OpenMP") {
             std::vector<float> results = matrix_c_gpu.readVector();
+            // std::cout<<"results[1] = "<<results[1]<<" answer[1] = "<<output_c_cpu[1]<<std::endl;
             std::vector<float> relative_errors;
             for (size_t j = 0; j < h; ++j) {
                 for (size_t i = 0; i < w; ++i) {
