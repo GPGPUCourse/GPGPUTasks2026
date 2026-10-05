@@ -10,6 +10,7 @@
 
 #include <fstream>
 #include <iomanip>
+#include <numeric>
 
 unsigned int cpu::sum(const unsigned int* values, unsigned int n)
 {
@@ -34,9 +35,6 @@ void run(int argc, char** argv)
 {
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
-    // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
-    // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
-    // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
@@ -68,14 +66,23 @@ void run(int argc, char** argv)
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u sum_accum_gpu(1);
-    gpu::gpu_mem_32u reduction_buffer1_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
-    gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
+    unsigned int reduction_len = div_ceil(n, (unsigned int)GROUP_SIZE);
+    unsigned int reduction_len2 = div_ceil(reduction_len, (unsigned int)GROUP_SIZE);
+    gpu::gpu_mem_32u reduction_buffer1_gpu(reduction_len);
+    gpu::gpu_mem_32u reduction_buffer2_gpu(reduction_len2);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
-    input_gpu.writeN(values.data(), n);
-    // TODO 1) замерьте здесь какая достигнута пропускная пособность PCI-E шины
-    // TODO 2) сделайте замер хотя бы три раза
-    // TODO 3) и выведите рассчет на основании медианного времени (в легко понятной форме - GB/s)
+    {
+        std::cout << "Measuring PCI-E bus throughput" << std::endl;
+        std::vector<double> times(10);
+        for (auto& cur_time : times) {
+            timer t;
+            input_gpu.writeN(values.data(), n);
+            cur_time = t.elapsed();
+        }
+        double memory_size_gb = sizeof(unsigned int) * n / 1024.0 / 1024.0 / 1024.0;
+        std::cout << "PCI-E bus throughput - " << memory_size_gb / stats::median(times) << " GB/s" << std::endl;
+    }
 
     std::vector<std::string> algorithm_names = {
         "CPU",
@@ -113,11 +120,17 @@ void run(int argc, char** argv)
                         ocl_sum02AtomicsLoadK.exec(gpu::WorkSize(GROUP_SIZE, n / LOAD_K_VALUES_PER_ITEM), input_gpu, sum_accum_gpu, n);
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "03 local memory and atomicAdd from master thread") {
-                        // TODO ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        sum_accum_gpu.fill(0);
+                        ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu, n);
+                        sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "04 local reduction") {
-                        // TODO ocl_sum04LocalReduction.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        reduction_buffer1_gpu.fill(0);
+                        reduction_buffer2_gpu.fill(0);
+                        ocl_sum04LocalReduction.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, reduction_buffer1_gpu, n);
+                        ocl_sum04LocalReduction.exec(gpu::WorkSize(GROUP_SIZE, reduction_len), reduction_buffer1_gpu, reduction_buffer2_gpu, reduction_len);
+                        std::vector<unsigned int> reduction_vec(reduction_len2);
+                        reduction_buffer2_gpu.readN(reduction_vec.data(), reduction_len2);
+                        gpu_sum = std::accumulate(reduction_vec.begin(), reduction_vec.end(), 0);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
