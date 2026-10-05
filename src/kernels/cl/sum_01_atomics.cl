@@ -10,7 +10,6 @@ __kernel void sum_01_atomics(__global const uint* a,
                                     unsigned int  n)
 {
     const uint index = get_global_id(0);
-
     if (index >= n)
         return;
 
