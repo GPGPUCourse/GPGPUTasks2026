@@ -11,7 +11,7 @@
 
 #include <fstream>
 #include <iomanip>
-#define MAKSIM
+//#define MAKSIM
 void run(int argc, char** argv)
 {
 #ifdef MAKSIM
