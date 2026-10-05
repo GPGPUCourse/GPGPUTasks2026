@@ -13,16 +13,22 @@ __global__ void sum_04_local_reduction(
     unsigned int* b,
     unsigned int  n)
 {
-    const uint index = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint index = blockIdx.x * 2 * blockDim.x + threadIdx.x;
     const uint localIndex = threadIdx.x;
 
     __shared__ unsigned int localData[GROUP_SIZE];
 
-    if (index >= n) {
-        localData[localIndex] = 0;
-    } else {
-        localData[localIndex] = a[index];
+    uint value = 0;
+    
+    if (index < n) {
+        value += a[index];
+    } 
+
+    if (index + blockDim.x < n) {
+        value += a[index + blockDim.x];
     }
+
+    localData[localIndex] = value;
 
     __syncthreads();
 

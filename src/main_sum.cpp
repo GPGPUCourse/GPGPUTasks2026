@@ -144,8 +144,8 @@ void run(int argc, char** argv)
                         const gpu::gpu_mem_32u* input = &input_gpu;
                         gpu::gpu_mem_32u* output = &reduction_buffer1_gpu;
                         while (remaining > 1) {
-                            cuda::sum_04_local_reduction(gpu::WorkSize(GROUP_SIZE, remaining), *input, *output, remaining);
-                            remaining = div_ceil(remaining, (unsigned int)GROUP_SIZE);
+                            cuda::sum_04_local_reduction(gpu::WorkSize(GROUP_SIZE, div_ceil(remaining, 2u)), *input, *output, remaining);
+                            remaining = div_ceil(remaining, 2u * GROUP_SIZE);
                             input = output;
                             output = output == &reduction_buffer1_gpu ? &reduction_buffer2_gpu : &reduction_buffer1_gpu;
                         }
