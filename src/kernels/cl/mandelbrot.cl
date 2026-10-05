@@ -15,5 +15,34 @@ __kernel void mandelbrot(__global float* results,
     const unsigned int i = get_global_id(0);
     const unsigned int j = get_global_id(1);
 
-    // TODO
+    if (i >= width || j >= height) {
+        return;
+    }
+
+    const float threshold = 256.0f;
+    const float threshold2 = threshold * threshold;
+
+    const float x0 = fromX + ((float)i + 0.5f) * sizeX / (float)width;
+    const float y0 = fromY + ((float)j + 0.5f) * sizeY / (float)height;
+
+    float x = x0;
+    float y = y0;
+
+    unsigned int iter = 0;
+
+    for (; iter < iters; ++iter) {
+        const float xPrev = x;
+        x = x * x - y * y + x0;
+        y = 2.0f * xPrev * y + y0;
+        if (x * x + y * y > threshold2) {
+            break;
+        }
+    }
+
+    float result = (float)iter;
+    if (isSmoothing != 0 && iter != iters) {
+        result -= log(log(sqrt(x * x + y * y)) / log(threshold)) / log(2.0f);
+    }
+    result /= (float)iters;
+    results[j * width + i] = result;
 }
