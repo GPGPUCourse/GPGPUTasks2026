@@ -100,6 +100,8 @@ void run(int argc, char** argv)
         "GPU",
     };
 
+    gpu::WorkSize workSize(16, 16, width, height);
+
     for (size_t algorithm_index = 0; algorithm_index < algorithm_names.size(); ++algorithm_index) {
         const std::string& algorithm = algorithm_names[algorithm_index];
         std::cout << "______________________________________________________" << std::endl;
@@ -121,9 +123,7 @@ void run(int argc, char** argv)
             } else if (algorithm == "GPU") {
                 // _______________________________OpenCL_____________________________________________
                 if (context.type() == gpu::Context::TypeOpenCL) {
-                    // TODO ocl_mandelbrot.exec(...);
-                    throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-
+                    ocl_mandelbrot.exec(workSize, gpu_results, width, height, centralX - sizeX / 2.0f, centralY - sizeY / 2.0f, sizeX, sizeY, iterationsLimit, isSmoothing);
                     // _______________________________CUDA___________________________________________
                 } else if (context.type() == gpu::Context::TypeCUDA) {
                     // TODO cuda::mandelbrot(..);
