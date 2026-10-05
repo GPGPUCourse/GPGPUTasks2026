@@ -11,6 +11,9 @@
 #include <fstream>
 #include <iomanip>
 
+#include <chrono>
+#include <algorithm>
+
 unsigned int cpu::sum(const unsigned int* values, unsigned int n)
 {
     unsigned int sum = 0;
@@ -77,6 +80,41 @@ void run(int argc, char** argv)
     // TODO 2) сделайте замер хотя бы три раза
     // TODO 3) и выведите рассчет на основании медианного времени (в легко понятной форме - GB/s)
 
+    input_gpu.writeN(values.data(), n);
+
+    std::vector<double> pcie_times;
+
+    for (int i = 0; i < 5; ++i) {
+        const auto start = std::chrono::high_resolution_clock::now();
+
+        input_gpu.writeN(values.data(), n);
+
+        const auto end = std::chrono::high_resolution_clock::now();
+
+        const double seconds =
+            std::chrono::duration<double>(end - start).count();
+
+        pcie_times.push_back(seconds);
+    }
+
+    std::sort(pcie_times.begin(), pcie_times.end());
+
+    const double pcie_median_time =
+        pcie_times[pcie_times.size() / 2];
+
+    const double pcie_size_gb =
+        sizeof(unsigned int) * n / 1024.0 / 1024.0 / 1024.0;
+
+    const double pcie_bandwidth =
+        pcie_size_gb / pcie_median_time;
+
+    std::cout
+        << "PCI-E host-to-device transfer: "
+        << pcie_size_gb << " GB in "
+        << pcie_median_time * 1000.0 << " ms, "
+        << pcie_bandwidth << " GB/s"
+        << std::endl;
+
     std::vector<std::string> algorithm_names = {
         "CPU",
         "CPU with OpenMP",
@@ -106,18 +144,85 @@ void run(int argc, char** argv)
                 if (context.type() == gpu::Context::TypeOpenCL) {
                     if (algorithm == "01 atomicAdd from each workItem") {
                         sum_accum_gpu.fill(0);
-                        ocl_sum01Atomics.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu, n);
+
+                        ocl_sum01Atomics.exec(
+                            gpu::WorkSize(GROUP_SIZE, n),
+                            input_gpu,
+                            sum_accum_gpu,
+                            n
+                        );
+
                         sum_accum_gpu.readN(&gpu_sum, 1);
+
                     } else if (algorithm == "02 atomicAdd but each workItem loads K values") {
                         sum_accum_gpu.fill(0);
-                        ocl_sum02AtomicsLoadK.exec(gpu::WorkSize(GROUP_SIZE, n / LOAD_K_VALUES_PER_ITEM), input_gpu, sum_accum_gpu, n);
+
+                        ocl_sum02AtomicsLoadK.exec(
+                            gpu::WorkSize(GROUP_SIZE, n / LOAD_K_VALUES_PER_ITEM),
+                            input_gpu,
+                            sum_accum_gpu,
+                            n
+                        );
+
                         sum_accum_gpu.readN(&gpu_sum, 1);
+
                     } else if (algorithm == "03 local memory and atomicAdd from master thread") {
-                        // TODO ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        sum_accum_gpu.fill(0);
+
+                        ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(
+                            gpu::WorkSize(
+                                GROUP_SIZE,
+                                div_ceil(n, (unsigned int)GROUP_SIZE) * GROUP_SIZE
+                            ),
+                            input_gpu,
+                            sum_accum_gpu,
+                            n
+                        );
+
+                        sum_accum_gpu.readN(&gpu_sum, 1);
+
                     } else if (algorithm == "04 local reduction") {
-                        // TODO ocl_sum04LocalReduction.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        gpu::gpu_mem_32u* reduction_input = &input_gpu;
+                        gpu::gpu_mem_32u* reduction_output = &reduction_buffer1_gpu;
+
+                        unsigned int reduction_n = n;
+
+                        while (reduction_n > 1) {
+                            const unsigned int output_n =
+                                div_ceil(reduction_n, (unsigned int)GROUP_SIZE);
+
+                            ocl_sum04LocalReduction.exec(
+                                gpu::WorkSize(
+                                    GROUP_SIZE,
+                                    output_n * GROUP_SIZE
+                                ),
+                                *reduction_input,
+                                *reduction_output,
+                                reduction_n
+                            );
+
+                            reduction_n = output_n;
+
+                            if (reduction_input == &input_gpu) {
+                                reduction_input = &reduction_buffer1_gpu;
+                                reduction_output = &reduction_buffer2_gpu;
+                            } else if (reduction_input == &reduction_buffer1_gpu) {
+                                reduction_input = &reduction_buffer2_gpu;
+                                reduction_output = &reduction_buffer1_gpu;
+                            } else {
+                                reduction_input = &reduction_buffer1_gpu;
+                                reduction_output = &reduction_buffer2_gpu;
+                            }
+                        }
+
+                        if (reduction_input == &input_gpu) {
+                            input_gpu.readN(&gpu_sum, 1);
+                        } else if (reduction_input == &reduction_buffer1_gpu) {
+                            reduction_buffer1_gpu.readN(&gpu_sum, 1);
+                        } else {
+                            reduction_buffer2_gpu.readN(&gpu_sum, 1);
+                        }
+
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
