@@ -67,9 +67,8 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u sum_accum_gpu(1);
     unsigned int reduction_len = div_ceil(n, (unsigned int)GROUP_SIZE);
-    unsigned int reduction_len2 = div_ceil(reduction_len, (unsigned int)GROUP_SIZE);
     gpu::gpu_mem_32u reduction_buffer1_gpu(reduction_len);
-    gpu::gpu_mem_32u reduction_buffer2_gpu(reduction_len2);
+    gpu::gpu_mem_32u reduction_buffer2_gpu(reduction_len);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     {
@@ -127,10 +126,13 @@ void run(int argc, char** argv)
                         reduction_buffer1_gpu.fill(0);
                         reduction_buffer2_gpu.fill(0);
                         ocl_sum04LocalReduction.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, reduction_buffer1_gpu, n);
-                        ocl_sum04LocalReduction.exec(gpu::WorkSize(GROUP_SIZE, reduction_len), reduction_buffer1_gpu, reduction_buffer2_gpu, reduction_len);
-                        std::vector<unsigned int> reduction_vec(reduction_len2);
-                        reduction_buffer2_gpu.readN(reduction_vec.data(), reduction_len2);
-                        gpu_sum = std::accumulate(reduction_vec.begin(), reduction_vec.end(), 0);
+                        int len = reduction_len;
+                        while (len > 1) {
+                            ocl_sum04LocalReduction.exec(gpu::WorkSize(GROUP_SIZE, len), reduction_buffer1_gpu, reduction_buffer2_gpu, len);
+                            len = div_ceil(len, GROUP_SIZE);
+                            std::swap(reduction_buffer1_gpu, reduction_buffer2_gpu);
+                        }
+                        reduction_buffer1_gpu.readN(&gpu_sum, 1);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
