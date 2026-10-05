@@ -1,3 +1,6 @@
+#ifdef __clang__
+    #include <__clang_cuda_builtin_vars.h>
+#endif
 #include <libgpu/context.h>
 #include <libgpu/work_size.h>
 #include <libgpu/shared_device_buffer.h>
@@ -13,7 +16,20 @@ __global__ void matrix_transpose_coalesced_via_local_memory(
                              unsigned int w,
                              unsigned int h)
 {
-    // TODO
+    unsigned int x = threadIdx.x + blockDim.x * blockIdx.x;
+    unsigned int y = threadIdx.y + blockDim.y * blockIdx.y;
+
+    __shared__ float buffer[256];
+
+    buffer[threadIdx.y + threadIdx.x * 16] = matrix[x + y * w];
+    __syncthreads();
+
+    unsigned int u = threadIdx.y + blockDim.x * blockIdx.x;
+    unsigned int v = threadIdx.x + blockDim.y * blockIdx.y;
+    
+    transposed_matrix[v + u * h] = buffer[threadIdx.x + threadIdx.y * 16];
+
+
 }
 
 namespace cuda {
