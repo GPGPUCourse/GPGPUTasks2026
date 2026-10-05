@@ -121,19 +121,22 @@ void run(int argc, char** argv)
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "03 local memory and atomicAdd from master thread") {
                         sum_accum_gpu.fill(0);
-                        ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu, n);
+                        ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(gpu::WorkSize(GROUP_SIZE, n / LOAD_K_VALUES_PER_ITEM), input_gpu, sum_accum_gpu, n);
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "04 local reduction") {
                         unsigned int count = n;
                         const gpu::gpu_mem_32u* src = &input_gpu;
                         gpu::gpu_mem_32u* dst = &reduction_buffer1_gpu;
                         while (count > 1) {
+                            const unsigned int work_items = div_ceil(
+                                count, static_cast<unsigned int>(LOAD_K_VALUES_PER_ITEM));
                             ocl_sum04LocalReduction.exec(
-                                gpu::WorkSize(GROUP_SIZE, count), *src, *dst, count);
-                            count = div_ceil(count, static_cast<unsigned int>(GROUP_SIZE));
+                                gpu::WorkSize(GROUP_SIZE, work_items), *src, *dst, count);
+                            count = div_ceil(work_items, static_cast<unsigned int>(GROUP_SIZE));
                             src = dst;
                             dst = (dst == &reduction_buffer1_gpu)
-                                ? &reduction_buffer2_gpu : &reduction_buffer1_gpu;
+                                ? &reduction_buffer2_gpu
+                                : &reduction_buffer1_gpu;
                         }
                         src->readN(&gpu_sum, 1);
                     } else {
