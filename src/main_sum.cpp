@@ -11,6 +11,8 @@
 #include <fstream>
 #include <iomanip>
 
+#include <cuda_runtime.h>
+
 unsigned int cpu::sum(const unsigned int* values, unsigned int n)
 {
     unsigned int sum = 0;
@@ -58,6 +60,8 @@ void run(int argc, char** argv)
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u sum_accum_gpu(1);
+    gpu::gpu_mem_32u sum_accum_gpu1(n);
+    gpu::gpu_mem_32u sum_accum_gpu2(n);
     gpu::gpu_mem_32u reduction_buffer1_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
     gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
 
@@ -73,7 +77,7 @@ void run(int argc, char** argv)
         "01 atomicAdd from each workItem",
         "02 atomicAdd but each workItem loads K values",
         "03 local memory and atomicAdd from master thread",
-        /* НЕ УСПЕЛ :( "04 local reduction", */
+        "04 local reduction",
     };
 
     for (size_t algorithm_index = 0; algorithm_index < algorithm_names.size(); ++algorithm_index) {
@@ -106,7 +110,52 @@ void run(int argc, char** argv)
                   cuda::sum_03_local_memory_atomic_per_workgroup(gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu, n);
                   sum_accum_gpu.readN(&gpu_sum, 1);
                 } else if (algorithm == "04 local reduction") {
-                  // НЕ УСПЕЛ :(
+                  sum_accum_gpu1.fill(0);
+                  sum_accum_gpu2.fill(0);
+
+                  unsigned int current_n = n;
+
+                  // ---------- Первый проход ----------
+									unsigned int num_groups = (current_n + GROUP_SIZE - 1) / GROUP_SIZE;
+
+									cuda::sum_04_local_reduction(
+    								gpu::WorkSize(GROUP_SIZE,num_groups * GROUP_SIZE),
+    								input_gpu,
+    								sum_accum_gpu1,
+    								current_n);
+
+									current_n = num_groups;
+
+									// true  -> результат сейчас в sum_accum_gpu
+									// false -> результат сейчас в sum_accum_gpu2
+									bool in_first = true;
+                  
+                  // ---------- Следующие проходы ----------
+                  while (current_n > 1) {
+    								num_groups = (current_n + GROUP_SIZE - 1) / GROUP_SIZE;
+
+    								if (in_first)
+        							cuda::sum_04_local_reduction(
+            						gpu::WorkSize(GROUP_SIZE, num_groups * GROUP_SIZE),
+   											sum_accum_gpu1,
+            						sum_accum_gpu2,
+            						current_n);
+    								else
+                      cuda::sum_04_local_reduction(
+                        gpu::WorkSize(GROUP_SIZE, num_groups * GROUP_SIZE),
+                        sum_accum_gpu2,
+                        sum_accum_gpu1,
+                        current_n);
+
+                    current_n = num_groups;
+                    in_first = !in_first;
+                  }
+
+                  // ---------- Забираем результат ----------
+                  if (in_first)
+                    sum_accum_gpu1.readN(&gpu_sum, 1);
+                  else
+                    sum_accum_gpu2.readN(&gpu_sum, 1);
                 } else {
                   rassert(false, 652345234321, algorithm, algorithm_index);
                 }
