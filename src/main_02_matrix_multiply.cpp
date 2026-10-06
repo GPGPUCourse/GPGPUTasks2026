@@ -38,7 +38,7 @@ void multiply(
     }
 }
 }
-#define MAKSIM
+//#define MAKSIM
 void run(int argc, char** argv)
 {
 #ifdef MAKSIM

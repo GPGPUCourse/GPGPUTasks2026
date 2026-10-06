@@ -221,47 +221,40 @@ __global__ void __launch_bounds__(1024,1) matrix_multiply_wmma_my3(
     {
         //printf("block = %d, (blockIdx.x%(n/128)) = %d, (blockIdx.x/(n/128)) = %d",block,(blockIdx.x%(n/128)),(blockIdx.x/(n/128)));
         __syncthreads();
-        A[0*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(0*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(0*32+(threadIdx.x%32)+64*block)];
-        A[0*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(0*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(1*32+(threadIdx.x%32)+64*block)];
-        A[1*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(1*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(0*32+(threadIdx.x%32)+64*block)];
-        A[1*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(1*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(1*32+(threadIdx.x%32)+64*block)];
-        A[2*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(2*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(0*32+(threadIdx.x%32)+64*block)];
-        A[2*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(2*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(1*32+(threadIdx.x%32)+64*block)];
-        A[3*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(3*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(0*32+(threadIdx.x%32)+64*block)];
-        A[3*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(3*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(1*32+(threadIdx.x%32)+64*block)];
-        B[0*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*kkk+(0*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
-        B[0*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*kkk+(1*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
-        B[0*32+(threadIdx.x/32)][2*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*kkk+(2*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
-        B[0*32+(threadIdx.x/32)][3*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*kkk+(3*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
-        B[1*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*kkk+(0*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
-        B[1*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*kkk+(1*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
-        B[1*32+(threadIdx.x/32)][2*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*kkk+(2*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
-        B[1*32+(threadIdx.x/32)][3*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*kkk+(3*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
+        for (unsigned char i=0;i<4;++i)
+        {
+            for (unsigned char j=0;j<2;++j)
+            {
+                //curassert((i*32+x0)*64+(j*32+y0)<128*64,46738);
+                //curassert((i*32+x0+128*whon)*m+(j*32+y0+64*block)<n*m,37281);
+                A[i*32+threadIdx.x/32][j*32+threadIdx.x%32]=a[(i*32+threadIdx.x/32+128*(blockIdx.x%(nnn/128)))*mmm+(j*32+threadIdx.x%32+64*block)];
+            }
+        }
+        for (unsigned int i=0;i<2;++i)
+        {
+            for (unsigned int j=0;j<4;++j)
+            {
+                //curassert((i*32+x0)*128+(j*32+y0)<64*128,42222);
+                //curassert((i*32+x0+64*block)*k+(j*32+y0+128*whok)<m*k,133453);
+                B[i*32+threadIdx.x/32][j*32+threadIdx.x%32]=b[(i*32+threadIdx.x/32+64*block)*kkk+(j*32+threadIdx.x%32+128*(blockIdx.x/(nnn/128)))];
+            }
+        }
         __syncthreads();
-        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+0)][16*0],72);
-        wmma::load_matrix_sync(b_frag,&B[16*0][16*((threadIdx.x/32)%8)],136);
-        wmma::mma_sync(acc_frag0,a_frag,b_frag,acc_frag0);
-        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+0)][16*1],72);
-        wmma::load_matrix_sync(b_frag,&B[16*1][16*((threadIdx.x/32)%8)],136);
-        wmma::mma_sync(acc_frag0,a_frag,b_frag,acc_frag0);
-        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+0)][16*2],72);
-        wmma::load_matrix_sync(b_frag,&B[16*2][16*((threadIdx.x/32)%8)],136);
-        wmma::mma_sync(acc_frag0,a_frag,b_frag,acc_frag0);
-        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+0)][16*3],72);
-        wmma::load_matrix_sync(b_frag,&B[16*3][16*((threadIdx.x/32)%8)],136);
-        wmma::mma_sync(acc_frag0,a_frag,b_frag,acc_frag0);
-        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+1)][16*0],72);
-        wmma::load_matrix_sync(b_frag,&B[16*0][16*((threadIdx.x/32)%8)],136);
-        wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
-        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+1)][16*1],72);
-        wmma::load_matrix_sync(b_frag,&B[16*1][16*((threadIdx.x/32)%8)],136);
-        wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
-        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+1)][16*2],72);
-        wmma::load_matrix_sync(b_frag,&B[16*2][16*((threadIdx.x/32)%8)],136);
-        wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
-        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+1)][16*3],72);
-        wmma::load_matrix_sync(b_frag,&B[16*3][16*((threadIdx.x/32)%8)],136);
-        wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
+        for (unsigned int shiftx1=0;shiftx1<2;++shiftx1)
+        {
+            for (unsigned int mm=0;mm<4;++mm)
+            {
+                //__syncthreads();
+                //curassert(x2*16*64+16*mm+15*64+15<64*128,x2);
+                wmma::load_matrix_sync(a_frag,&A[16*((2*(threadIdx.x/32/8))+shiftx1)][16*mm],72);
+                //curassert(mm*16*128+16*y1+15*128+15<64*128,y1);
+                wmma::load_matrix_sync(b_frag,&B[16*mm][16*((threadIdx.x/32)%8)],136);
+                //__syncthreads();
+                if (shiftx1==0) wmma::mma_sync(acc_frag0,a_frag,b_frag,acc_frag0);
+                else wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
+                //__syncthreads();
+            }
+        }
     }
     wmma::store_matrix_sync(c+((blockIdx.x%(nnn/128))*128+((2*((threadIdx.x/32)/8))+0)*16)*kkk+((blockIdx.x/(nnn/128))*128+((threadIdx.x/32)%8)*16),acc_frag0,kkk,wmma::mem_row_major);
     wmma::store_matrix_sync(c+((blockIdx.x%(nnn/128))*128+((2*((threadIdx.x/32)/8))+1)*16)*kkk+((blockIdx.x/(nnn/128))*128+((threadIdx.x/32)%8)*16),acc_frag1,kkk,wmma::mem_row_major);
