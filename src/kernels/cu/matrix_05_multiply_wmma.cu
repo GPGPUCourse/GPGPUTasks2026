@@ -191,11 +191,11 @@ __global__ void matrix_multiply_wmma_my2(
 __global__ void matrix_multiply_wmma_my3(
                        const __half* a, // n * m
                        const __half* b, // m * k
-                             float* c,
-                       unsigned int n,
-                       unsigned int m,
-                       unsigned int k)
+                             float* c)
 {
+    #define nnn 2048
+    #define mmm 1024
+    #define kkk 4096
     //unsigned int ID=blockIdx.x*blockDim.x+threadIdx.x;
     //unsigned char whon=blockIdx.x%(n/128);
     //unsigned char whok=blockIdx.x/(n/128);
@@ -219,27 +219,26 @@ __global__ void matrix_multiply_wmma_my3(
     wmma::fragment<wmma::accumulator,16,16,16,float> acc_frag1;
     wmma::fill_fragment(acc_frag0,0.0f);
     wmma::fill_fragment(acc_frag1,0.0f);
-
-    for (unsigned int block=0;block<m/64;++block)
+    for (unsigned int block=0;block<mmm/64;++block)
     {
         //printf("block = %d, (blockIdx.x%(n/128)) = %d, (blockIdx.x/(n/128)) = %d",block,(blockIdx.x%(n/128)),(blockIdx.x/(n/128)));
         __syncthreads();
-        A[0*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(0*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(0*32+(threadIdx.x%32)+64*block)];
-        A[0*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(0*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(1*32+(threadIdx.x%32)+64*block)];
-        A[1*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(1*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(0*32+(threadIdx.x%32)+64*block)];
-        A[1*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(1*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(1*32+(threadIdx.x%32)+64*block)];
-        A[2*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(2*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(0*32+(threadIdx.x%32)+64*block)];
-        A[2*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(2*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(1*32+(threadIdx.x%32)+64*block)];
-        A[3*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(3*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(0*32+(threadIdx.x%32)+64*block)];
-        A[3*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(3*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(1*32+(threadIdx.x%32)+64*block)];
-        B[0*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*k+(0*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
-        B[0*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*k+(1*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
-        B[0*32+(threadIdx.x/32)][2*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*k+(2*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
-        B[0*32+(threadIdx.x/32)][3*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*k+(3*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
-        B[1*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*k+(0*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
-        B[1*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*k+(1*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
-        B[1*32+(threadIdx.x/32)][2*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*k+(2*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
-        B[1*32+(threadIdx.x/32)][3*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*k+(3*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
+        A[0*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(0*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(0*32+(threadIdx.x%32)+64*block)];
+        A[0*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(0*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(1*32+(threadIdx.x%32)+64*block)];
+        A[1*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(1*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(0*32+(threadIdx.x%32)+64*block)];
+        A[1*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(1*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(1*32+(threadIdx.x%32)+64*block)];
+        A[2*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(2*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(0*32+(threadIdx.x%32)+64*block)];
+        A[2*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(2*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(1*32+(threadIdx.x%32)+64*block)];
+        A[3*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(3*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(0*32+(threadIdx.x%32)+64*block)];
+        A[3*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(3*32+(threadIdx.x/32)+128*(blockIdx.x%(nnn/128)))*mmm+(1*32+(threadIdx.x%32)+64*block)];
+        B[0*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*kkk+(0*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
+        B[0*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*kkk+(1*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
+        B[0*32+(threadIdx.x/32)][2*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*kkk+(2*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
+        B[0*32+(threadIdx.x/32)][3*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*kkk+(3*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
+        B[1*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*kkk+(0*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
+        B[1*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*kkk+(1*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
+        B[1*32+(threadIdx.x/32)][2*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*kkk+(2*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
+        B[1*32+(threadIdx.x/32)][3*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*kkk+(3*32+(threadIdx.x%32)+128*(blockIdx.x/(nnn/128)))];
         __syncthreads();
         wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+0)][16*0],72);
         wmma::load_matrix_sync(b_frag,&B[16*0][16*((threadIdx.x/32)%8)],136);
@@ -266,8 +265,8 @@ __global__ void matrix_multiply_wmma_my3(
         wmma::load_matrix_sync(b_frag,&B[16*3][16*((threadIdx.x/32)%8)],136);
         wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
     }
-    wmma::store_matrix_sync(c+((blockIdx.x%(n/128))*128+((2*((threadIdx.x/32)/8))+0)*16)*k+((blockIdx.x/(n/128))*128+((threadIdx.x/32)%8)*16),acc_frag0,k,wmma::mem_row_major);
-    wmma::store_matrix_sync(c+((blockIdx.x%(n/128))*128+((2*((threadIdx.x/32)/8))+1)*16)*k+((blockIdx.x/(n/128))*128+((threadIdx.x/32)%8)*16),acc_frag1,k,wmma::mem_row_major);
+    wmma::store_matrix_sync(c+((blockIdx.x%(nnn/128))*128+((2*((threadIdx.x/32)/8))+0)*16)*kkk+((blockIdx.x/(nnn/128))*128+((threadIdx.x/32)%8)*16),acc_frag0,kkk,wmma::mem_row_major);
+    wmma::store_matrix_sync(c+((blockIdx.x%(nnn/128))*128+((2*((threadIdx.x/32)/8))+1)*16)*kkk+((blockIdx.x/(nnn/128))*128+((threadIdx.x/32)%8)*16),acc_frag1,kkk,wmma::mem_row_major);
 }
 namespace cuda {
 void matrix_multiply_wmma(const gpu::WorkSize &workSize,
@@ -326,12 +325,12 @@ namespace cuda {
 }
 namespace cuda {
     void matrix_multiply_wmma_my3(const gpu::WorkSize &workSize,
-                const gpu::shared_device_buffer_typed<__half> &a, const gpu::shared_device_buffer_typed<__half> &b, gpu::gpu_mem_32f &c, unsigned int n, unsigned int m, unsigned int k)
+                const gpu::shared_device_buffer_typed<__half> &a, const gpu::shared_device_buffer_typed<__half> &b, gpu::gpu_mem_32f &c)
     {
         gpu::Context context;
         rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
         cudaStream_t stream = context.cudaStream();
-        ::matrix_multiply_wmma_my3<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), c.cuptr(), n, m, k);
+        ::matrix_multiply_wmma_my3<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), c.cuptr());
         CUDA_CHECK_KERNEL(stream);
     }
 }

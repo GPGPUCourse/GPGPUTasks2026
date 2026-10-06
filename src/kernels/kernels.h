@@ -32,7 +32,7 @@ void matrix_multiply_wmma_my(const gpu::WorkSize &workSize,
 void matrix_multiply_wmma_my2(const gpu::WorkSize &workSize,
         const gpu::shared_device_buffer_typed<__half> &a, const gpu::shared_device_buffer_typed<__half> &b, gpu::gpu_mem_32f &c, unsigned int n, unsigned int m, unsigned int k);
 void matrix_multiply_wmma_my3(const gpu::WorkSize &workSize,
-        const gpu::shared_device_buffer_typed<__half> &a, const gpu::shared_device_buffer_typed<__half> &b, gpu::gpu_mem_32f &c, unsigned int n, unsigned int m, unsigned int k);
+        const gpu::shared_device_buffer_typed<__half> &a, const gpu::shared_device_buffer_typed<__half> &b, gpu::gpu_mem_32f &c);
 void gohalf(const gpu::WorkSize &workSize,
     const gpu::gpu_mem_32f &a, const gpu::shared_device_buffer_typed<__half> &b, unsigned int w, unsigned int h);
 void gohalf1616(const gpu::WorkSize &workSize,

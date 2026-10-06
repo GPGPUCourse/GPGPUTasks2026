@@ -118,7 +118,6 @@ else ()
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${HEADERS})
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
 endif ()
-
 add_executable(main_aplusb           src/main_aplusb.cpp)
 add_executable(main_matrix_transpose src/main_01_matrix_transpose.cpp)
 add_executable(main_matrix_multiply  src/main_02_matrix_multiply.cpp)
