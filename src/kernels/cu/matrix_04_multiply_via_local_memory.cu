@@ -7,6 +7,7 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+// only for square matrices
 __global__ void matrix_multiply_via_local_memory(
                        const float* a, // rows=h x cols=k
                        const float* b, // rows=k x cols=w
@@ -15,7 +16,40 @@ __global__ void matrix_multiply_via_local_memory(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO
+    const unsigned int row = threadIdx.y + blockIdx.y * blockDim.y;
+    const unsigned int column = blockIdx.x * blockDim.x + threadIdx.x;
+
+    __shared__ float a_submatrix[GROUP_SIZE];
+    __shared__ float b_submatrix[GROUP_SIZE];
+    __shared__ float accum[GROUP_SIZE];
+    const unsigned int local_index = threadIdx.y * blockDim.x + threadIdx.x;
+    accum[local_index] = 0;
+    a_submatrix[local_index] = 0;
+    b_submatrix[local_index] = 0;
+
+    if (row >= h || column >= w) {
+        return;
+    }
+
+    for (unsigned int i = 0; i < (k / blockDim.x) + 1; i++) {
+        if ((threadIdx.x + blockDim.x * i) >= k || (threadIdx.y + blockDim.y * i) >= k) {
+            a_submatrix[local_index] = 0;
+            b_submatrix[local_index] = 0;
+        } else {
+            const unsigned int a_index = row * k + threadIdx.x + blockDim.x * i;
+            const unsigned int b_index = column + w * (threadIdx.y + blockDim.y * i);
+
+            a_submatrix[local_index] = a[a_index];
+            b_submatrix[local_index] = b[b_index];
+        }
+        __syncthreads();
+        for (unsigned int j = 0; j < blockDim.x; j++) {
+            accum[local_index] += a_submatrix[threadIdx.y * blockDim.x + j] * b_submatrix[threadIdx.x + j * blockDim.x];
+        }
+        __syncthreads();
+    }
+
+    c[row * w + column] = accum[local_index];
 }
 
 namespace cuda {
