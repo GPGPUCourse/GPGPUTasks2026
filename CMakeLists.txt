@@ -108,6 +108,10 @@ if (1)
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
+    #set_target_properties(${PROJECT_NAME}_core PROPERTIES
+    #        CUDA_SEPARABLE_COMPILATION ON
+    #        CUDA_RESOLVE_DEVICE_SYMBOLS ON
+    #)
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
     target_include_directories(${PROJECT_NAME}_core PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 else ()

@@ -85,6 +85,29 @@ __global__ void gohalf1616(
     }*/
     b[blockid*blockDim.x*blockDim.y+numid]=__float2half(a[jj*w+ii]);
 }
+__global__ void matrix_multiply_wmma_my(
+                       const __half* a, // n * m
+                       const __half* b, // m * k
+                             float* c,
+                       unsigned int n,
+                       unsigned int m,
+                       unsigned int k)
+{
+    unsigned int warpid=blockIdx.x*(blockDim.x/32)+(threadIdx.x/32);
+    unsigned int warpn=warpid%(n/16);
+    unsigned int warpk=warpid/(n/16);
+    wmma::fragment<wmma::matrix_a,16,16,16,__half,wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b,16,16,16,__half,wmma::row_major> b_frag;
+    wmma::fragment<wmma::accumulator,16,16,16,float> acc_frag;
+    wmma::fill_fragment(acc_frag,0.0f);
+    for (int warpm=0;warpm<m/16;++warpm)
+    {
+        wmma::load_matrix_sync(a_frag,a+warpn*16*m+warpm*16,m);
+        wmma::load_matrix_sync(b_frag,b+warpm*16*k+warpk*16,k);
+        wmma::mma_sync(acc_frag,a_frag,b_frag,acc_frag);
+    }
+    wmma::store_matrix_sync(c+warpn*16*k+warpk*16,acc_frag,k,wmma::mem_row_major);
+}
 namespace cuda {
 void matrix_multiply_wmma(const gpu::WorkSize &workSize,
             const gpu::shared_device_buffer_typed<__half> &a, const gpu::shared_device_buffer_typed<__half> &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k)
@@ -115,6 +138,17 @@ namespace cuda {
         rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
         cudaStream_t stream = context.cudaStream();
         ::gohalf1616<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), w, h);
+        CUDA_CHECK_KERNEL(stream);
+    }
+}
+namespace cuda {
+    void matrix_multiply_wmma_my(const gpu::WorkSize &workSize,
+                const gpu::shared_device_buffer_typed<__half> &a, const gpu::shared_device_buffer_typed<__half> &b, gpu::gpu_mem_32f &c, unsigned int n, unsigned int m, unsigned int k)
+    {
+        gpu::Context context;
+        rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
+        cudaStream_t stream = context.cudaStream();
+        ::matrix_multiply_wmma_my<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), c.cuptr(), n, m, k);
         CUDA_CHECK_KERNEL(stream);
     }
 }
