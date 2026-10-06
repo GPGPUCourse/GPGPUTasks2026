@@ -21,9 +21,8 @@ __global__ void matrix_multiply_via_local_memory(
 
     __shared__ float a_submatrix[GROUP_SIZE];
     __shared__ float b_submatrix[GROUP_SIZE];
-    __shared__ float accum[GROUP_SIZE];
     const unsigned int local_index = threadIdx.y * blockDim.x + threadIdx.x;
-    accum[local_index] = 0;
+    float acc = 0;
     a_submatrix[local_index] = 0;
     b_submatrix[local_index] = 0;
 
@@ -44,12 +43,12 @@ __global__ void matrix_multiply_via_local_memory(
         }
         __syncthreads();
         for (unsigned int j = 0; j < blockDim.x; j++) {
-            accum[local_index] += a_submatrix[threadIdx.y * blockDim.x + j] * b_submatrix[threadIdx.x + j * blockDim.x];
+            acc += a_submatrix[threadIdx.y * blockDim.x + j] * b_submatrix[threadIdx.x + j * blockDim.x];
         }
         __syncthreads();
     }
 
-    c[row * w + column] = accum[local_index];
+    c[row * w + column] = acc;
 }
 
 namespace cuda {
