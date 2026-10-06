@@ -77,6 +77,14 @@ void run(int argc, char** argv)
     // TODO 2) сделайте замер хотя бы три раза
     // TODO 3) и выведите рассчет на основании медианного времени (в легко понятной форме - GB/s)
 
+    std::vector<double> times_pci;
+    for (size_t _ = 0; _ < 3; ++_) {
+        timer t;
+        input_gpu.writeN(values.data(), n);
+        times_pci.push_back(t.elapsed());
+    }
+    std::cout << "PCI-E bandwidth: " << sizeof(uint) * n / 1024.0 / 1024.0 / 1024.0 / stats::median(times_pci) << " GB/s" << std::endl;
+
     std::vector<std::string> algorithm_names = {
         "CPU",
         "CPU with OpenMP",
