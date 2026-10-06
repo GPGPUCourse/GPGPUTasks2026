@@ -150,7 +150,7 @@ void run(int argc, char** argv)
                     cuda::gohalf(gpu::WorkSize(16,16,k,w),matrix_b_gpu,matrix_b_half_gpu,k,w);
                     //cuda::create_half_by_1616(gpu::)
                     //throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-                    cuda::matrix_multiply_wmma_my(gpu::WorkSize(1024,h*w/8), matrix_a_half_gpu, matrix_b_half_gpu, matrix_c_gpu, h, k, w);
+                    cuda::matrix_multiply_wmma_my2(gpu::WorkSize(1024,h*w/16), matrix_a_half_gpu, matrix_b_half_gpu, matrix_c_gpu, h, k, w);
                 } else {
                     rassert(false, 652345234321, algorithm, algorithm_index);
                 }

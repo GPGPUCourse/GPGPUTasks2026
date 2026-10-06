@@ -108,6 +108,86 @@ __global__ void matrix_multiply_wmma_my(
     }
     wmma::store_matrix_sync(c+warpn*16*k+warpk*16,acc_frag,k,wmma::mem_row_major);
 }
+__global__ void matrix_multiply_wmma_my2(
+                       const __half* a, // n * m
+                       const __half* b, // m * k
+                             float* c,
+                       unsigned int n,
+                       unsigned int m,
+                       unsigned int k)
+{
+    //unsigned int ID=blockIdx.x*blockDim.x+threadIdx.x;
+    unsigned char whon=blockIdx.x%(n/128);
+    unsigned char whok=blockIdx.x/(n/128);
+    //curassert(blockIdx.x<(n/128)*(k/128),228228228);
+    curassert((whon<n/128),17482);
+    curassert(whok<k/128,whok);
+    unsigned int warpn=threadIdx.x/32;
+    unsigned char x1=2*(warpn/8);
+    unsigned char y1=warpn%8;
+    unsigned char x0=threadIdx.x/32;
+    unsigned char y0=threadIdx.x%32;
+    curassert(x1<8,2567382);
+    curassert(y1<8,2567383782);
+    curassert(x0<32,27829);
+    curassert(y0<32,56737292);
+    __shared__ __half A[128][72];
+    __shared__ __half B[64][136];
+    wmma::fragment<wmma::matrix_a,16,16,16,__half,wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b,16,16,16,__half,wmma::row_major> b_frag;
+    wmma::fragment<wmma::accumulator,16,16,16,float> acc_frag0;
+    wmma::fragment<wmma::accumulator,16,16,16,float> acc_frag1;
+    wmma::fill_fragment(acc_frag0,0.0f);
+    wmma::fill_fragment(acc_frag1,0.0f);
+
+    for (unsigned int block=0;block<m/64;++block)
+    {
+        //printf("block = %d, whon = %d, whok = %d",block,whon,whok);
+        __syncthreads();
+        for (unsigned char i=0;i<4;++i)
+        {
+            for (unsigned char j=0;j<2;++j)
+            {
+                //curassert((i*32+x0)*64+(j*32+y0)<128*64,46738);
+                //curassert((i*32+x0+128*whon)*m+(j*32+y0+64*block)<n*m,37281);
+                A[i*32+x0][j*32+y0]=a[(i*32+x0+128*whon)*m+(j*32+y0+64*block)];
+            }
+        }
+        for (unsigned int i=0;i<2;++i)
+        {
+            for (unsigned int j=0;j<4;++j)
+            {
+                //curassert((i*32+x0)*128+(j*32+y0)<64*128,42222);
+                //curassert((i*32+x0+64*block)*k+(j*32+y0+128*whok)<m*k,133453);
+                B[i*32+x0][j*32+y0]=b[(i*32+x0+64*block)*k+(j*32+y0+128*whok)];
+            }
+        }
+        __syncthreads();
+        for (unsigned int shiftx1=0;shiftx1<2;++shiftx1)
+        {
+            for (unsigned int mm=0;mm<4;++mm)
+            {
+                //__syncthreads();
+                unsigned int x2=x1+shiftx1;
+                //curassert(x2*16*64+16*mm+15*64+15<64*128,x2);
+                wmma::load_matrix_sync(a_frag,&A[16*x2][16*mm],72);
+                //curassert(mm*16*128+16*y1+15*128+15<64*128,y1);
+                wmma::load_matrix_sync(b_frag,&B[16*mm][16*y1],136);
+                //__syncthreads();
+                if (shiftx1==0) wmma::mma_sync(acc_frag0,a_frag,b_frag,acc_frag0);
+                else wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
+                //__syncthreads();
+            }
+        }
+    }
+    for (unsigned int shiftx1=0;shiftx1<2;++shiftx1)
+    {
+        //__syncthreads();
+        unsigned int x2=x1+shiftx1;
+        if (shiftx1==0) wmma::store_matrix_sync(c+(whon*128+x2*16)*k+(whok*128+y1*16),acc_frag0,k,wmma::mem_row_major);
+        else wmma::store_matrix_sync(c+(whon*128+x2*16)*k+(whok*128+y1*16),acc_frag1,k,wmma::mem_row_major);
+    }
+}
 namespace cuda {
 void matrix_multiply_wmma(const gpu::WorkSize &workSize,
             const gpu::shared_device_buffer_typed<__half> &a, const gpu::shared_device_buffer_typed<__half> &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k)
@@ -149,6 +229,17 @@ namespace cuda {
         rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
         cudaStream_t stream = context.cudaStream();
         ::matrix_multiply_wmma_my<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), c.cuptr(), n, m, k);
+        CUDA_CHECK_KERNEL(stream);
+    }
+}
+namespace cuda {
+    void matrix_multiply_wmma_my2(const gpu::WorkSize &workSize,
+                const gpu::shared_device_buffer_typed<__half> &a, const gpu::shared_device_buffer_typed<__half> &b, gpu::gpu_mem_32f &c, unsigned int n, unsigned int m, unsigned int k)
+    {
+        gpu::Context context;
+        rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
+        cudaStream_t stream = context.cudaStream();
+        ::matrix_multiply_wmma_my2<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), c.cuptr(), n, m, k);
         CUDA_CHECK_KERNEL(stream);
     }
 }
