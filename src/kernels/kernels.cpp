@@ -50,8 +50,7 @@ void sum_03_local_memory_atomic_per_workgroup(const gpu::WorkSize& workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 7657564523412414);
 }
-void sum_04_local_reduction(const gpu::WorkSize& workSize,
-    const gpu::gpu_mem_32u& a, gpu::gpu_mem_32u& sum, unsigned int n)
+void sum_04_local_reduction(gpu::WorkSize &workSize, gpu::gpu_mem_32u &input, gpu::gpu_mem_32u &buf1, gpu::gpu_mem_32u &buf2, gpu::gpu_mem_32u &sum, unsigned int n)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 7657564523412414);
