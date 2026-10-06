@@ -70,6 +70,17 @@ void run(int argc, char** argv)
     // TODO 1) замерьте здесь какая достигнута пропускная пособность PCI-E шины
     // TODO 2) сделайте замер хотя бы три раза
     // TODO 3) и выведите рассчет на основании медианного времени (в легко понятной форме - GB/s)
+    std::vector<double> times;
+    for (int iter = 0; iter < 10; ++iter) {
+        timer t;
+
+        input_gpu.writeN(values.data(), n);
+
+        times.push_back(t.elapsed());
+    }
+    std::cout << "PCI-E copy to device (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+    double memory_size_gb = sizeof(unsigned int) * n / 1024.0 / 1024.0 / 1024.0;
+    std::cout << "median effective bandwidth: " << memory_size_gb / stats::median(times) << " GB/s" << std::endl;
 
     std::vector<std::string> algorithm_names = {
         "CPU",
