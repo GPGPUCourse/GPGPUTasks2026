@@ -1,3 +1,6 @@
+#ifdef __clang__
+    #include <__clang_cuda_builtin_vars.h>
+#endif
 #include <libgpu/context.h>
 #include <libgpu/work_size.h>
 #include <libgpu/shared_device_buffer.h>
@@ -15,7 +18,14 @@ __global__ void matrix_multiply_naive(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO
+    unsigned int x = threadIdx.x + blockDim.x * blockIdx.x;
+    unsigned int y = threadIdx.y + blockDim.y * blockIdx.y;
+    float acc = 0;
+    for(unsigned int i = 0; i < k; ++i){
+        acc += a[y * k + i] * b[x + i * w];
+    }
+
+    c[x + y * w] = acc;
 }
 
 namespace cuda {
