@@ -22,16 +22,20 @@ void main()
     const uint index = gl_GlobalInvocationID.x;
     const uint local_index = gl_LocalInvocationID.x;
 
-    local_data[local_index] = index < params.n ? a[index] : 0;
-
-    barrier();
-
-    uint sum = 0;
-    if (local_index == 0) {
-        for (uint i = 0; i < GROUP_SIZE; ++i) {
-            sum += local_data[i];
-        }
-        b[gl_WorkGroupID.x] = sum;
+    if (index < params.n) {
+        local_data[local_index] = a[index];
+    } else {
+        local_data[local_index] = 0;
     }
 
+    barrier();
+    if (index > 0) {
+        return;
+    }
+
+    uint sum = 0;
+    for (uint i = 0; i < GROUP_SIZE; ++i) {
+        sum += local_data[i];
+    }
+    b[gl_WorkGroupID.x] = sum;
 }

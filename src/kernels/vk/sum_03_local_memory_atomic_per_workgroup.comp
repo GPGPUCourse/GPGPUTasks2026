@@ -28,12 +28,13 @@ void main()
 
     barrier();
 
-    uint local_sum = 0;
-
-    if (local_index == 0) {
-        for (uint i = 0; i < GROUP_SIZE; ++i) {
-            local_sum += local_data[i];
-        }
-        atomicAdd(sum[0], local_sum);
+    if (local_index > 0) {
+        return;
     }
+
+    uint local_sum = 0;
+    for (uint i = 0; i < GROUP_SIZE; ++i) {
+        local_sum += local_data[i];
+    }
+    atomicAdd(sum[0], local_sum);
 }
