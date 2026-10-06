@@ -66,18 +66,6 @@ __global__ void gohalf(
     }*/
     b[ii]=__float2half(a[ii]);
 }
-__global__ void gofloat(
-                       const __half* a, // rows=h x cols=k
-                       float* b, // rows=k x cols=w
-                       unsigned int n)
-{
-    int ii=blockIdx.x*blockDim.x+threadIdx.x;
-    /*if (ii==0 && jj==0)
-    {
-        printf("i = %d, j = %d, a[][] = %f",ii,jj,a[jj*w+ii]);
-    }*/
-    b[ii]=__half2float(a[ii]);
-}
 __global__ void gohalf1616(
                        const float* a, // rows=h x cols=k
                        __half* b, // rows=k x cols=w
@@ -198,10 +186,10 @@ __global__ void matrix_multiply_wmma_my2(
         else wmma::store_matrix_sync(c+(whon*128+x2*16)*k+(whok*128+((threadIdx.x/32)%8)*16),acc_frag1,k,wmma::mem_row_major);
     }
 }
-__global__ void matrix_multiply_wmma_my3(
+__global__ void __launch_bounds__(1024,1) matrix_multiply_wmma_my3(
                        const __half* a, // n * m
                        const __half* b, // m * k
-                             __half* c)
+                       float* c)
 {
     #define nnn 2048
     #define mmm 1024
@@ -225,8 +213,8 @@ __global__ void matrix_multiply_wmma_my3(
     __shared__ __half B[64][136];
     wmma::fragment<wmma::matrix_a,16,16,16,__half,wmma::row_major> a_frag;
     wmma::fragment<wmma::matrix_b,16,16,16,__half,wmma::row_major> b_frag;
-    wmma::fragment<wmma::accumulator,16,16,16,__half> acc_frag0;
-    wmma::fragment<wmma::accumulator,16,16,16,__half> acc_frag1;
+    wmma::fragment<wmma::accumulator,16,16,16,float> acc_frag0;
+    wmma::fragment<wmma::accumulator,16,16,16,float> acc_frag1;
     wmma::fill_fragment(acc_frag0,0.0f);
     wmma::fill_fragment(acc_frag1,0.0f);
     for (unsigned int block=0;block<mmm/64;++block)
@@ -301,17 +289,6 @@ namespace cuda {
     }
 } // namespace cuda
 namespace cuda {
-    void gofloat(const gpu::WorkSize &workSize,
-                const gpu::shared_device_buffer_typed<__half> &a, const gpu::gpu_mem_32f &b, unsigned int n)
-    {
-        gpu::Context context;
-        rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
-        cudaStream_t stream = context.cudaStream();
-        ::gohalf<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), n);
-        CUDA_CHECK_KERNEL(stream);
-    }
-}
-namespace cuda {
     void gohalf1616(const gpu::WorkSize &workSize,
                 const gpu::gpu_mem_32f &a, const gpu::shared_device_buffer_typed<__half> &b, unsigned int w, unsigned int h)
     {
@@ -346,7 +323,7 @@ namespace cuda {
 }
 namespace cuda {
     void matrix_multiply_wmma_my3(const gpu::WorkSize &workSize,
-                const gpu::shared_device_buffer_typed<__half> &a, const gpu::shared_device_buffer_typed<__half> &b, gpu::shared_device_buffer_typed<__half> &c)
+                const gpu::shared_device_buffer_typed<__half> &a, const gpu::shared_device_buffer_typed<__half> &b, gpu::gpu_mem_32f &c)
     {
         gpu::Context context;
         rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
