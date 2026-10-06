@@ -38,11 +38,11 @@ void multiply(
     }
 }
 }
-#define MAKSIM
+//#define MAKSIM
 void run(int argc, char** argv)
 {
 #ifdef MAKSIM
-    argc=2;argv[1]="0";
+    argc=2;argv[1]="1";
 #endif
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
@@ -150,7 +150,7 @@ void run(int argc, char** argv)
                     cuda::gohalf(gpu::WorkSize(16,16,k,w),matrix_b_gpu,matrix_b_half_gpu,k,w);
                     //cuda::create_half_by_1616(gpu::)
                     //throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-                    cuda::matrix_multiply_wmma_my2(gpu::WorkSize(1024,h*w/16), matrix_a_half_gpu, matrix_b_half_gpu, matrix_c_gpu, h, k, w);
+                    cuda::matrix_multiply_wmma_my3(gpu::WorkSize(1024,h*w/16), matrix_a_half_gpu, matrix_b_half_gpu, matrix_c_gpu, h, k, w);
                 } else {
                     rassert(false, 652345234321, algorithm, algorithm_index);
                 }

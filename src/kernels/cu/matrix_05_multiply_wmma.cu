@@ -172,7 +172,7 @@ __global__ void matrix_multiply_wmma_my2(
                 //curassert(x2*16*64+16*mm+15*64+15<64*128,x2);
                 wmma::load_matrix_sync(a_frag,&A[16*x2][16*mm],72);
                 //curassert(mm*16*128+16*y1+15*128+15<64*128,y1);
-                wmma::load_matrix_sync(b_frag,&B[16*mm][16*y1],136);
+                wmma::load_matrix_sync(b_frag,&B[16*mm][16*((threadIdx.x/32)%8)],136);
                 //__syncthreads();
                 if (shiftx1==0) wmma::mma_sync(acc_frag0,a_frag,b_frag,acc_frag0);
                 else wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
@@ -184,9 +184,90 @@ __global__ void matrix_multiply_wmma_my2(
     {
         //__syncthreads();
         unsigned int x2=x1+shiftx1;
-        if (shiftx1==0) wmma::store_matrix_sync(c+(whon*128+x2*16)*k+(whok*128+y1*16),acc_frag0,k,wmma::mem_row_major);
-        else wmma::store_matrix_sync(c+(whon*128+x2*16)*k+(whok*128+y1*16),acc_frag1,k,wmma::mem_row_major);
+        if (shiftx1==0) wmma::store_matrix_sync(c+(whon*128+x2*16)*k+(whok*128+((threadIdx.x/32)%8)*16),acc_frag0,k,wmma::mem_row_major);
+        else wmma::store_matrix_sync(c+(whon*128+x2*16)*k+(whok*128+((threadIdx.x/32)%8)*16),acc_frag1,k,wmma::mem_row_major);
     }
+}
+__global__ void matrix_multiply_wmma_my3(
+                       const __half* a, // n * m
+                       const __half* b, // m * k
+                             float* c,
+                       unsigned int n,
+                       unsigned int m,
+                       unsigned int k)
+{
+    //unsigned int ID=blockIdx.x*blockDim.x+threadIdx.x;
+    //unsigned char whon=blockIdx.x%(n/128);
+    //unsigned char whok=blockIdx.x/(n/128);
+    //curassert(blockIdx.x<(n/128)*(k/128),228228228);
+    //curassert(((blockIdx.x%(n/128))<n/128),17482);
+    //curassert((blockIdx.x/(n/128))<k/128,(blockIdx.x/(n/128)));
+    //unsigned int warpn=threadIdx.x/32;
+    //unsigned char x1=2*(warpn/8);
+    //unsigned char y1=warpn%8;
+    //unsigned char x0=threadIdx.x/32;
+    //unsigned char y0=threadIdx.x%32;
+    //curassert((2*((threadIdx.x/32)/8))<8,2567382);
+    //curassert(y1<8,2567383782);
+    //curassert(x0<32,27829);
+    //curassert(y0<32,56737292);
+    __shared__ __half A[128][72];
+    __shared__ __half B[64][136];
+    wmma::fragment<wmma::matrix_a,16,16,16,__half,wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b,16,16,16,__half,wmma::row_major> b_frag;
+    wmma::fragment<wmma::accumulator,16,16,16,float> acc_frag0;
+    wmma::fragment<wmma::accumulator,16,16,16,float> acc_frag1;
+    wmma::fill_fragment(acc_frag0,0.0f);
+    wmma::fill_fragment(acc_frag1,0.0f);
+
+    for (unsigned int block=0;block<m/64;++block)
+    {
+        //printf("block = %d, (blockIdx.x%(n/128)) = %d, (blockIdx.x/(n/128)) = %d",block,(blockIdx.x%(n/128)),(blockIdx.x/(n/128)));
+        __syncthreads();
+        A[0*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(0*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(0*32+(threadIdx.x%32)+64*block)];
+        A[0*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(0*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(1*32+(threadIdx.x%32)+64*block)];
+        A[1*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(1*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(0*32+(threadIdx.x%32)+64*block)];
+        A[1*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(1*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(1*32+(threadIdx.x%32)+64*block)];
+        A[2*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(2*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(0*32+(threadIdx.x%32)+64*block)];
+        A[2*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(2*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(1*32+(threadIdx.x%32)+64*block)];
+        A[3*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=a[(3*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(0*32+(threadIdx.x%32)+64*block)];
+        A[3*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=a[(3*32+(threadIdx.x/32)+128*(blockIdx.x%(n/128)))*m+(1*32+(threadIdx.x%32)+64*block)];
+        B[0*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*k+(0*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
+        B[0*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*k+(1*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
+        B[0*32+(threadIdx.x/32)][2*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*k+(2*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
+        B[0*32+(threadIdx.x/32)][3*32+(threadIdx.x%32)]=b[(0*32+(threadIdx.x/32)+64*block)*k+(3*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
+        B[1*32+(threadIdx.x/32)][0*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*k+(0*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
+        B[1*32+(threadIdx.x/32)][1*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*k+(1*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
+        B[1*32+(threadIdx.x/32)][2*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*k+(2*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
+        B[1*32+(threadIdx.x/32)][3*32+(threadIdx.x%32)]=b[(1*32+(threadIdx.x/32)+64*block)*k+(3*32+(threadIdx.x%32)+128*(blockIdx.x/(n/128)))];
+        __syncthreads();
+        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+0)][16*0],72);
+        wmma::load_matrix_sync(b_frag,&B[16*0][16*((threadIdx.x/32)%8)],136);
+        wmma::mma_sync(acc_frag0,a_frag,b_frag,acc_frag0);
+        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+0)][16*1],72);
+        wmma::load_matrix_sync(b_frag,&B[16*1][16*((threadIdx.x/32)%8)],136);
+        wmma::mma_sync(acc_frag0,a_frag,b_frag,acc_frag0);
+        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+0)][16*2],72);
+        wmma::load_matrix_sync(b_frag,&B[16*2][16*((threadIdx.x/32)%8)],136);
+        wmma::mma_sync(acc_frag0,a_frag,b_frag,acc_frag0);
+        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+0)][16*3],72);
+        wmma::load_matrix_sync(b_frag,&B[16*3][16*((threadIdx.x/32)%8)],136);
+        wmma::mma_sync(acc_frag0,a_frag,b_frag,acc_frag0);
+        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+1)][16*0],72);
+        wmma::load_matrix_sync(b_frag,&B[16*0][16*((threadIdx.x/32)%8)],136);
+        wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
+        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+1)][16*1],72);
+        wmma::load_matrix_sync(b_frag,&B[16*1][16*((threadIdx.x/32)%8)],136);
+        wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
+        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+1)][16*2],72);
+        wmma::load_matrix_sync(b_frag,&B[16*2][16*((threadIdx.x/32)%8)],136);
+        wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
+        wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+1)][16*3],72);
+        wmma::load_matrix_sync(b_frag,&B[16*3][16*((threadIdx.x/32)%8)],136);
+        wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
+    }
+    wmma::store_matrix_sync(c+((blockIdx.x%(n/128))*128+((2*((threadIdx.x/32)/8))+0)*16)*k+((blockIdx.x/(n/128))*128+((threadIdx.x/32)%8)*16),acc_frag0,k,wmma::mem_row_major);
+    wmma::store_matrix_sync(c+((blockIdx.x%(n/128))*128+((2*((threadIdx.x/32)/8))+1)*16)*k+((blockIdx.x/(n/128))*128+((threadIdx.x/32)%8)*16),acc_frag1,k,wmma::mem_row_major);
 }
 namespace cuda {
 void matrix_multiply_wmma(const gpu::WorkSize &workSize,
@@ -240,6 +321,17 @@ namespace cuda {
         rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
         cudaStream_t stream = context.cudaStream();
         ::matrix_multiply_wmma_my2<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), c.cuptr(), n, m, k);
+        CUDA_CHECK_KERNEL(stream);
+    }
+}
+namespace cuda {
+    void matrix_multiply_wmma_my3(const gpu::WorkSize &workSize,
+                const gpu::shared_device_buffer_typed<__half> &a, const gpu::shared_device_buffer_typed<__half> &b, gpu::gpu_mem_32f &c, unsigned int n, unsigned int m, unsigned int k)
+    {
+        gpu::Context context;
+        rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
+        cudaStream_t stream = context.cudaStream();
+        ::matrix_multiply_wmma_my3<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), c.cuptr(), n, m, k);
         CUDA_CHECK_KERNEL(stream);
     }
 }
