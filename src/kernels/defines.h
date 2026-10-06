@@ -2,8 +2,11 @@
 #define my_defines_vk
 
 #define GROUP_SIZE   256
-#define GROUP_SIZE_X 16
-#define GROUP_SIZE_Y 16
+#define GROUP_SIZE_X 32
+#define GROUP_SIZE_Y 8
+
+#define THREAD_TILE_SIZE 8
+#define MATMUL_GROUP_SIZE_X 16
 
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
 
