@@ -42,7 +42,7 @@ void multiply(
 void run(int argc, char** argv)
 {
 #ifdef MAKSIM
-    argc=2;argv[1]="1";
+    argc=2;argv[1]="2";
 #endif
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 

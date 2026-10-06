@@ -219,7 +219,7 @@ __global__ void matrix_multiply_wmma_my3(
     wmma::fragment<wmma::accumulator,16,16,16,float> acc_frag1;
     wmma::fill_fragment(acc_frag0,0.0f);
     wmma::fill_fragment(acc_frag1,0.0f);
-    for (unsigned int block=0;block<mmm/64;++block)
+    /*for (unsigned int block=0;block<mmm/64;++block)
     {
         //printf("block = %d, (blockIdx.x%(n/128)) = %d, (blockIdx.x/(n/128)) = %d",block,(blockIdx.x%(n/128)),(blockIdx.x/(n/128)));
         __syncthreads();
@@ -264,7 +264,7 @@ __global__ void matrix_multiply_wmma_my3(
         wmma::load_matrix_sync(a_frag,&A[16*((2*((threadIdx.x/32)/8))+1)][16*3],72);
         wmma::load_matrix_sync(b_frag,&B[16*3][16*((threadIdx.x/32)%8)],136);
         wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
-    }
+    }*/
     wmma::store_matrix_sync(c+((blockIdx.x%(nnn/128))*128+((2*((threadIdx.x/32)/8))+0)*16)*kkk+((blockIdx.x/(nnn/128))*128+((threadIdx.x/32)%8)*16),acc_frag0,kkk,wmma::mem_row_major);
     wmma::store_matrix_sync(c+((blockIdx.x%(nnn/128))*128+((2*((threadIdx.x/32)/8))+1)*16)*kkk+((blockIdx.x/(nnn/128))*128+((threadIdx.x/32)%8)*16),acc_frag1,kkk,wmma::mem_row_major);
 }
