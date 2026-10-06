@@ -26,15 +26,12 @@ void main()
 
     barrier();
 
-    for (uint dist = GROUP_SIZE / 2u; dist > 0u; dist /= 2u) {
-        if (local_index < dist) {
-            local_data[local_index] += local_data[local_index + dist];
-        }
-        barrier();
-    }
-
+    uint sum = 0;
     if (local_index == 0) {
-        b[gl_WorkGroupID.x] = local_data[0];
+        for (uint i = 0; i < GROUP_SIZE; ++i) {
+            sum += local_data[i];
+        }
+        b[gl_WorkGroupID.x] = sum;
     }
 
 }
