@@ -14,8 +14,44 @@ layout (push_constant) uniform PushConstants {
     uint k;
 } params;
 
-layout (local_size_x = 1, local_size_y = 1) in;
+shared float local_memory_A[GROUP_SIZE];
+shared float local_memory_B[GROUP_SIZE];
+
+layout (local_size_x = GROUP_SIZE_X, local_size_y = GROUP_SIZE_Y) in;
 void main()
 {
-    // TODO
+    uint lx = gl_LocalInvocationID.x;
+    uint ly = gl_LocalInvocationID.y;
+
+    uint x = gl_WorkGroupID.x * GROUP_SIZE_X + lx;
+    uint y = gl_WorkGroupID.y * GROUP_SIZE_Y + ly;
+
+    float sum = 0.0f;
+
+    for (uint k0 = 0; k0 < params.k; k0 += GROUP_SIZE_X) {
+        if (k0 + lx < params.k && y < params.h) {
+            local_memory_A[ly * GROUP_SIZE_X + lx] = a[y * params.k + k0 + lx];
+        } else {
+            local_memory_A[ly * GROUP_SIZE_X + lx] = 0.0f;
+        }
+
+        if (x < params.w && k0 + ly < params.k) {
+            local_memory_B[ly * GROUP_SIZE_X + lx] = b[(k0 + ly) * params.w + x];
+        } else {
+            local_memory_B[ly * GROUP_SIZE_X + lx] = 0.0f;
+        }
+
+        barrier();
+
+        #pragma unroll
+        for (uint i = 0; i < GROUP_SIZE_X; ++i) {
+            sum += local_memory_A[ly * GROUP_SIZE_X + i] * local_memory_B[i * GROUP_SIZE_X + lx];
+        }
+
+        barrier();
+    }
+
+    if (x < params.w && y < params.h) {
+        c[y * params.w + x] = sum;
+    }
 }
