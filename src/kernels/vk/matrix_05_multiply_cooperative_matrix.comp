@@ -7,7 +7,7 @@
 #extension GL_KHR_memory_scope_semantics : require
 #extension GL_EXT_subgroup_uniform_control_flow : enable
 #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
-// #extension GL_KHR_cooperative_matrix : require // TODO uncomment me
+#extension GL_KHR_cooperative_matrix : require // TODO uncomment me
 // Чтобы это компилировалось вам нужен достаточно свежий GLSL компилятор
 // Например если вы получили ошибку "error: '#extension' : extension not supported: GL_KHR_cooperative_matrix"
 // то вам потребуется его обновить. Для Linux актуальный glslc устанавливается скриптом scripts/linux/install_vulkan_sdk.sh
@@ -23,8 +23,69 @@ layout (push_constant) uniform PushConstants {
     uint k;
 } params;
 
-layout (local_size_x = 1, local_size_y = 1) in;
+const int M = 16;
+const int N = 16;
+const int K = 16;
+
+layout(local_size_x = 32, local_size_y = 1) in;
+
+shared uint tileA[M * K / 2];
+shared uint tileB[K * N / 2];
+
 void main()
 {
-    // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
+    uint tileX = gl_WorkGroupID.x;
+    uint tileY = gl_WorkGroupID.y;
+
+    uint row = tileY * M;
+    uint col = tileX * N;
+
+    coopmat<float, gl_ScopeSubgroup, M, N, gl_MatrixUseAccumulator> acc = coopmat
+    <
+    float, gl_ScopeSubgroup, M, N, gl_MatrixUseAccumulator
+    >(0.0f);
+
+    for (uint k0 = 0; k0 < params.k; k0 += K) {
+        uint tid = gl_LocalInvocationID.x;
+
+        for (uint idx = tid; idx < M * K / 2; idx += 32) {
+            uint r = idx / (K / 2);
+            uint p = idx % (K / 2);
+            uint c0 = p * 2;
+
+            tileA[idx] = packHalf2x16(vec2(
+                    a[(row + r) * params.k + k0 + c0],
+                    a[(row + r) * params.k + k0 + c0 + 1]
+            ));
+        }
+
+        for (uint idx = tid; idx < K * N / 2; idx += 32) {
+            uint r = idx / (N / 2);
+            uint p = idx % (N / 2);
+            uint c0 = p * 2;
+
+            tileB[idx] = packHalf2x16(vec2(
+                    b[(k0 + r) * params.w + col + c0],
+                    b[(k0 + r) * params.w + col + c0 + 1]
+            ));
+        }
+
+        barrier();
+
+        coopmat<float16_t, gl_ScopeSubgroup, M, K, gl_MatrixUseA> matA;
+
+        coopmat<float16_t, gl_ScopeSubgroup, K, N, gl_MatrixUseB > matB;
+
+        coopMatLoad(matA, tileA, 0, K / 2, gl_CooperativeMatrixLayoutRowMajor);
+
+        coopMatLoad(matB, tileB, 0, N / 2, gl_CooperativeMatrixLayoutRowMajor);
+
+        acc = coopMatMulAdd(matA, matB, acc);
+
+        barrier();
+    }
+
+    uint offsetC = row * params.w + col;
+
+    coopMatStore(acc, c, offsetC, params.w, gl_CooperativeMatrixLayoutRowMajor);
 }
