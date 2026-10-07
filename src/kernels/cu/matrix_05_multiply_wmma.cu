@@ -240,19 +240,19 @@ __global__ void __launch_bounds__(1024,1) matrix_multiply_wmma_my3(
             }
         }
         __syncthreads();
-        for (unsigned int shiftx1=0;shiftx1<2;++shiftx1)
+        for (unsigned int mm=0;mm<4;++mm)
         {
-            for (unsigned int mm=0;mm<4;++mm)
+            wmma::load_matrix_sync(b_frag,&B[16*mm][16*((threadIdx.x/32)%8)],136);
+            for (unsigned int shiftx1=0;shiftx1<2;++shiftx1)
             {
-                //__syncthreads();
-                //curassert(x2*16*64+16*mm+15*64+15<64*128,x2);
-                wmma::load_matrix_sync(a_frag,&A[16*((2*(threadIdx.x/32/8))+shiftx1)][16*mm],72);
-                //curassert(mm*16*128+16*y1+15*128+15<64*128,y1);
-                wmma::load_matrix_sync(b_frag,&B[16*mm][16*((threadIdx.x/32)%8)],136);
-                //__syncthreads();
-                if (shiftx1==0) wmma::mma_sync(acc_frag0,a_frag,b_frag,acc_frag0);
-                else wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
-                //__syncthreads();
+                    //__syncthreads();
+                    //curassert(x2*16*64+16*mm+15*64+15<64*128,x2);
+                    wmma::load_matrix_sync(a_frag,&A[16*((2*(threadIdx.x/32/8))+shiftx1)][16*mm],72);
+                    //curassert(mm*16*128+16*y1+15*128+15<64*128,y1);
+                    //__syncthreads();
+                    if (shiftx1==0) wmma::mma_sync(acc_frag0,a_frag,b_frag,acc_frag0);
+                    else wmma::mma_sync(acc_frag1,a_frag,b_frag,acc_frag1);
+                    //__syncthreads();
             }
         }
     }
@@ -325,28 +325,3 @@ namespace cuda {
         CUDA_CHECK_KERNEL(stream);
     }
 }
-/*
-__global__ void matrix_multiply_wmma(
-const __half* a, // rows=h x cols=k
-const __half* b, // rows=k x cols=w
-float* c, // rows=h x cols=w
-unsigned int w,
-unsigned int h,
-unsigned int k)
-{
-int ii=blockIdx.x;
-int jj=blockIdx.y;
-wmma::fragment<wmma::matrix_a,16,16,16,__half,wmma::row_major> a_frag;
-wmma::fragment<wmma::matrix_b,16,16,16,__half,wmma::row_major> b_frag;
-wmma::fragment<wmma::accumulator,16,16,16,float> acc_frag;
-//wmma::fragment<wmma::accumulator,16,16,16,float> c_frag;
-wmma::fill_fragment(acc_frag,0.0f);
-for (int kk=0;kk<k;kk+=16)
-{
-wmma::load_matrix_sync(a_frag,a+jj*16*k+kk,k);
-wmma::load_matrix_sync(b_frag,b+kk*w+ii*16,w);
-wmma::mma_sync(acc_frag,a_frag,b_frag,acc_frag);
-}
-wmma::store_matrix_sync(c+jj*16*w+ii*16,acc_frag,w,wmma::mem_row_major);
-}
-*/
