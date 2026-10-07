@@ -220,7 +220,7 @@ __global__ void __launch_bounds__(1024,1) matrix_multiply_wmma_my3(
     for (unsigned int block=0;block<mmm/64;++block)
     {
         //printf("block = %d, (blockIdx.x%(n/128)) = %d, (blockIdx.x/(n/128)) = %d",block,(blockIdx.x%(n/128)),(blockIdx.x/(n/128)));
-        __syncthreads();
+        //__syncthreads();
         for (unsigned char i=0;i<4;++i)
         {
             for (unsigned char j=0;j<2;++j)
@@ -258,6 +258,16 @@ __global__ void __launch_bounds__(1024,1) matrix_multiply_wmma_my3(
     }
     wmma::store_matrix_sync(c+((blockIdx.x%(nnn/128))*128+((2*((threadIdx.x/32)/8))+0)*16)*kkk+((blockIdx.x/(nnn/128))*128+((threadIdx.x/32)%8)*16),acc_frag0,kkk,wmma::mem_row_major);
     wmma::store_matrix_sync(c+((blockIdx.x%(nnn/128))*128+((2*((threadIdx.x/32)/8))+1)*16)*kkk+((blockIdx.x/(nnn/128))*128+((threadIdx.x/32)%8)*16),acc_frag1,kkk,wmma::mem_row_major);
+}
+__global__ void matrix_multiply_wmma_my4(
+                       const __half* a, // n * m
+                       const __half* b, // m * k
+                       float* c)
+{
+    #define nnn 2048
+    #define mmm 1024
+    #define kkk 4096
+
 }
 namespace cuda {
 void matrix_multiply_wmma(const gpu::WorkSize &workSize,

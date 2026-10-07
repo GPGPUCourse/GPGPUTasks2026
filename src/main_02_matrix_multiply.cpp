@@ -38,7 +38,7 @@ void multiply(
     }
 }
 }
-//#define MAKSIM
+#define MAKSIM
 void run(int argc, char** argv)
 {
 #ifdef MAKSIM
@@ -85,10 +85,6 @@ void run(int argc, char** argv)
     }
     for (size_t i = 0; i < input_b_cpu.size(); ++i) {
         input_b_cpu[i] = r.nextf();
-    }
-    for (int x=0;x<5;++x)
-    {
-        std::cout<<" next random  = "<<r.nextf()<<std::endl;
     }
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32f matrix_a_gpu(h * k); // rows=H x cols=K
