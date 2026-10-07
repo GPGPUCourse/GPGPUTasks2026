@@ -7,7 +7,7 @@
 #extension GL_KHR_memory_scope_semantics : require
 #extension GL_EXT_subgroup_uniform_control_flow : enable
 #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
-#extension GL_KHR_cooperative_matrix : require // TODO uncomment me
+// #extension GL_KHR_cooperative_matrix : require // TODO uncomment me
 // Чтобы это компилировалось вам нужен достаточно свежий GLSL компилятор
 // Например если вы получили ошибку "error: '#extension' : extension not supported: GL_KHR_cooperative_matrix"
 // то вам потребуется его обновить. Для Linux актуальный glslc устанавливается скриптом scripts/linux/install_vulkan_sdk.sh

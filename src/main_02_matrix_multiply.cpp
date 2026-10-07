@@ -99,7 +99,7 @@ void run(int argc, char** argv)
     };
 
     // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
-    bool I_Want_Super_Puper_Prestige_Points = true;
+    bool I_Want_Super_Puper_Prestige_Points = false;
     if (I_Want_Super_Puper_Prestige_Points) {
         if (context.type() == gpu::Context::TypeCUDA) {
             algorithm_names.push_back("03 using WMMA (Tensor Cores) [+Prestige Points]");
