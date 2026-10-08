@@ -46,22 +46,22 @@ __global__ void matrix_multiply_wmma(
             const int y = threadIdx.x / 4;
             const int x = (threadIdx.x % 4) * 4;
             
-            const float4 v = *(float4*)(a + (blockIdx.y * 64 + y) * k + i + x);
+            const float4 v = *reinterpret_cast<const float4*>(a + (blockIdx.y * 64 + y) * k + i + x);
 
-            local_a[y][x] = __float2half(v.x);
-            local_a[y][x + 1] = __float2half(v.y);
-            local_a[y][x + 2] = __float2half(v.z);
-            local_a[y][x + 3] = __float2half(v.w);
+            local_a[y][x] = __float2half_rn(v.x);
+            local_a[y][x + 1] = __float2half_rn(v.y);
+            local_a[y][x + 2] = __float2half_rn(v.z);
+            local_a[y][x + 3] = __float2half_rn(v.w);
         }
 
         {
             const int y = threadIdx.x / 16;
             const int x = (threadIdx.x % 16) * 2;
 
-            const float2 v = *(float2*)(b + (i + y) * w + blockIdx.x * 32 + x);
+            const float2 v = *reinterpret_cast<const float2*>(b + (i + y) * w + blockIdx.x * 32 + x);
 
-            local_b[y][x] = __float2half(v.x);
-            local_b[y][x + 1] = __float2half(v.y);
+            local_b[y][x] = __float2half_rn(v.x);
+            local_b[y][x + 1] = __float2half_rn(v.y);
         }
 
         __syncthreads();
@@ -98,8 +98,6 @@ __global__ void matrix_multiply_wmma(
             bf,
             acc
         );
-
-        __syncthreads();
     }
 
     wmma::store_matrix_sync(
