@@ -19,9 +19,7 @@
 // Set to 1 to benchmark Huang-style independent product CTAs with atomic
 // epilogue. It trades non-atomic C updates for more CTA-level parallelism.
 // Both scheduling modes are one-level fused Strassen without P[7] buffers.
-#ifndef STRASSEN_PARALLEL_PRODUCTS
-#define STRASSEN_PARALLEL_PRODUCTS 0
-#endif
+#define STRASSEN_PARALLEL_PRODUCTS 1
 
 namespace {
 constexpr int M_TILE=64, N_TILE=64, K_TILE=32, THREADS=64;
@@ -364,7 +362,7 @@ void reserve(half*& p,size_t& cap,size_t count) {
 }
 
 namespace cuda {
-void matrix_multiply_wmma(const gpu::WorkSize& workSize,
+void matrix_multiply_wmma_parallel(const gpu::WorkSize& workSize,
                           const gpu::gpu_mem_32f& a,
                           const gpu::gpu_mem_32f& b,
                           gpu::gpu_mem_32f& c,

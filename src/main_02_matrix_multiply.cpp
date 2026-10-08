@@ -81,7 +81,7 @@ void run(int argc, char** argv)
     const size_t half_w = w / 2 + w % 2;
     const size_t half_h = h / 2 + h % 2;
     const gpu::WorkSize strassen_work_size(
-        224, 1, ((half_w + 31) / 32) * 224, (half_h + 31) / 32);
+        224, 1, ((half_w + 63) / 64) * 224, (half_h + 63) / 64);
     std::vector<std::string> algorithm_names = {
         "CPU with OpenMP",
         "01 naive",
@@ -93,6 +93,7 @@ void run(int argc, char** argv)
     if (I_Want_Super_Puper_Prestige_Points) {
         if (context.type() == gpu::Context::TypeCUDA) {
             algorithm_names.push_back("03 one-level Strassen (MMA) [+Prestige Points]");
+            algorithm_names.push_back("04 one-level Strassen (parallel products) [+Prestige Points]");
         }
         if (context.type() == gpu::Context::TypeVulkan) {
             rassert(context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix"), 32452365324632);
@@ -126,6 +127,9 @@ void run(int argc, char** argv)
                     matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
             } else if (algorithm == "03 one-level Strassen (MMA) [+Prestige Points]") {
                 cuda::matrix_multiply_wmma(strassen_work_size,
+                    matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+            } else if (algorithm == "04 one-level Strassen (parallel products) [+Prestige Points]") {
+                cuda::matrix_multiply_wmma_parallel(strassen_work_size,
                     matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
             } else {
                 rassert(false, 810082605, algorithm, algorithm_index);
