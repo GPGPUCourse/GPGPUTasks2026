@@ -7,13 +7,29 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+#define TRANSP_TILE 32
+
 __global__ void matrix_transpose_coalesced_via_local_memory(
                        const float* matrix,            // w x h
                              float* transposed_matrix, // h x w
                              unsigned int w,
                              unsigned int h)
 {
-    // TODO
+    __shared__ float buffer[TRANSP_TILE][TRANSP_TILE+1];
+
+    const unsigned int x = blockIdx.x * TRANSP_TILE + threadIdx.x;
+    const unsigned int y = blockIdx.y * TRANSP_TILE + threadIdx.y;
+    if (x < w && y < h) {
+        buffer[threadIdx.y][threadIdx.x] = matrix[y * w + x];
+    }
+
+    __syncthreads();
+
+    const unsigned int out_x = blockIdx.y * TRANSP_TILE + threadIdx.x;
+    const unsigned int out_y = blockIdx.x * TRANSP_TILE + threadIdx.y;
+    if (out_x < h && out_y < w) {
+        transposed_matrix[out_y * h + out_x] = buffer[threadIdx.x][threadIdx.y];
+    }
 }
 
 namespace cuda {
