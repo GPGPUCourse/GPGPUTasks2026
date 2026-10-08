@@ -25,10 +25,10 @@ void matrix_multiply_naive(const gpu::WorkSize &workSize,
             const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k);
 // V100 FP32: block=(CUDA_MM_THREADS,1,1), grid=(ceil(w/128),ceil(h/128),1).
 // Row-major C[h,w] = A[h,k] * B[k,w]; inputs/output must not overlap.
-void matrix_multiply_via_local_memory(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k);
-void matrix_multiply_wmma(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k);
+void matrix_multiply_via_local_memory(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c, unsigned int w, unsigned int h, unsigned int k);
+void matrix_multiply_wmma(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c, unsigned int w, unsigned int h, unsigned int k);
 }
 
 namespace ocl {

@@ -89,7 +89,7 @@ void run(int argc, char** argv)
     };
 
     // Дополнительное задание: один уровень Strassen на Tensor Cores.
-    bool I_Want_Super_Puper_Prestige_Points = false;
+    bool I_Want_Super_Puper_Prestige_Points = true;
     if (I_Want_Super_Puper_Prestige_Points) {
         if (context.type() == gpu::Context::TypeCUDA) {
             algorithm_names.push_back("03 one-level Strassen (MMA) [+Prestige Points]");
