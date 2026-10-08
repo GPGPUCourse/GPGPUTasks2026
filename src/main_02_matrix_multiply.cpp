@@ -78,17 +78,21 @@ void run(int argc, char** argv)
         CUDA_MM_THREADS, 1,
         ((size_t(w) + CUDA_MM_BLOCK_N - 1) / CUDA_MM_BLOCK_N) * CUDA_MM_THREADS,
         (size_t(h) + CUDA_MM_BLOCK_M - 1) / CUDA_MM_BLOCK_M);
+    const size_t half_w = w / 2 + w % 2;
+    const size_t half_h = h / 2 + h % 2;
+    const gpu::WorkSize strassen_work_size(
+        224, 1, ((half_w + 31) / 32) * 224, (half_h + 31) / 32);
     std::vector<std::string> algorithm_names = {
         "CPU with OpenMP",
         "01 naive",
         "02 using local memory",
     };
 
-    // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
+    // Дополнительное задание: один уровень Strassen на Tensor Cores.
     bool I_Want_Super_Puper_Prestige_Points = false;
     if (I_Want_Super_Puper_Prestige_Points) {
         if (context.type() == gpu::Context::TypeCUDA) {
-            algorithm_names.push_back("03 using WMMA (Tensor Cores) [+Prestige Points]");
+            algorithm_names.push_back("03 one-level Strassen (MMA) [+Prestige Points]");
         }
         if (context.type() == gpu::Context::TypeVulkan) {
             rassert(context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix"), 32452365324632);
@@ -120,8 +124,8 @@ void run(int argc, char** argv)
             } else if (algorithm == "02 using local memory") {
                 cuda::matrix_multiply_via_local_memory(multiply_work_size,
                     matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-            } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
-                cuda::matrix_multiply_wmma(gpu::WorkSize(1, 1, w, h * 2 / 16),
+            } else if (algorithm == "03 one-level Strassen (MMA) [+Prestige Points]") {
+                cuda::matrix_multiply_wmma(strassen_work_size,
                     matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
             } else {
                 rassert(false, 810082605, algorithm, algorithm_index);
