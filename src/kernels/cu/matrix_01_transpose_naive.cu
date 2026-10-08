@@ -1,3 +1,6 @@
+#ifdef __clang__
+    #include <__clang_cuda_builtin_vars.h>
+#endif
 #include <libgpu/context.h>
 #include <libgpu/work_size.h>
 #include <libgpu/shared_device_buffer.h>
@@ -13,7 +16,9 @@ __global__ void matrix_transpose_naive(
                              unsigned int w,
                              unsigned int h)
 {
-    // TODO
+    unsigned int x = threadIdx.x + blockDim.x * blockIdx.x;
+    unsigned int y = threadIdx.y + blockDim.y * blockIdx.y;
+    transposed_matrix[x * h + y] = matrix[x + y * w];
 }
 
 namespace cuda {
