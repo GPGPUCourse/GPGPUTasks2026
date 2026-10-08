@@ -28,7 +28,7 @@ __kernel void matrix_02_transpose_coalesced_via_local_memory(
     const unsigned int transposed_x = get_group_id(1) * 16 + local_x;
     const unsigned int transposed_y = get_group_id(0) * 16 + local_y;
 
-    if (transposed_x < w && transposed_y < h) {
+    if (transposed_x < h && transposed_y < w) {
         transposed_matrix[transposed_y * h + transposed_x] = local_matrix[local_x * 16 + local_y];
     }
 }
