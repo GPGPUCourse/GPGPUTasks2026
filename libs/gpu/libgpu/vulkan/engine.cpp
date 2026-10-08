@@ -12,6 +12,7 @@
 #include "data_image.h"
 
 #include <atomic>
+#include <cstdlib>
 #include <filesystem>
 
 #include "vk/common_host.h"
@@ -22,6 +23,17 @@
 #endif
 
 namespace {
+	// A timeout does not cancel submitted work. Keep its resources alive until
+	// completion; otherwise exception unwinding can free memory still in use.
+	vk::Result waitForSubmittedFence(const vk::raii::Device &device, const vk::raii::Fence &fence)
+	{
+		vk::Result result;
+		do {
+			result = device.waitForFences(vk::Fence(fence), true, VULKAN_TIMEOUT_NANOSECS);
+		} while (result == vk::Result::eTimeout);
+		return result;
+	}
+
 	// see https://vulkan-tutorial.com/Drawing_a_triangle/Setup/Validation_layers
 	// this is a debug callback for Vulkan Validation Layers
 	// when they find any problems - this callback will be triggered
@@ -67,7 +79,7 @@ namespace {
 		create_info.messageSeverity = any_severity;
 		vk::DebugUtilsMessageTypeFlagsEXT any_type = vk::DebugUtilsMessageTypeFlagBitsEXT::eGeneral | vk::DebugUtilsMessageTypeFlagBitsEXT::eValidation | vk::DebugUtilsMessageTypeFlagBitsEXT::ePerformance | vk::DebugUtilsMessageTypeFlagBitsEXT::eDeviceAddressBinding;
 		create_info.messageType = any_type;
-		create_info.pfnUserCallback = (decltype (create_info.pfnUserCallback)) debugCallback;
+		create_info.pfnUserCallback = debugCallback;
 		create_info.pUserData = (void*) instance_context;
 
 		rassert(VKF.vkCreateDebugUtilsMessengerEXT, 378392459011272);
@@ -362,15 +374,13 @@ public:
 		// Example of std140 drawback:
 		// - float array (used in FourierCorrectionVk) is x4 times bigger due to 16 bytes strides - https://www.reddit.com/r/vulkan/comments/u5jiws/glsl_std140_layout_for_arrays_of_scalars/
 		vk::PhysicalDeviceUniformBufferStandardLayoutFeatures buffer_std_layout_features(true);
-                void * pNextFeature = &buffer_std_layout_features;
 
 		// We require VK_EXT_shader_atomic_float extension to use atomicAdd(float[], float),
 		// it has wide support - https://vulkan.gpuinfo.org/listdevicescoverage.php?extension=VK_EXT_shader_atomic_float
 		device_enabled_extensions.push_back(VK_EXT_SHADER_ATOMIC_FLOAT_EXTENSION_NAME);
 		vk::PhysicalDeviceShaderAtomicFloatFeaturesEXT atomic_float_features;
 		atomic_float_features.setShaderBufferFloat32AtomicAdd(true);
-		atomic_float_features.setPNext(pNextFeature);
-                pNextFeature = &atomic_float_features;
+		atomic_float_features.setPNext(&buffer_std_layout_features);
 
 		vk::PhysicalDeviceFeatures2 device_enabled_features2;
 		if (isMoltenVK()) {
@@ -382,30 +392,9 @@ public:
 			device_enabled_features2.features.setGeometryShader(true); // requested for usage of gl_PrimitiveID
 		}
 		device_enabled_features2.features.setFillModeNonSolid(true); // requested for wireframe rendering (i.e. polygonMode = vk::PolygonMode::eLine)
-		device_enabled_features2.setPNext(pNextFeature);
-                pNextFeature = &device_enabled_features2;
+		device_enabled_features2.setPNext(&atomic_float_features);
 
-                vk::PhysicalDeviceCooperativeMatrixFeaturesKHR cooperative_matrix_features;
-                if (device_info_.supportsExtension(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME)) {
-                    device_enabled_extensions.push_back(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME);
-
-                    cooperative_matrix_features.setCooperativeMatrix(true);
-                    cooperative_matrix_features.setCooperativeMatrixRobustBufferAccess(false); // it is not supported on NVIDIA RTX 4090
-                    cooperative_matrix_features.setPNext(pNextFeature);
-                    pNextFeature = &cooperative_matrix_features;
-                }
-
-                vk::PhysicalDeviceSubgroupSizeControlFeatures subgroup_size_control_features;
-                if (device_info_.supportsExtension(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME)) {
-                    device_enabled_extensions.push_back(VK_EXT_SUBGROUP_SIZE_CONTROL_EXTENSION_NAME);
-
-                    subgroup_size_control_features.setComputeFullSubgroups(true);
-                    subgroup_size_control_features.setSubgroupSizeControl(true);
-                    subgroup_size_control_features.setPNext(pNextFeature);
-                    pNextFeature = &subgroup_size_control_features;
-                }
-
-		vk::DeviceCreateInfo device_create_info({}, queue_create_info, {}, device_enabled_extensions, nullptr, pNextFeature);
+		vk::DeviceCreateInfo device_create_info({}, queue_create_info, {}, device_enabled_extensions, nullptr, &device_enabled_features2);
 		device_ = std::make_shared<vk::raii::Device>(physical_device_->createDevice(device_create_info));
 
 		VmaVulkanFunctions vulkanFunctions = {};
@@ -514,22 +503,6 @@ vk::raii::CommandPool &avk2::VulkanEngine::getCommandPool()
 	return *avk2_context_->command_pool_;
 }
 
-vk::raii::Fence &avk2::VulkanEngine::findFence(const std::string &key)
-{
-	std::shared_ptr<vk::raii::Fence> fence;
-
-	auto it = fences_.find(key);
-	if (it != fences_.end()) {
-		fence = it->second;
-		getDevice().resetFences(**fence);
-	} else {
-		fence = std::make_shared<vk::raii::Fence>(getDevice(), vk::FenceCreateInfo());
-		fences_[key] = fence;
-	}
-
-	return *fence.get();
-}
-
 vk::raii::CommandBuffer avk2::VulkanEngine::createCommandBuffer()
 {
 	vk::CommandBufferAllocateInfo command_buffer_allocate_info(getCommandPool(), vk::CommandBufferLevel::ePrimary, 1);
@@ -537,18 +510,21 @@ vk::raii::CommandBuffer avk2::VulkanEngine::createCommandBuffer()
 	return command_buffer;
 }
 
-void avk2::VulkanEngine::submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer, vk::raii::Fence &fence)
+void avk2::VulkanEngine::submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer)
 {
-	submitCommandBufferAsync(command_buffer, fence);
-	VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 345123451241);
+	std::shared_ptr<vk::raii::Fence> fence = submitCommandBufferAsync(command_buffer);
+	VK_CHECK_RESULT(waitForSubmittedFence(getDevice(), *fence), 345123451241);
 }
 
-void avk2::VulkanEngine::submitCommandBufferAsync(const vk::raii::CommandBuffer &command_buffer, vk::raii::Fence &fence)
+std::shared_ptr<vk::raii::Fence> avk2::VulkanEngine::submitCommandBufferAsync(const vk::raii::CommandBuffer &command_buffer)
 {
 	vk::CommandBuffer command_buffer_non_raii = command_buffer;
+	std::shared_ptr<vk::raii::Fence> fence = std::make_shared<vk::raii::Fence>(getDevice(), vk::FenceCreateInfo());
 
 	vk::SubmitInfo submit_info(nullptr, nullptr, command_buffer_non_raii);
 	getQueue().submit({submit_info}, *fence);
+
+	return fence;
 }
 
 vk::raii::DescriptorSet avk2::VulkanEngine::allocateDescriptor(vk::raii::DescriptorSetLayout& descriptor_set_layout, const std::vector<vk::DescriptorType> &descriptor_types)
@@ -737,7 +713,7 @@ void avk2::VulkanEngine::writeImage(const avk2::raii::ImageData &image_dst, cons
 			bool is_prev_chunk_exists = chunk_i > 0;
 
 			std::shared_ptr<vk::raii::CommandBuffer> command_buffer;
-			vk::raii::Fence *fence = nullptr;
+			std::shared_ptr<vk::raii::Fence> fence;
 
 			if (is_prev_chunk_exists) {
 				// read data from the previous staging buffer into VRAM GPU buffer
@@ -753,8 +729,7 @@ void avk2::VulkanEngine::writeImage(const avk2::raii::ImageData &image_dst, cons
 																	  vk::Offset3D(0, prev_chunk_row_start, 0), vk::Extent3D(width, prev_chunk_row_end - prev_chunk_row_start, 1)));
 				command_buffer->end();
 
-				fence = &this->findFence("writeImage");
-				submitCommandBufferAsync(*command_buffer, *fence);
+				fence = submitCommandBufferAsync(*command_buffer);
 			}
 
 			if (is_cur_chunk_exists) {
@@ -779,8 +754,7 @@ void avk2::VulkanEngine::writeImage(const avk2::raii::ImageData &image_dst, cons
 			}
 
 			if (is_prev_chunk_exists) {
-				rassert(fence != nullptr, 34523124121);
-				VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 4512341231);
+				VK_CHECK_RESULT(waitForSubmittedFence(getDevice(), *fence), 4512341231);
 			}
 		}
 	}
@@ -832,7 +806,7 @@ void avk2::VulkanEngine::readImage(const avk2::raii::ImageData &image_src, const
 			bool is_prev_chunk_exists = chunk_i > 0;
 
 			std::shared_ptr<vk::raii::CommandBuffer> command_buffer;
-			vk::raii::Fence *fence = nullptr;
+			std::shared_ptr<vk::raii::Fence> fence;
 
 			if (is_cur_chunk_exists) {
 				// read data from the VRAM GPU image into the staging buffer
@@ -848,8 +822,7 @@ void avk2::VulkanEngine::readImage(const avk2::raii::ImageData &image_src, const
 																	  vk::Offset3D(0, cur_chunk_row_start, 0), vk::Extent3D(width, cur_chunk_row_end - cur_chunk_row_start, 1)));
 				command_buffer->end();
 
-				fence = &this->findFence("readImage");
-				submitCommandBufferAsync(*command_buffer, *fence);
+				fence = submitCommandBufferAsync(*command_buffer);
 			}
 
 			if (is_prev_chunk_exists) {
@@ -873,8 +846,7 @@ void avk2::VulkanEngine::readImage(const avk2::raii::ImageData &image_src, const
 			}
 
 			if (is_cur_chunk_exists) {
-				rassert(fence != nullptr, 34523124122);
-				VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 34124125123);
+				VK_CHECK_RESULT(waitForSubmittedFence(getDevice(), *fence), 34124125123);
 			}
 		}
 	}
@@ -952,7 +924,7 @@ void avk2::VulkanEngine::writeBuffer(const avk2::raii::BufferData &buffer_dst, s
 		bool is_prev_chunk_exists = chunk_i > 0;
 
 		std::shared_ptr<vk::raii::CommandBuffer> command_buffer;
-		vk::raii::Fence *fence = nullptr;
+		std::shared_ptr<vk::raii::Fence> fence;
 
 		if (is_prev_chunk_exists) {
 			// read data from the previous staging buffer into VRAM GPU buffer
@@ -965,8 +937,7 @@ void avk2::VulkanEngine::writeBuffer(const avk2::raii::BufferData &buffer_dst, s
 			command_buffer->copyBuffer(staging_write_buffers_[prev_buffer]->getBuffer(), buffer_dst.getBuffer(), {{(size_t) 0, offset + prev_chunk_start, prev_chunk_end - prev_chunk_start}});
 			command_buffer->end();
 
-			fence = &this->findFence("writeBuffer");
-			submitCommandBufferAsync(*command_buffer, *fence);
+			fence = submitCommandBufferAsync(*command_buffer);
 		}
 
 		if (is_cur_chunk_exists) {
@@ -980,8 +951,7 @@ void avk2::VulkanEngine::writeBuffer(const avk2::raii::BufferData &buffer_dst, s
 		}
 
 		if (is_prev_chunk_exists) {
-			rassert(fence != nullptr, 45635243413412);
-			VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 453151251236);
+			VK_CHECK_RESULT(waitForSubmittedFence(getDevice(), *fence), 453151251236);
 		}
 	}
 }
@@ -999,7 +969,7 @@ void avk2::VulkanEngine::readBuffer(const avk2::raii::BufferData &buffer_src, si
 		bool is_prev_chunk_exists = chunk_i > 0;
 
 		std::shared_ptr<vk::raii::CommandBuffer> command_buffer;
-		vk::raii::Fence *fence = nullptr;
+		std::shared_ptr<vk::raii::Fence> fence;
 
 		if (is_cur_chunk_exists) {
 			// read data from VRAM GPU buffer into the staging buffer
@@ -1012,8 +982,7 @@ void avk2::VulkanEngine::readBuffer(const avk2::raii::BufferData &buffer_src, si
 			command_buffer->copyBuffer(buffer_src.getBuffer(), staging_read_buffers_[cur_buffer]->getBuffer(), {{offset + cur_chunk_start, (size_t) 0, cur_chunk_end - cur_chunk_start}});
 			command_buffer->end();
 
-			fence = &this->findFence("readBuffer");
-			submitCommandBufferAsync(*command_buffer, *fence);
+			fence = submitCommandBufferAsync(*command_buffer);
 		}
 
 		if (is_prev_chunk_exists) {
@@ -1026,8 +995,7 @@ void avk2::VulkanEngine::readBuffer(const avk2::raii::BufferData &buffer_src, si
 		}
 
 		if (is_cur_chunk_exists) {
-			rassert(fence != nullptr, 554624331241);
-			VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 675623543242141);
+			VK_CHECK_RESULT(waitForSubmittedFence(getDevice(), *fence), 675623543242141);
 		}
 	}
 }
@@ -1062,11 +1030,6 @@ void avk2::VulkanEngine::clearStagingBuffers()
 		staging_write_buffers_[i].reset();
 		staging_read_buffers_[i].reset();
 	}
-}
-
-void avk2::VulkanEngine::clearFences()
-{
-    fences_.clear();
 }
 
 avk2::VersionedBinary::VersionedBinary(const char *data, const size_t size)
@@ -1181,15 +1144,6 @@ avk2::VulkanKernel *avk2::KernelSource::compileComputeKernel(const std::shared_p
 	vk::raii::ShaderModule shader_module = createShaderModule(vk, *compute_program, &shader_module_info);
 
 	vk::PipelineShaderStageCreateInfo pipeline_stages_create_info({}, vk::ShaderStageFlagBits::eCompute, shader_module, name_.c_str());
-
-        vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo require_subgroup;
-        if (shader_module_info.getGroupSize(name_)[0] % VK_SUBGROUP_SIZE == 0) {
-            require_subgroup.requiredSubgroupSize = VK_SUBGROUP_SIZE;
-            if (vk->device().supportsExtension(VK_KHR_COOPERATIVE_MATRIX_EXTENSION_NAME)) {
-                pipeline_stages_create_info.flags |= vk::PipelineShaderStageCreateFlagBits::eRequireFullSubgroups;
-                pipeline_stages_create_info.setPNext(&require_subgroup);
-            }
-        }
 
 	std::set<unsigned int> descriptors_sets = shader_module_info.getDescriptorsSets();
 	// let's check that common.vk (and so rassert.vk) was included from Vulkan kernel:
@@ -1417,8 +1371,7 @@ void avk2::KernelSource::exec(const PushConstant &params, const gpu::WorkSize &w
 
 	timer gpu_t;
 	gpu_t.start();
-	vk::raii::Fence &fence = context.vk()->findFence("readBuffer");
-	context.vk()->submitCommandBuffer(command_buffer, fence);
+	context.vk()->submitCommandBuffer(command_buffer);
 	last_exec_gpu_time_ = gpu_t.elapsed();
 
 	if (kernel->isRassertUsed()) {
@@ -1890,8 +1843,7 @@ void avk2::KernelSource::launchRender(const RenderBuilder &params, const Arg &ar
 
 		timer gpu_t;
 		gpu_t.start();
-		vk::raii::Fence &fence = context.vk()->findFence("launchRender");
-		context.vk()->submitCommandBuffer(command_buffer, fence);
+		context.vk()->submitCommandBuffer(command_buffer);
 		last_exec_gpu_time_ = gpu_t.elapsed();
 	}
 
