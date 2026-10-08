@@ -20,7 +20,31 @@ __global__ void matrix_multiply_wmma(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
+    const unsigned int block_x = blockIdx.x * 16;
+    const unsigned int block_y = blockIdx.y * 16;
+
+    __shared__ __align__(32) half buff_a[16][16];
+    __shared__ __align__(32) half buff_b[16][16];
+
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> frag_a;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> frag_b;
+    wmma::fragment<wmma::accumulator, 16, 16, 16, float> frag_c;
+    wmma::fill_fragment(frag_c, 0.0f);
+
+    for (unsigned int i = 0; i < k; i += 16) {
+        for (unsigned int row = threadIdx.y; row < 16; row += 2) {
+            buff_a[row][threadIdx.x] = __float2half(a[(block_y + row) * k + i + threadIdx.x]);
+            buff_b[row][threadIdx.x] = __float2half(b[(i + row) * w + block_x + threadIdx.x]);
+        }
+
+        __syncthreads();
+        wmma::load_matrix_sync(frag_a, &buff_a[0][0], 16);
+        wmma::load_matrix_sync(frag_b, &buff_b[0][0], 16);
+        wmma::mma_sync(frag_c, frag_a, frag_b, frag_c);
+        __syncthreads();
+    }
+
+    wmma::store_matrix_sync(c + block_y * w + block_x, frag_c, w, wmma::mem_row_major);
 }
 
 namespace cuda {
