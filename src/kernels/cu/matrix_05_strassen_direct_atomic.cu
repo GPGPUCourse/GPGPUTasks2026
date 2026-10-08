@@ -1,0 +1,470 @@
+#include "../defines.h"
+#include "../kernels.h"
+#include "helpers/rassert.cu"
+#include <cstddef>
+#include <cstdint>
+#include <cuda_fp16.h>
+#include <cuda_runtime.h>
+#include <libgpu/context.h>
+#include <libgpu/cuda/cu/common.cu>
+#include <libgpu/shared_device_buffer.h>
+#include <libgpu/work_size.h>
+
+namespace {
+constexpr int BM = 128, BN = 128, BK = 32, THREADS = 128;
+constexpr int SMEM_TILE = BM * BK;
+constexpr int LEAVES = 7;
+static_assert(4 * SMEM_TILE * sizeof(half) == 32768);
+
+__host__ __device__ __forceinline__ int a_offset(int row, int k)
+{
+    const int vc = row >> 3, sc = vc & 7, sr = k & 3;
+    const int ps = sc >> 1;
+    const int pc = (sr ^ ps) | ((sc & 1) << 2);
+    return (((vc >> 3) * 8 + pc) * 8 + (row & 7)) + ((k >> 2) * 4 + ps) * BM;
+}
+__host__ __device__ __forceinline__ int b_offset(int k, int col)
+{
+    const int vc = col >> 3, sc = vc & 7, sr = k & 3;
+    const int ps = sc & 3;
+    const int pc = (sr ^ ps) | (sc & 4);
+    return (((vc >> 3) * 8 + pc) * 8 + (col & 7)) + ((k >> 2) * 4 + ps) * BN;
+}
+__device__ __forceinline__ void mma8(float (&d)[8], unsigned a0, unsigned a1, unsigned b0, unsigned b1)
+{
+    asm volatile("mma.sync.aligned.m8n8k4.col.row.f32.f16.f16.f32 "
+                 "{%0,%1,%2,%3,%4,%5,%6,%7}, {%8,%9}, {%10,%11}, {%0,%1,%2,%3,%4,%5,%6,%7};\n"
+        : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3]),
+        "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7])
+        : "r"(a0), "r"(a1), "r"(b0), "r"(b1));
+}
+__device__ __forceinline__ void mma_tile(float acc[16][8],
+    const unsigned a0[4], const unsigned a1[4],
+    const unsigned b0[4], const unsigned b1[4])
+{
+#pragma unroll
+    for (int on = 0; on < 2; ++on)
+#pragma unroll
+        for (int in = 0; in < 2; ++in)
+#pragma unroll
+            for (int om = 0; om < 2; ++om)
+#pragma unroll
+                for (int im = 0; im < 2; ++im) {
+                    const int nc = in + on * 2;
+                    const int mr = (nc & 1) ? (1 - im) : im;
+                    const int orow = (nc & 1) ? (1 - om) : om;
+                    const int group = mr + 2 * (in + 2 * (orow + 2 * on));
+                    mma8(acc[group], a0[mr + 2 * orow], a1[mr + 2 * orow], b0[nc], b1[nc]);
+                }
+}
+__device__ __forceinline__ void read_a(const uint4* ap0, const uint4* ap1,
+    int byte_offset, unsigned a0[4], unsigned a1[4])
+{
+    const uint4 x = *reinterpret_cast<const uint4*>(reinterpret_cast<const char*>(ap0) + byte_offset);
+    const uint4 y = *reinterpret_cast<const uint4*>(reinterpret_cast<const char*>(ap1) + byte_offset);
+    a0[0] = x.x;
+    a1[0] = x.y;
+    a0[1] = x.z;
+    a1[1] = x.w;
+    a0[2] = y.x;
+    a1[2] = y.y;
+    a0[3] = y.z;
+    a1[3] = y.w;
+}
+__device__ __forceinline__ void read_b(const uint4* bp, int byte_offset,
+    unsigned b0[4], unsigned b1[4])
+{
+#pragma unroll
+    for (int c = 0; c < 2; ++c) {
+        const uint4 x = *reinterpret_cast<const uint4*>(reinterpret_cast<const char*>(bp + 4 * c) + byte_offset);
+        b0[2 * c] = x.x;
+        b1[2 * c] = x.y;
+        b0[2 * c + 1] = x.z;
+        b1[2 * c + 1] = x.w;
+    }
+}
+__device__ __forceinline__ void select_product(int p,
+    int& aq0, int& aq1, int& ao, int& bq0, int& bq1, int& bo)
+{
+    switch (p) {
+    case 0:
+        aq0 = 0;
+        aq1 = 3;
+        ao = 1;
+        bq0 = 0;
+        bq1 = 3;
+        bo = 1;
+        break;
+    case 1:
+        aq0 = 2;
+        aq1 = 3;
+        ao = 1;
+        bq0 = 0;
+        bq1 = -1;
+        bo = 0;
+        break;
+    case 2:
+        aq0 = 0;
+        aq1 = -1;
+        ao = 0;
+        bq0 = 1;
+        bq1 = 3;
+        bo = -1;
+        break;
+    case 3:
+        aq0 = 3;
+        aq1 = -1;
+        ao = 0;
+        bq0 = 2;
+        bq1 = 0;
+        bo = -1;
+        break;
+    case 4:
+        aq0 = 0;
+        aq1 = 1;
+        ao = 1;
+        bq0 = 3;
+        bq1 = -1;
+        bo = 0;
+        break;
+    case 5:
+        aq0 = 2;
+        aq1 = 0;
+        ao = -1;
+        bq0 = 0;
+        bq1 = 1;
+        bo = 1;
+        break;
+    default:
+        aq0 = 1;
+        aq1 = 3;
+        ao = -1;
+        bq0 = 2;
+        bq1 = 3;
+        bo = 1;
+        break;
+    }
+}
+__device__ __forceinline__ void destinations(int p,
+    int& d0, int& s0, int& d1, int& s1)
+{
+    switch (p) {
+    case 0:
+        d0 = 0;
+        s0 = 1;
+        d1 = 3;
+        s1 = 1;
+        break;
+    case 1:
+        d0 = 2;
+        s0 = 1;
+        d1 = 3;
+        s1 = -1;
+        break;
+    case 2:
+        d0 = 1;
+        s0 = 1;
+        d1 = 3;
+        s1 = 1;
+        break;
+    case 3:
+        d0 = 0;
+        s0 = 1;
+        d1 = 2;
+        s1 = 1;
+        break;
+    case 4:
+        d0 = 0;
+        s0 = -1;
+        d1 = 1;
+        s1 = 1;
+        break;
+    case 5:
+        d0 = 3;
+        s0 = 1;
+        d1 = -1;
+        s1 = 0;
+        break;
+    default:
+        d0 = 0;
+        s0 = 1;
+        d1 = -1;
+        s1 = 0;
+        break;
+    }
+}
+
+__device__ __forceinline__ unsigned add2(unsigned x, unsigned y)
+{
+    unsigned z;
+    asm volatile("add.rn.f16x2 %0, %1, %2;" : "=r"(z) : "r"(x), "r"(y));
+    return z;
+}
+__device__ __forceinline__ unsigned sub2(unsigned x, unsigned y)
+{
+    unsigned z;
+    asm volatile("sub.rn.f16x2 %0, %1, %2;" : "=r"(z) : "r"(x), "r"(y));
+    return z;
+}
+__device__ __forceinline__ uint4 combine(uint4 x, uint4 y, int sign)
+{
+    if (sign > 0)
+        return make_uint4(add2(x.x, y.x), add2(x.y, y.y), add2(x.z, y.z), add2(x.w, y.w));
+    return make_uint4(sub2(x.x, y.x), sub2(x.y, y.y), sub2(x.z, y.z), sub2(x.w, y.w));
+}
+__device__ __forceinline__ uint4 load_A(const half* A, int quadr, int row, int k, int h, int hk, int hm)
+{
+    return *reinterpret_cast<const uint4*>(A + size_t(k + (quadr & 1) * hk) * h + row + (quadr >> 1) * hm);
+}
+__device__ __forceinline__ uint4 load_B(const half* B, int quadr, int k, int col, int w, int hk, int wn)
+{
+    return *reinterpret_cast<const uint4*>(B + size_t(k + (quadr >> 1) * hk) * w + col + (quadr & 1) * wn);
+}
+__device__ __forceinline__ void prefetch(const half* A, const half* B,
+    int bm, int bn, int k0, int tid, int h, int w, int k, int outer, uint4 a[4], uint4 b[4])
+{
+    int aq0, aq1, ao, bq0, bq1, bo;
+    select_product(outer, aq0, aq1, ao, bq0, bq1, bo);
+    const int hm = h / 2, wn = w / 2, hk = k / 2;
+#pragma unroll
+    for (int rep = 0; rep < 4; ++rep) {
+        const int vec = tid + rep * THREADS;
+        const int kk = k0 + (vec >> 4);
+        const int along = (vec & 15) * 8;
+        uint4 x = load_A(A, aq0, bm + along, kk, h, hk, hm);
+        uint4 y = load_B(B, bq0, kk, bn + along, w, hk, wn);
+        if (aq1 >= 0)
+            x = combine(x, load_A(A, aq1, bm + along, kk, h, hk, hm), ao);
+        if (bq1 >= 0)
+            y = combine(y, load_B(B, bq1, kk, bn + along, w, hk, wn), bo);
+        a[rep] = x;
+        b[rep] = y;
+    }
+}
+
+__device__ __forceinline__ void store_stage(half (&smem)[4][4096], int stage, int tid,
+    const uint4 a[4], const uint4 b[4])
+{
+#pragma unroll
+    for (int rep = 0; rep < 4; ++rep) {
+        const int vec = tid + rep * THREADS;
+        const int kk = vec >> 4, along = (vec & 15) * 8;
+        *reinterpret_cast<uint4*>(&smem[stage][a_offset(along, kk)]) = a[rep];
+        *reinterpret_cast<uint4*>(&smem[stage + 2][b_offset(kk, along)]) = b[rep];
+    }
+}
+__device__ __forceinline__ int scratch_offset(int row, int col)
+{
+    const int mask = ((row & 1) << 2) | ((row & 8) << 1);
+    return row * BN + (col ^ mask);
+}
+__device__ __forceinline__ void emit_atomic(float4 v, float* C,
+    int w, int h, int productOuter, int row, int col)
+{
+    int od0, os0, od1, os1;
+    destinations(productOuter, od0, os0, od1, os1);
+    const int ods[2] = { od0, od1 }, oss[2] = { os0, os1 };
+#pragma unroll
+    for (int oi = 0; oi < 2; ++oi) {
+        if (ods[oi] < 0)
+            continue;
+        const int dstrow = row + (ods[oi] >> 1) * (h / 2);
+        const int dstcol = col + (ods[oi] & 1) * (w / 2);
+        float* dst = C + size_t(dstrow) * w + dstcol;
+        const float sg = float(oss[oi]);
+        atomicAdd(dst + 0, sg * v.x);
+        atomicAdd(dst + 1, sg * v.y);
+        atomicAdd(dst + 2, sg * v.z);
+        atomicAdd(dst + 3, sg * v.w);
+    }
+}
+
+__device__ __forceinline__ void emit_atomic2(
+    float2 v, float* C, int w, int h, int product, int row, int col)
+{
+    int d0, s0, d1, s1;
+    destinations(product, d0, s0, d1, s1);
+    if (d0 >= 0) {
+        float* out = C + size_t(row + (d0 >> 1) * (h / 2)) * w
+            + col + (d0 & 1) * (w / 2);
+        atomicAdd(out, float(s0) * v.x);
+        atomicAdd(out + 1, float(s0) * v.y);
+    }
+    if (d1 >= 0) {
+        float* out = C + size_t(row + (d1 >> 1) * (h / 2)) * w
+            + col + (d1 & 1) * (w / 2);
+        atomicAdd(out, float(s1) * v.x);
+        atomicAdd(out + 1, float(s1) * v.y);
+    }
+}
+
+using InputA = half;
+using InputB = half;
+
+__global__ __launch_bounds__(THREADS, 2) void strassen_gemm(
+    const InputA* __restrict__ A, const InputB* __restrict__ B,
+    float* __restrict__ C, int h, int w, int k)
+{
+    __shared__ __align__(16) half smem[4][4096];
+    const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+    const int warp_m = warp & 1, warp_n = warp >> 1;
+    const int bm = blockIdx.y * BM, bn = blockIdx.x * BN;
+    const int outer = int(blockIdx.z);
+    const int leaf_k = k / 2;
+    const int quad = lane >> 2, lq = lane & 3;
+    const int vr0 = lane >> 4, vc = (lane & 4) >> 2, vr1 = vr0 | 2;
+    const int ac0 = (vc << 2) | ((lane & 3) ^ vr0), as0 = vr0;
+    const int ac1 = (vc << 2) | ((lane & 3) ^ vr1), as1 = vr1;
+    const int bs = (lane >> 3) & 3, bc = (lane ^ (lane >> 3)) & 3;
+    const int lane_m = (((quad & 4) >> 1) + (quad & 1)) * 8 + (lq & 1);
+    const int lane_n = ((quad >> 1) & 1) * 8 + (lq & 2);
+
+    float acc[16][8];
+#pragma unroll
+    for (int i = 0; i < 16; ++i)
+#pragma unroll
+        for (int j = 0; j < 8; ++j)
+            acc[i][j] = 0.0f;
+
+    uint4 preA[4], preB[4];
+    prefetch(A, B, bm, bn, 0, tid, h, w, k, outer, preA, preB);
+    store_stage(smem, 0, tid, preA, preB);
+    __syncthreads();
+    int stage = 0;
+    for (int k0 = 0; k0 < leaf_k; k0 += BK) {
+        const int next = k0 + BK;
+        if (next < leaf_k)
+            prefetch(A, B, bm, bn, next, tid, h, w, k, outer, preA, preB);
+        const uint4* baseA = reinterpret_cast<const uint4*>(smem[stage]);
+        const uint4* baseB = reinterpret_cast<const uint4*>(smem[stage + 2]);
+        const uint4* ap0 = baseA + ac0 + as0 * 16;
+        const uint4* ap1 = baseA + ac1 + as1 * 16;
+        const uint4* bp = baseB + bc + bs * 16;
+        int abyte = warp_m * 128;
+        int bbyte = warp_n * 64 * sizeof(half);
+        unsigned a0[2][4], a1[2][4], b0[2][4], b1[2][4];
+        read_a(ap0, ap1, abyte, a0[0], a1[0]);
+        read_b(bp, bbyte, b0[0], b1[0]);
+        abyte += 1024;
+        bbyte += 1024;
+#pragma unroll
+        for (int t = 0; t < 7; ++t) {
+            const int cur = t & 1, nxt = (t + 1) & 1;
+            read_a(ap0, ap1, abyte, a0[nxt], a1[nxt]);
+            read_b(bp, bbyte, b0[nxt], b1[nxt]);
+            abyte += 1024;
+            bbyte += 1024;
+            mma_tile(acc, a0[cur], a1[cur], b0[cur], b1[cur]);
+        }
+        mma_tile(acc, a0[1], a1[1], b0[1], b1[1]);
+        if (next < leaf_k)
+            store_stage(smem, stage ^ 1, tid, preA, preB);
+        __syncthreads();
+        stage ^= 1;
+    }
+
+#pragma unroll
+    for (int tile_n = 0; tile_n < 2; ++tile_n)
+#pragma unroll
+        for (int tile_m = 0; tile_m < 2; ++tile_m)
+#pragma unroll
+            for (int mma_n = 0; mma_n < 2; ++mma_n)
+#pragma unroll
+                for (int mma_m = 0; mma_m < 2; ++mma_m) {
+                    const int group = ((tile_n * 2 + tile_m) * 2 + mma_n) * 2 + mma_m;
+#pragma unroll
+                    for (int pp = 0; pp < 2; ++pp)
+#pragma unroll
+                        for (int mm = 0; mm < 2; ++mm) {
+                            const int local_m = warp_m * 64 + lane_m + tile_m * 32 + mma_m * 4 + mm * 2;
+                            const int local_n = warp_n * 64 + lane_n + tile_n * 32 + mma_n * 4 + pp * 16;
+                            const float2 v = make_float2(acc[group][pp * 4 + mm * 2],
+                                acc[group][pp * 4 + mm * 2 + 1]);
+                            emit_atomic2(v, C, w, h, outer, bm + local_m, bn + local_n);
+                        }
+                }
+
+    __global__ void transpose_a(const float* __restrict__ A, InputA* __restrict__ out, int h, int k)
+    {
+        __shared__ float tile[32][33];
+        const int col = blockIdx.x * 32 + threadIdx.x;
+        const int row = blockIdx.y * 32 + threadIdx.y;
+#pragma unroll
+        for (int j = 0; j < 32; j += 8)
+            tile[threadIdx.y + j][threadIdx.x] = A[size_t(row + j) * k + col];
+        __syncthreads();
+        const int rr = blockIdx.y * 32 + threadIdx.x;
+        const int cc = blockIdx.x * 32 + threadIdx.y;
+#pragma unroll
+        for (int j = 0; j < 32; j += 8) {
+            out[size_t(cc + j) * h + rr] = __float2half_rn(tile[threadIdx.x][threadIdx.y + j]);
+        }
+    }
+    __global__ void convert_b(const float* __restrict__ B, half* __restrict__ out, size_t count)
+    {
+        const size_t i = (size_t(blockIdx.x) * blockDim.x + threadIdx.x) * 4;
+        if (i + 3 < count) {
+            const float4 v = *reinterpret_cast<const float4*>(B + i);
+            out[i] = __float2half_rn(v.x);
+            out[i + 1] = __float2half_rn(v.y);
+            out[i + 2] = __float2half_rn(v.z);
+            out[i + 3] = __float2half_rn(v.w);
+        }
+    }
+
+    struct Workspace {
+        InputA* a = nullptr;
+        InputB* b = nullptr;
+        size_t cap_a = 0;
+        size_t cap_b = 0;
+    };
+    template <typename T>
+    void reserve(T * &p, size_t& cap, size_t count)
+    {
+        if (cap >= count)
+            return;
+        if (p)
+            CUDA_SAFE_CALL(cudaFree(p));
+        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&p), count * sizeof(T)));
+        cap = count;
+    }
+}
+
+namespace cuda {
+    void matrix_multiply_wmma_direct_atomic(const gpu::WorkSize& workSize,
+        const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
+        unsigned w, unsigned h, unsigned k)
+    {
+        (void)workSize;
+        gpu::Context context;
+        rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
+        rassert(a.number() >= size_t(h) * k && b.number() >= size_t(k) * w && c.number() >= size_t(h) * w, 810082703);
+        if (!h || !w)
+            return;
+        cudaStream_t stream = context.cudaStream();
+        if (!k) {
+            CUDA_SAFE_CALL(cudaMemsetAsync(c.cuptr(), 0, size_t(h) * w * sizeof(float), stream));
+            CUDA_CHECK_KERNEL_SYNC(stream);
+            return;
+        }
+        const bool okay = (h % 256 == 0 && w % 256 == 0 && k % 64 == 0);
+        if (!okay) {
+            const gpu::WorkSize fallback(CUDA_MM_THREADS, 1,
+                ((size_t(w) + CUDA_MM_BLOCK_N - 1) / CUDA_MM_BLOCK_N) * CUDA_MM_THREADS,
+                (size_t(h) + CUDA_MM_BLOCK_M - 1) / CUDA_MM_BLOCK_M);
+            matrix_multiply_via_local_memory(fallback, a, b, c, w, h, k);
+            return;
+        }
+        static Workspace ws;
+        const size_t na = size_t(h) * k, nb = size_t(k) * w;
+        reserve(ws.a, ws.cap_a, na);
+        transpose_a<<<dim3(k / 32, h / 32), dim3(32, 8), 0, stream>>>(a.cuptr(), ws.a, int(h), int(k));
+        reserve(ws.b, ws.cap_b, nb);
+        convert_b<<<unsigned((nb / 4 + 255) / 256), 256, 0, stream>>>(b.cuptr(), ws.b, nb);
+        const InputB* ptr_b = ws.b;
+        CUDA_SAFE_CALL(cudaMemsetAsync(c.cuptr(), 0, size_t(h) * w * sizeof(float), stream));
+        const dim3 grid((w / 2) / BN, (h / 2) / BM, LEAVES);
+        strassen_gemm<<<grid, THREADS, 0, stream>>>(ws.a, ptr_b, c.cuptr(), int(h), int(w), int(k));
+        CUDA_CHECK_KERNEL_SYNC(stream);
+    }
+}

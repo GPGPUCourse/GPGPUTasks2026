@@ -104,10 +104,10 @@ if (GPU_CUDA_SUPPORT)
             src/kernels/cu/matrix_02_transpose_coalesced_via_local_memory.cu
             src/kernels/cu/matrix_03_multiply_naive.cu
             src/kernels/cu/matrix_04_multiply_via_local_memory.cu
-            src/kernels/cu/matrix_05_multiply_wmma.cu
-            src/kernels/cu/matrix_06_multiply_wmma_parallel.cu
-            src/kernels/cu/matrix_07_multiply_wmma_two_level.cu
-            src/kernels/cu/matrix_08_multiply_wmma_two_level_cached.cu)
+            src/kernels/cu/matrix_05_strassen_direct_atomic.cu
+            src/kernels/cu/matrix_06_strassen_warp_n32.cu
+            src/kernels/cu/matrix_07_strassen_bk64.cu
+            src/kernels/cu/matrix_08_strassen_workspace.cu)
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})

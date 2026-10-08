@@ -10,16 +10,10 @@
 #include <libgpu/shared_device_buffer.h>
 #include <libgpu/work_size.h>
 
-#define STRASSEN_DEPTH 2
-// Only enable when inputs cannot change in-place between calls.
-#ifndef STRASSEN_ASSUME_IMMUTABLE_INPUTS
-#define STRASSEN_ASSUME_IMMUTABLE_INPUTS 1
-#endif
-
 namespace {
 constexpr int BM = 128, BN = 128, BK = 32, THREADS = 128;
 constexpr int SMEM_TILE = BM * BK;
-constexpr int LEAVES = STRASSEN_DEPTH == 1 ? 7 : 49;
+constexpr int LEAVES = 7;
 static_assert(4 * SMEM_TILE * sizeof(half) == 32768);
 
 __host__ __device__ __forceinline__ int a_offset(int row, int k)
@@ -200,7 +194,6 @@ __device__ __forceinline__ void destinations(int p,
     }
 }
 
-#if STRASSEN_DEPTH == 1
 __device__ __forceinline__ unsigned add2(unsigned x, unsigned y)
 {
     unsigned z;
@@ -228,7 +221,7 @@ __device__ __forceinline__ uint4 load_B(const half* B, int quadr, int k, int col
     return *reinterpret_cast<const uint4*>(B + size_t(k + (quadr >> 1) * hk) * w + col + (quadr & 1) * wn);
 }
 __device__ __forceinline__ void prefetch(const half* A, const half* B,
-    int bm, int bn, int k0, int tid, int h, int w, int k, int outer, int inner, uint4 a[4], uint4 b[4])
+    int bm, int bn, int k0, int tid, int h, int w, int k, int outer, uint4 a[4], uint4 b[4])
 {
     int aq0, aq1, ao, bq0, bq1, bo;
     select_product(outer, aq0, aq1, ao, bq0, bq1, bo);
@@ -248,86 +241,6 @@ __device__ __forceinline__ void prefetch(const half* A, const half* B,
         b[rep] = y;
     }
 }
-#else
-__device__ __forceinline__ float4 f4add(float4 x, float4 y, int sign)
-{
-    if (sign > 0)
-        return make_float4(x.x + y.x, x.y + y.y, x.z + y.z, x.w + y.w);
-    return make_float4(x.x - y.x, x.y - y.y, x.z - y.z, x.w - y.w);
-}
-__device__ __forceinline__ uint32_t pack2(float x, float y)
-{
-    uint32_t out;
-    asm volatile("{ .reg .b16 lo, hi; "
-                 "cvt.rn.f16.f32 lo, %1; "
-                 "cvt.rn.f16.f32 hi, %2; "
-                 "mov.b32 %0, {lo, hi}; }"
-        : "=r"(out) : "f"(x), "f"(y));
-    return out;
-}
-__device__ __forceinline__ uint4 pack8(float4 x, float4 y)
-{
-    return make_uint4(pack2(x.x, x.y), pack2(x.z, x.w), pack2(y.x, y.y), pack2(y.z, y.w));
-}
-__device__ __forceinline__ float4 loadA4(const float* A, int outerQ, int innerQ,
-    int row, int kk, int h, int k)
-{
-    const int r = (outerQ >> 1) * (h / 2) + (innerQ >> 1) * (h / 4) + row;
-    const int c = (outerQ & 1) * (k / 2) + (innerQ & 1) * (k / 4) + kk;
-    return *reinterpret_cast<const float4*>(A + size_t(c) * h + r);
-}
-__device__ __forceinline__ float4 loadB4(const float* B, int outerQ, int innerQ,
-    int kk, int col, int w, int k)
-{
-    const int r = (outerQ >> 1) * (k / 2) + (innerQ >> 1) * (k / 4) + kk;
-    const int c = (outerQ & 1) * (w / 2) + (innerQ & 1) * (w / 4) + col;
-    return *reinterpret_cast<const float4*>(B + size_t(r) * w + c);
-}
-__device__ __forceinline__ float4 selectA(const float* A, int oq0, int oq1, int os,
-    int iq, int row, int kk, int h, int k)
-{
-    float4 x = loadA4(A, oq0, iq, row, kk, h, k);
-    if (oq1 >= 0)
-        x = f4add(x, loadA4(A, oq1, iq, row, kk, h, k), os);
-    return x;
-}
-__device__ __forceinline__ float4 selectB(const float* B, int oq0, int oq1, int os,
-    int iq, int kk, int col, int w, int k)
-{
-    float4 x = loadB4(B, oq0, iq, kk, col, w, k);
-    if (oq1 >= 0)
-        x = f4add(x, loadB4(B, oq1, iq, kk, col, w, k), os);
-    return x;
-}
-__device__ __forceinline__ void prefetch(const float* A, const float* B,
-    int bm, int bn, int k0, int tid, int h, int w, int k, int outer, int inner, uint4 a[4], uint4 b[4])
-{
-    int aq0, aq1, ao, bq0, bq1, bo;
-    int ia0, ia1, iao, ib0, ib1, ibo;
-    select_product(outer, aq0, aq1, ao, bq0, bq1, bo);
-    select_product(inner, ia0, ia1, iao, ib0, ib1, ibo);
-#pragma unroll
-    for (int rep = 0; rep < 4; ++rep) {
-        const int vec = tid + rep * THREADS;
-        const int kk = k0 + (vec >> 4);
-        const int along = (vec & 15) * 8;
-        float4 a0 = selectA(A, aq0, aq1, ao, ia0, bm + along, kk, h, k);
-        float4 b0 = selectB(B, bq0, bq1, bo, ib0, kk, bn + along, w, k);
-        float4 a1 = selectA(A, aq0, aq1, ao, ia0, bm + along + 4, kk, h, k);
-        float4 b1 = selectB(B, bq0, bq1, bo, ib0, kk, bn + along + 4, w, k);
-        if (ia1 >= 0) {
-            a0 = f4add(a0, selectA(A, aq0, aq1, ao, ia1, bm + along, kk, h, k), iao);
-            a1 = f4add(a1, selectA(A, aq0, aq1, ao, ia1, bm + along + 4, kk, h, k), iao);
-        }
-        if (ib1 >= 0) {
-            b0 = f4add(b0, selectB(B, bq0, bq1, bo, ib1, kk, bn + along, w, k), ibo);
-            b1 = f4add(b1, selectB(B, bq0, bq1, bo, ib1, kk, bn + along + 4, w, k), ibo);
-        }
-        a[rep] = pack8(a0, a1);
-        b[rep] = pack8(b0, b1);
-    }
-}
-#endif
 
 __device__ __forceinline__ void store_stage(half (&smem)[4][4096], int stage, int tid,
     const uint4 a[4], const uint4 b[4])
@@ -346,34 +259,10 @@ __device__ __forceinline__ int scratch_offset(int row, int col)
     return row * BN + (col ^ mask);
 }
 __device__ __forceinline__ void emit_atomic(float4 v, float* C,
-    int w, int h, int productOuter, int productInner, int row, int col)
+    int w, int h, int productOuter, int row, int col)
 {
     int od0, os0, od1, os1;
     destinations(productOuter, od0, os0, od1, os1);
-#if STRASSEN_DEPTH == 2
-    int id0, is0, id1, is1;
-    destinations(productInner, id0, is0, id1, is1);
-    const int ids[2] = { id0, id1 }, is[2] = { is0, is1 };
-    const int ods[2] = { od0, od1 }, oss[2] = { os0, os1 };
-#pragma unroll
-    for (int oi = 0; oi < 2; ++oi) {
-        if (ods[oi] < 0)
-            continue;
-#pragma unroll
-        for (int ii = 0; ii < 2; ++ii) {
-            if (ids[ii] < 0)
-                continue;
-            const int dstrow = row + (ids[ii] >> 1) * (h / 4) + (ods[oi] >> 1) * (h / 2);
-            const int dstcol = col + (ids[ii] & 1) * (w / 4) + (ods[oi] & 1) * (w / 2);
-            float* dst = C + size_t(dstrow) * w + dstcol;
-            const float sg = float(oss[oi] * is[ii]);
-            atomicAdd(dst + 0, sg * v.x);
-            atomicAdd(dst + 1, sg * v.y);
-            atomicAdd(dst + 2, sg * v.z);
-            atomicAdd(dst + 3, sg * v.w);
-        }
-    }
-#else
     const int ods[2] = { od0, od1 }, oss[2] = { os0, os1 };
 #pragma unroll
     for (int oi = 0; oi < 2; ++oi) {
@@ -388,16 +277,48 @@ __device__ __forceinline__ void emit_atomic(float4 v, float* C,
         atomicAdd(dst + 2, sg * v.z);
         atomicAdd(dst + 3, sg * v.w);
     }
-#endif
 }
 
-#if STRASSEN_DEPTH == 1
+__device__ __forceinline__ void emit_product(float4 v, float* P,
+    int w, int h, int product, int row, int col)
+{
+    const size_t plane = size_t(h / 2) * (w / 2);
+    float* out = P + size_t(product) * plane + size_t(row) * (w / 2) + col;
+    *reinterpret_cast<float4*>(out) = v;
+}
+
+__device__ __forceinline__ float4 vadd(float4 a, float4 b)
+{
+    return make_float4(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w);
+}
+__device__ __forceinline__ float4 vsub(float4 a, float4 b)
+{
+    return make_float4(a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w);
+}
+__global__ void combine_strassen(const float* __restrict__ P,
+    float* __restrict__ C, int h, int w)
+{
+    const int hm = h / 2, wn = w / 2;
+    const size_t plane = size_t(hm) * wn;
+    const size_t i = (size_t(blockIdx.x) * blockDim.x + threadIdx.x) * 4;
+    if (i >= plane)
+        return;
+    const float4 p0 = *reinterpret_cast<const float4*>(P + 0 * plane + i);
+    const float4 p1 = *reinterpret_cast<const float4*>(P + 1 * plane + i);
+    const float4 p2 = *reinterpret_cast<const float4*>(P + 2 * plane + i);
+    const float4 p3 = *reinterpret_cast<const float4*>(P + 3 * plane + i);
+    const float4 p4 = *reinterpret_cast<const float4*>(P + 4 * plane + i);
+    const float4 p5 = *reinterpret_cast<const float4*>(P + 5 * plane + i);
+    const float4 p6 = *reinterpret_cast<const float4*>(P + 6 * plane + i);
+    const size_t base = (i / wn) * w + (i % wn);
+    *reinterpret_cast<float4*>(C + base) = vadd(vsub(vadd(p0, p3), p4), p6);
+    *reinterpret_cast<float4*>(C + base + wn) = vadd(p2, p4);
+    *reinterpret_cast<float4*>(C + base + size_t(hm) * w) = vadd(p1, p3);
+    *reinterpret_cast<float4*>(C + base + size_t(hm) * w + wn) = vadd(vsub(vadd(p0, p2), p1), p5);
+}
+
 using InputA = half;
 using InputB = half;
-#else
-using InputA = float;
-using InputB = float;
-#endif
 
 __global__ __launch_bounds__(THREADS, 2) void strassen_gemm(
     const InputA* __restrict__ A, const InputB* __restrict__ B,
@@ -407,10 +328,8 @@ __global__ __launch_bounds__(THREADS, 2) void strassen_gemm(
     const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
     const int warp_m = warp & 1, warp_n = warp >> 1;
     const int bm = blockIdx.y * BM, bn = blockIdx.x * BN;
-    const int outer = STRASSEN_DEPTH == 1 ? int(blockIdx.z) : int(blockIdx.z) / 7;
-    const int inner = STRASSEN_DEPTH == 1 ? 0 : int(blockIdx.z) % 7;
-    constexpr int leaf_k_div = STRASSEN_DEPTH == 1 ? 2 : 4;
-    const int leaf_k = k / leaf_k_div;
+    const int outer = int(blockIdx.z);
+    const int leaf_k = k / 2;
     const int quad = lane >> 2, lq = lane & 3;
     const int vr0 = lane >> 4, vc = (lane & 4) >> 2, vr1 = vr0 | 2;
     const int ac0 = (vc << 2) | ((lane & 3) ^ vr0), as0 = vr0;
@@ -427,14 +346,14 @@ __global__ __launch_bounds__(THREADS, 2) void strassen_gemm(
             acc[i][j] = 0.0f;
 
     uint4 preA[4], preB[4];
-    prefetch(A, B, bm, bn, 0, tid, h, w, k, outer, inner, preA, preB);
+    prefetch(A, B, bm, bn, 0, tid, h, w, k, outer, preA, preB);
     store_stage(smem, 0, tid, preA, preB);
     __syncthreads();
     int stage = 0;
     for (int k0 = 0; k0 < leaf_k; k0 += BK) {
         const int next = k0 + BK;
         if (next < leaf_k)
-            prefetch(A, B, bm, bn, next, tid, h, w, k, outer, inner, preA, preB);
+            prefetch(A, B, bm, bn, next, tid, h, w, k, outer, preA, preB);
         const uint4* baseA = reinterpret_cast<const uint4*>(smem[stage]);
         const uint4* baseB = reinterpret_cast<const uint4*>(smem[stage + 2]);
         const uint4* ap0 = baseA + ac0 + as0 * 16;
@@ -495,7 +414,7 @@ __global__ __launch_bounds__(THREADS, 2) void strassen_gemm(
             const int elem = (tid + rep * THREADS) * 4;
             const int local_row = elem / BN, local_col = elem % BN;
             const float4 vv = *reinterpret_cast<const float4*>(scratch + scratch_offset(local_row, local_col));
-            emit_atomic(vv, C, w, h, outer, inner, bm + row_lo + local_row, bn + local_col);
+            emit_product(vv, C, w, h, outer, bm + row_lo + local_row, bn + local_col);
         }
         __syncthreads();
     }
@@ -514,14 +433,9 @@ __global__ void transpose_a(const float* __restrict__ A, InputA* __restrict__ ou
     const int cc = blockIdx.x * 32 + threadIdx.y;
 #pragma unroll
     for (int j = 0; j < 32; j += 8) {
-#if STRASSEN_DEPTH == 1
         out[size_t(cc + j) * h + rr] = __float2half_rn(tile[threadIdx.x][threadIdx.y + j]);
-#else
-        out[size_t(cc + j) * h + rr] = tile[threadIdx.x][threadIdx.y + j];
-#endif
     }
 }
-#if STRASSEN_DEPTH == 1
 __global__ void convert_b(const float* __restrict__ B, half* __restrict__ out, size_t count)
 {
     const size_t i = (size_t(blockIdx.x) * blockDim.x + threadIdx.x) * 4;
@@ -533,25 +447,14 @@ __global__ void convert_b(const float* __restrict__ B, half* __restrict__ out, s
         out[i + 3] = __float2half_rn(v.w);
     }
 }
-#endif
 
 struct Workspace {
     InputA* a = nullptr;
-#if STRASSEN_DEPTH == 1
+    float* products = nullptr;
+    size_t cap_products = 0;
     InputB* b = nullptr;
-#endif
     size_t cap_a = 0;
-#if STRASSEN_DEPTH == 1
     size_t cap_b = 0;
-#endif
-#if STRASSEN_ASSUME_IMMUTABLE_INPUTS
-    const float* previous_a = nullptr;
-    size_t previous_na = 0;
-#if STRASSEN_DEPTH == 1
-    const float* previous_b = nullptr;
-    size_t previous_nb = 0;
-#endif
-#endif
 };
 template <typename T>
 void reserve(T*& p, size_t& cap, size_t count)
@@ -566,7 +469,7 @@ void reserve(T*& p, size_t& cap, size_t count)
 }
 
 namespace cuda {
-void matrix_multiply_wmma_two_level_cached(const gpu::WorkSize& workSize,
+void matrix_multiply_wmma_workspace(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
     unsigned w, unsigned h, unsigned k)
 {
@@ -582,11 +485,7 @@ void matrix_multiply_wmma_two_level_cached(const gpu::WorkSize& workSize,
         CUDA_CHECK_KERNEL_SYNC(stream);
         return;
     }
-#if STRASSEN_DEPTH == 1
     const bool okay = (h % 256 == 0 && w % 256 == 0 && k % 64 == 0);
-#else
-    const bool okay = (h % 512 == 0 && w % 512 == 0 && k % 128 == 0);
-#endif
     if (!okay) {
         const gpu::WorkSize fallback(CUDA_MM_THREADS, 1,
             ((size_t(w) + CUDA_MM_BLOCK_N - 1) / CUDA_MM_BLOCK_N) * CUDA_MM_THREADS,
@@ -596,45 +495,17 @@ void matrix_multiply_wmma_two_level_cached(const gpu::WorkSize& workSize,
     }
     static Workspace ws;
     const size_t na = size_t(h) * k, nb = size_t(k) * w;
-    const bool grow_a = ws.cap_a < na;
     reserve(ws.a, ws.cap_a, na);
-#if STRASSEN_ASSUME_IMMUTABLE_INPUTS
-    const bool update_a = grow_a || ws.previous_a != a.cuptr() || ws.previous_na != na;
-#else
-    const bool update_a = true;
-    (void)grow_a;
-#endif
-    if (update_a) {
-        transpose_a<<<dim3(k / 32, h / 32), dim3(32, 8), 0, stream>>>(a.cuptr(), ws.a, int(h), int(k));
-#if STRASSEN_ASSUME_IMMUTABLE_INPUTS
-        ws.previous_a = a.cuptr();
-        ws.previous_na = na;
-#endif
-    }
-#if STRASSEN_DEPTH == 1
-    const bool grow_b = ws.cap_b < nb;
+    transpose_a<<<dim3(k / 32, h / 32), dim3(32, 8), 0, stream>>>(a.cuptr(), ws.a, int(h), int(k));
     reserve(ws.b, ws.cap_b, nb);
-#if STRASSEN_ASSUME_IMMUTABLE_INPUTS
-    const bool update_b = grow_b || ws.previous_b != b.cuptr() || ws.previous_nb != nb;
-#else
-    const bool update_b = true;
-    (void)grow_b;
-#endif
-    if (update_b) {
-        convert_b<<<unsigned((nb / 4 + 255) / 256), 256, 0, stream>>>(b.cuptr(), ws.b, nb);
-#if STRASSEN_ASSUME_IMMUTABLE_INPUTS
-        ws.previous_b = b.cuptr();
-        ws.previous_nb = nb;
-#endif
-    }
+    convert_b<<<unsigned((nb / 4 + 255) / 256), 256, 0, stream>>>(b.cuptr(), ws.b, nb);
     const InputB* ptr_b = ws.b;
-#else
-    const InputB* ptr_b = b.cuptr();
-#endif
-    CUDA_SAFE_CALL(cudaMemsetAsync(c.cuptr(), 0, size_t(h) * w * sizeof(float), stream));
-    const int shrink = STRASSEN_DEPTH == 1 ? 2 : 4;
-    const dim3 grid((w / shrink) / BN, (h / shrink) / BM, LEAVES);
-    strassen_gemm<<<grid, THREADS, 0, stream>>>(ws.a, ptr_b, c.cuptr(), int(h), int(w), int(k));
+    const size_t elements_per_product = size_t(h / 2) * (w / 2);
+    reserve(ws.products, ws.cap_products, 7 * elements_per_product);
+    const dim3 grid((w / 2) / BN, (h / 2) / BM, LEAVES);
+    strassen_gemm<<<grid, THREADS, 0, stream>>>(ws.a, ptr_b, ws.products, int(h), int(w), int(k));
+    combine_strassen<<<unsigned((elements_per_product / 4 + 255) / 256), 256, 0, stream>>>(
+        ws.products, c.cuptr(), int(h), int(w));
     CUDA_CHECK_KERNEL_SYNC(stream);
 }
 }
