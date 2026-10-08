@@ -1,8 +1,8 @@
 #include <libbase/stats.h>
 #include <libutils/misc.h>
 
-#include <libbase/timer.h>
 #include <libbase/fast_random.h>
+#include <libbase/timer.h>
 #include <libgpu/vulkan/engine.h>
 #include <libgpu/vulkan/tests/test_utils.h>
 
@@ -16,15 +16,15 @@
 
 namespace cpu {
 void multiply(
-    const std::vector<float> &a,
-    const std::vector<float> &b,
-          std::vector<float> &c,
-                 unsigned int w,
-                 unsigned int h,
-                 unsigned int k,
-                  bool with_omp)
+    const std::vector<float>& a,
+    const std::vector<float>& b,
+    std::vector<float>& c,
+    unsigned int w,
+    unsigned int h,
+    unsigned int k,
+    bool with_omp)
 {
-    #pragma omp parallel for schedule(dynamic, 1) if (with_omp)
+#pragma omp parallel for schedule(dynamic, 1) if (with_omp)
     for (ptrdiff_t j = 0; j < h; ++j) {
         for (ptrdiff_t i = 0; i < w; ++i) {
             float acc = 0.0f;
@@ -53,8 +53,8 @@ void run(int argc, char** argv)
               << " = A (rows=H=" << h << " x cols=K=" << k << ") x B (rows=K=" << k << " x cols=W=" << w << ")" << std::endl;
     std::cout << "matrices data size: A - " << sizeof(float) * h * k / 1024 / 1024 << " MB, B - " << sizeof(float) * k * w / 1024 / 1024 << " MB, C - " << sizeof(float) * h * w / 1024 / 1024 << " MB" << std::endl;
 
-    std::vector<float> input_a_cpu(h * k, 0);  // rows=H x cols=K
-    std::vector<float> input_b_cpu(k * w, 0);  // rows=K x cols=W
+    std::vector<float> input_a_cpu(h * k, 0); // rows=H x cols=K
+    std::vector<float> input_b_cpu(k * w, 0); // rows=K x cols=W
     std::vector<float> output_c_cpu(h * w, 0); // rows=H x cols=W
     FastRandom r;
     for (size_t i = 0; i < input_a_cpu.size(); ++i) {
@@ -94,6 +94,8 @@ void run(int argc, char** argv)
         if (context.type() == gpu::Context::TypeCUDA) {
             algorithm_names.push_back("03 one-level Strassen (MMA) [+Prestige Points]");
             algorithm_names.push_back("04 one-level Strassen (parallel products) [+Prestige Points]");
+            algorithm_names.push_back("05 two-level Strassen (no pointer cache) [+Prestige Points]");
+            algorithm_names.push_back("06 two-level Strassen (pointer cache) [+Prestige Points]");
         }
         if (context.type() == gpu::Context::TypeVulkan) {
             rassert(context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix"), 32452365324632);
@@ -131,6 +133,12 @@ void run(int argc, char** argv)
             } else if (algorithm == "04 one-level Strassen (parallel products) [+Prestige Points]") {
                 cuda::matrix_multiply_wmma_parallel(strassen_work_size,
                     matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+            } else if (algorithm == "05 two-level Strassen (no pointer cache) [+Prestige Points]") {
+                cuda::matrix_multiply_wmma_two_level(strassen_work_size,
+                    matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+            } else if (algorithm == "06 two-level Strassen (pointer cache) [+Prestige Points]") {
+                cuda::matrix_multiply_wmma_two_level_cached(strassen_work_size,
+                    matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
             } else {
                 rassert(false, 810082605, algorithm, algorithm_index);
             }
@@ -141,7 +149,7 @@ void run(int argc, char** argv)
 
         // Вычисляем достигнутую эффективную пропускную способность алгоритма
         double total_ops = 1.0 * h * w * (k + k - 1); // общее число сложений и умножений
-        double gflops = 1000*1000*1000;
+        double gflops = 1000 * 1000 * 1000;
         std::cout << "algorithm GFlops: " << total_ops / gflops / stats::median(times) << " GFlops" << std::endl;
         std::cout << "algorithm effective memory bandwidth: " << 1.0 * (h * k + k * w + h * w) * sizeof(float) / 1024 / 1024 / 1024 / stats::median(times) << " GB/s" << std::endl;
 

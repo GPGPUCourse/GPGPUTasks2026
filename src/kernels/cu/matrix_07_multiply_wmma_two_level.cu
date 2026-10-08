@@ -10,7 +10,7 @@
 #include <libgpu/shared_device_buffer.h>
 #include <libgpu/work_size.h>
 
-#define STRASSEN_DEPTH 1
+#define STRASSEN_DEPTH 2
 // Only enable when inputs cannot change in-place between calls.
 #ifndef STRASSEN_ASSUME_IMMUTABLE_INPUTS
 #define STRASSEN_ASSUME_IMMUTABLE_INPUTS 0
@@ -566,7 +566,7 @@ void reserve(T*& p, size_t& cap, size_t count)
 }
 
 namespace cuda {
-void matrix_multiply_wmma(const gpu::WorkSize& workSize,
+void matrix_multiply_wmma_two_level(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
     unsigned w, unsigned h, unsigned k)
 {
