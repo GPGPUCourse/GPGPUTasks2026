@@ -95,6 +95,8 @@ __global__ void matrix_multiply_wmma(
             bf,
             acc
         );
+
+        __syncthreads();
     }
 
     wmma::store_matrix_sync(
