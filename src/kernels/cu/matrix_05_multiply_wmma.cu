@@ -48,10 +48,8 @@ __global__ void matrix_multiply_wmma(
             
             const float4 v = *reinterpret_cast<const float4*>(a + (blockIdx.y * 64 + y) * k + i + x);
 
-            local_a[y][x] = __float2half_rn(v.x);
-            local_a[y][x + 1] = __float2half_rn(v.y);
-            local_a[y][x + 2] = __float2half_rn(v.z);
-            local_a[y][x + 3] = __float2half_rn(v.w);
+            *reinterpret_cast<half2*>(&local_a[y][x]) = __floats2half2_rn(v.x, v.y);
+            *reinterpret_cast<half2*>(&local_a[y][x + 2]) = __floats2half2_rn(v.z, v.w);
         }
 
         {
@@ -60,8 +58,7 @@ __global__ void matrix_multiply_wmma(
 
             const float2 v = *reinterpret_cast<const float2*>(b + (i + y) * w + blockIdx.x * 32 + x);
 
-            local_b[y][x] = __float2half_rn(v.x);
-            local_b[y][x + 1] = __float2half_rn(v.y);
+            *reinterpret_cast<half2*>(&local_b[y][x]) = __floats2half2_rn(v.x, v.y);
         }
 
         __syncthreads();
