@@ -13,9 +13,9 @@
 using namespace nvcuda;
 
 __global__ void matrix_multiply_wmma(
-                       const float* a, // rows=h x cols=k
-                       const float* b, // rows=k x cols=w
-                             float* c, // rows=h x cols=w
+                       const float* __restrict__ a, // rows=h x cols=k
+                       const float* __restrict__ b, // rows=k x cols=w
+                             float* __restrict__ c, // rows=h x cols=w
                        unsigned int w,
                        unsigned int h,
                        unsigned int k)
