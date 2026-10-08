@@ -45,7 +45,7 @@ namespace avk2 {
 	avk2::reportError(res, unique_code, __LINE__, str + ": ");											\
 }
 
-#define VULKAN_TIMEOUT_NANOSECS		(1000*1000*1000) // 1 second (in nanosecs)
+#define VULKAN_TIMEOUT_NANOSECS		(1000*1000*1000) // 1-second polling interval; a timeout does not cancel work
 //#define VULKAN_NO_TIMEOUT			std::numeric_limits<uint64_t>::max()
 
 #define STAGING_BUFFER_SIZE			(8*1024*1024) // 8 MB
