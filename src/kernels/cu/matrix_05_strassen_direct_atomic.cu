@@ -383,88 +383,89 @@ __global__ __launch_bounds__(THREADS, 2) void strassen_gemm(
                             emit_atomic2(v, C, w, h, outer, bm + local_m, bn + local_n);
                         }
                 }
+}
 
-    __global__ void transpose_a(const float* __restrict__ A, InputA* __restrict__ out, int h, int k)
-    {
-        __shared__ float tile[32][33];
-        const int col = blockIdx.x * 32 + threadIdx.x;
-        const int row = blockIdx.y * 32 + threadIdx.y;
+__global__ void transpose_a(const float* __restrict__ A, InputA* __restrict__ out, int h, int k)
+{
+    __shared__ float tile[32][33];
+    const int col = blockIdx.x * 32 + threadIdx.x;
+    const int row = blockIdx.y * 32 + threadIdx.y;
 #pragma unroll
-        for (int j = 0; j < 32; j += 8)
-            tile[threadIdx.y + j][threadIdx.x] = A[size_t(row + j) * k + col];
-        __syncthreads();
-        const int rr = blockIdx.y * 32 + threadIdx.x;
-        const int cc = blockIdx.x * 32 + threadIdx.y;
+    for (int j = 0; j < 32; j += 8)
+        tile[threadIdx.y + j][threadIdx.x] = A[size_t(row + j) * k + col];
+    __syncthreads();
+    const int rr = blockIdx.y * 32 + threadIdx.x;
+    const int cc = blockIdx.x * 32 + threadIdx.y;
 #pragma unroll
-        for (int j = 0; j < 32; j += 8) {
-            out[size_t(cc + j) * h + rr] = __float2half_rn(tile[threadIdx.x][threadIdx.y + j]);
-        }
+    for (int j = 0; j < 32; j += 8) {
+        out[size_t(cc + j) * h + rr] = __float2half_rn(tile[threadIdx.x][threadIdx.y + j]);
     }
-    __global__ void convert_b(const float* __restrict__ B, half* __restrict__ out, size_t count)
-    {
-        const size_t i = (size_t(blockIdx.x) * blockDim.x + threadIdx.x) * 4;
-        if (i + 3 < count) {
-            const float4 v = *reinterpret_cast<const float4*>(B + i);
-            out[i] = __float2half_rn(v.x);
-            out[i + 1] = __float2half_rn(v.y);
-            out[i + 2] = __float2half_rn(v.z);
-            out[i + 3] = __float2half_rn(v.w);
-        }
-    }
-
-    struct Workspace {
-        InputA* a = nullptr;
-        InputB* b = nullptr;
-        size_t cap_a = 0;
-        size_t cap_b = 0;
-    };
-    template <typename T>
-    void reserve(T * &p, size_t& cap, size_t count)
-    {
-        if (cap >= count)
-            return;
-        if (p)
-            CUDA_SAFE_CALL(cudaFree(p));
-        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&p), count * sizeof(T)));
-        cap = count;
+}
+__global__ void convert_b(const float* __restrict__ B, half* __restrict__ out, size_t count)
+{
+    const size_t i = (size_t(blockIdx.x) * blockDim.x + threadIdx.x) * 4;
+    if (i + 3 < count) {
+        const float4 v = *reinterpret_cast<const float4*>(B + i);
+        out[i] = __float2half_rn(v.x);
+        out[i + 1] = __float2half_rn(v.y);
+        out[i + 2] = __float2half_rn(v.z);
+        out[i + 3] = __float2half_rn(v.w);
     }
 }
 
+struct Workspace {
+    InputA* a = nullptr;
+    InputB* b = nullptr;
+    size_t cap_a = 0;
+    size_t cap_b = 0;
+};
+template <typename T>
+void reserve(T*& p, size_t& cap, size_t count)
+{
+    if (cap >= count)
+        return;
+    if (p)
+        CUDA_SAFE_CALL(cudaFree(p));
+    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&p), count * sizeof(T)));
+    cap = count;
+}
+}
+
 namespace cuda {
-    void matrix_multiply_wmma_direct_atomic(const gpu::WorkSize& workSize,
-        const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
-        unsigned w, unsigned h, unsigned k)
-    {
-        (void)workSize;
-        gpu::Context context;
-        rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
-        rassert(a.number() >= size_t(h) * k && b.number() >= size_t(k) * w && c.number() >= size_t(h) * w, 810082703);
-        if (!h || !w)
-            return;
-        cudaStream_t stream = context.cudaStream();
-        if (!k) {
-            CUDA_SAFE_CALL(cudaMemsetAsync(c.cuptr(), 0, size_t(h) * w * sizeof(float), stream));
-            CUDA_CHECK_KERNEL_SYNC(stream);
-            return;
-        }
-        const bool okay = (h % 256 == 0 && w % 256 == 0 && k % 64 == 0);
-        if (!okay) {
-            const gpu::WorkSize fallback(CUDA_MM_THREADS, 1,
-                ((size_t(w) + CUDA_MM_BLOCK_N - 1) / CUDA_MM_BLOCK_N) * CUDA_MM_THREADS,
-                (size_t(h) + CUDA_MM_BLOCK_M - 1) / CUDA_MM_BLOCK_M);
-            matrix_multiply_via_local_memory(fallback, a, b, c, w, h, k);
-            return;
-        }
-        static Workspace ws;
-        const size_t na = size_t(h) * k, nb = size_t(k) * w;
-        reserve(ws.a, ws.cap_a, na);
-        transpose_a<<<dim3(k / 32, h / 32), dim3(32, 8), 0, stream>>>(a.cuptr(), ws.a, int(h), int(k));
-        reserve(ws.b, ws.cap_b, nb);
-        convert_b<<<unsigned((nb / 4 + 255) / 256), 256, 0, stream>>>(b.cuptr(), ws.b, nb);
-        const InputB* ptr_b = ws.b;
+void matrix_multiply_wmma_direct_atomic(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
+    unsigned w, unsigned h, unsigned k)
+{
+    (void)workSize;
+    gpu::Context context;
+    rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
+    rassert(a.number() >= size_t(h) * k && b.number() >= size_t(k) * w && c.number() >= size_t(h) * w, 810082703);
+    if (!h || !w)
+        return;
+    cudaStream_t stream = context.cudaStream();
+    if (!k) {
         CUDA_SAFE_CALL(cudaMemsetAsync(c.cuptr(), 0, size_t(h) * w * sizeof(float), stream));
-        const dim3 grid((w / 2) / BN, (h / 2) / BM, LEAVES);
-        strassen_gemm<<<grid, THREADS, 0, stream>>>(ws.a, ptr_b, c.cuptr(), int(h), int(w), int(k));
         CUDA_CHECK_KERNEL_SYNC(stream);
+        return;
     }
+    const bool okay = (h % 256 == 0 && w % 256 == 0 && k % 64 == 0);
+    if (!okay) {
+        const gpu::WorkSize fallback(CUDA_MM_THREADS, 1,
+            ((size_t(w) + CUDA_MM_BLOCK_N - 1) / CUDA_MM_BLOCK_N) * CUDA_MM_THREADS,
+            (size_t(h) + CUDA_MM_BLOCK_M - 1) / CUDA_MM_BLOCK_M);
+        matrix_multiply_via_local_memory(fallback, a, b, c, w, h, k);
+        return;
+    }
+    static Workspace ws;
+    const size_t na = size_t(h) * k, nb = size_t(k) * w;
+    reserve(ws.a, ws.cap_a, na);
+    transpose_a<<<dim3(k / 32, h / 32), dim3(32, 8), 0, stream>>>(a.cuptr(), ws.a, int(h), int(k));
+    reserve(ws.b, ws.cap_b, nb);
+    convert_b<<<unsigned((nb / 4 + 255) / 256), 256, 0, stream>>>(b.cuptr(), ws.b, nb);
+    const InputB* ptr_b = ws.b;
+    CUDA_SAFE_CALL(cudaMemsetAsync(c.cuptr(), 0, size_t(h) * w * sizeof(float), stream));
+    const dim3 grid((w / 2) / BN, (h / 2) / BM, LEAVES);
+    strassen_gemm<<<grid, THREADS, 0, stream>>>(ws.a, ptr_b, c.cuptr(), int(h), int(w), int(k));
+    CUDA_CHECK_KERNEL_SYNC(stream);
+}
 }
