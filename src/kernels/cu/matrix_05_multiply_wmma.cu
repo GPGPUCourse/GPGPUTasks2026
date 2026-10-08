@@ -20,7 +20,86 @@ __global__ void matrix_multiply_wmma(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
+    __shared__ half local_a[64][16];
+    __shared__ half local_b[16][32];
+
+    const int warp = threadIdx.x / 32;
+    const int in_warp = threadIdx.x % 32;
+
+    const int warp_row = warp / 2;
+    const int warp_col = warp % 2;
+
+    const unsigned int row = blockIdx.y * 64 + warp_row * 16;
+    const unsigned int col = blockIdx.x * 32 + warp_col * 16;
+
+    wmma::fragment<
+        wmma::accumulator,
+        16, 16, 16,
+        float
+    > acc;
+
+    wmma::fill_fragment(acc, 0);
+
+    for (unsigned int i = 0; i < k; i += 16)
+    {
+        for (int j = threadIdx.x; j < 64 * 16; j += 256)
+        {
+            const int y = j / 16;
+            const int x = j % 16;
+
+            local_a[y][x] = __float2half(a[(blockIdx.y * 64 + y) * k + i + x]);
+        }
+
+        for (int j = threadIdx.x; j < 16 * 32; j += 256)
+        {
+            const int y = j / 32;
+            const int x = j % 32;
+
+            local_b[y][x] = __float2half(b[(i + y) * w + blockIdx.x * 32 + x]);
+        }
+
+        __syncthreads();
+
+        wmma::fragment<
+            wmma::matrix_a,
+            16, 16, 16,
+            half,
+            wmma::row_major
+        > af;
+
+        wmma::fragment<
+            wmma::matrix_b,
+            16, 16, 16,
+            half,
+            wmma::row_major
+        > bf;
+
+        wmma::load_matrix_sync(
+            af,
+            &local_a[warp_row * 16][0],
+            16
+        );
+
+        wmma::load_matrix_sync(
+            bf,
+            &local_b[0][warp_col * 16],
+            32
+        );
+
+        wmma::mma_sync(
+            acc,
+            af,
+            bf,
+            acc
+        );
+    }
+
+    wmma::store_matrix_sync(
+        c + row * w + col,
+        acc,
+        w,
+        wmma::mem_row_major
+    );
 }
 
 namespace cuda {
