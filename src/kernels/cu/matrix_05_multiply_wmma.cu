@@ -13,14 +13,98 @@
 using namespace nvcuda;
 
 __global__ void matrix_multiply_wmma(
-                       const float* a, // rows=h x cols=k
-                       const float* b, // rows=k x cols=w
-                             float* c, // rows=h x cols=w
+                       const float* __restrict__ a, // rows=h x cols=k
+                       const float* __restrict__ b, // rows=k x cols=w
+                             float* __restrict__ c, // rows=h x cols=w
                        unsigned int w,
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
+    __shared__ half local_a[64][16];
+    __shared__ half local_b[16][32];
+
+    const int warp = threadIdx.x / 32;
+    const int in_warp = threadIdx.x % 32;
+
+    const int warp_row = warp / 2;
+    const int warp_col = warp % 2;
+
+    const unsigned int row = blockIdx.y * 64 + warp_row * 16;
+    const unsigned int col = blockIdx.x * 32 + warp_col * 16;
+
+    wmma::fragment<
+        wmma::accumulator,
+        16, 16, 16,
+        float
+    > acc;
+
+    wmma::fill_fragment(acc, 0);
+
+    for (unsigned int i = 0; i < k; i += 16)
+    {
+        {
+            const int y = threadIdx.x / 4;
+            const int x = (threadIdx.x % 4) * 4;
+            
+            const float4 v = *reinterpret_cast<const float4*>(a + (blockIdx.y * 64 + y) * k + i + x);
+
+            *reinterpret_cast<half2*>(&local_a[y][x]) = __floats2half2_rn(v.x, v.y);
+            *reinterpret_cast<half2*>(&local_a[y][x + 2]) = __floats2half2_rn(v.z, v.w);
+        }
+
+        {
+            const int y = threadIdx.x / 16;
+            const int x = (threadIdx.x % 16) * 2;
+
+            const float2 v = *reinterpret_cast<const float2*>(b + (i + y) * w + blockIdx.x * 32 + x);
+
+            *reinterpret_cast<half2*>(&local_b[y][x]) = __floats2half2_rn(v.x, v.y);
+        }
+
+        __syncthreads();
+
+        wmma::fragment<
+            wmma::matrix_a,
+            16, 16, 16,
+            half,
+            wmma::row_major
+        > af;
+
+        wmma::fragment<
+            wmma::matrix_b,
+            16, 16, 16,
+            half,
+            wmma::row_major
+        > bf;
+
+        wmma::load_matrix_sync(
+            af,
+            &local_a[warp_row * 16][0],
+            16
+        );
+
+        wmma::load_matrix_sync(
+            bf,
+            &local_b[0][warp_col * 16],
+            32
+        );
+
+        wmma::mma_sync(
+            acc,
+            af,
+            bf,
+            acc
+        );
+
+        __syncthreads();
+    }
+
+    wmma::store_matrix_sync(
+        c + row * w + col,
+        acc,
+        w,
+        wmma::mem_row_major
+    );
 }
 
 namespace cuda {
