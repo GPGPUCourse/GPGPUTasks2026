@@ -55,6 +55,8 @@ void run(int argc, char** argv)
         { 2048, 1024, 4096, "1/1" },
     };
     const std::string strassen_algorithm = "03 one-level Strassen (MMA) [+Prestige Points]";
+    const std::string strassen_prepack_b_algorithm = "04 one-level Strassen (prepacked B, MMA) [+Prestige Points]";
+    const std::string strassen_fused_last_algorithm = "05 one-level Strassen (fused P6 + combine, MMA) [+Prestige Points]";
     for (const MatrixCase& matrix_case : matrix_cases) {
         const unsigned int h = matrix_case.m;
         const unsigned int k = matrix_case.k;
@@ -105,6 +107,8 @@ void run(int argc, char** argv)
         if (I_Want_Super_Puper_Prestige_Points) {
             if (context.type() == gpu::Context::TypeCUDA) {
                 algorithm_names.push_back(strassen_algorithm);
+                algorithm_names.push_back(strassen_prepack_b_algorithm);
+                algorithm_names.push_back(strassen_fused_last_algorithm);
             }
             if (context.type() == gpu::Context::TypeVulkan) {
                 rassert(context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix"), 32452365324632);
@@ -141,6 +145,12 @@ void run(int argc, char** argv)
                         matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                 } else if (algorithm == strassen_algorithm) {
                     cuda::matrix_multiply_wmma(strassen_work_size,
+                        matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                } else if (algorithm == strassen_prepack_b_algorithm) {
+                    cuda::matrix_multiply_wmma_prepack_b(strassen_work_size,
+                        matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                } else if (algorithm == strassen_fused_last_algorithm) {
+                    cuda::matrix_multiply_wmma_fused_last(strassen_work_size,
                         matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                 } else {
                     rassert(false, 810082605, algorithm, algorithm_index);
