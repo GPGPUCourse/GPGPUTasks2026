@@ -42,14 +42,12 @@ void main()
 
         barrier();
 
-        for (uint l = 0; l < 16; ++l) {
+        for (uint l = 0; l < GROUP_SIZE_XY; ++l) {
             sum += part_a[local_j][l] * part_b[l][local_i];
         }
 
         barrier();
     }
 
-    if (i < params.w && j < params.h) {
-        c[j * params.w + i] += sum;
-    }
+    c[j * params.w + i] = sum;
 }
