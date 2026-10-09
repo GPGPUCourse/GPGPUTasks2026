@@ -2,6 +2,7 @@
 #include "../kernels.h"
 #include "helpers/rassert.cu"
 #include <cstddef>
+#include <cstdio>
 #include <cstdint>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
@@ -9,25 +10,30 @@
 #include <libgpu/cuda/cu/common.cu>
 #include <libgpu/shared_device_buffer.h>
 #include <libgpu/work_size.h>
+
 namespace {
-constexpr int BM = 128, BN = 128, BK = 32, THREADS = 256;
-constexpr int SMEM_TILE = BM * BK;
+constexpr int BM = 64;
+constexpr int BN = 64;
+constexpr int BK = 32;
+constexpr int THREADS = 128;
 constexpr int LEAVES = 7;
-static_assert(4 * SMEM_TILE * sizeof(half) == 32768);
+constexpr int SMEM_STRIDE = 128;
+static_assert(4 * 4096 * sizeof(half) == 32768);
 __host__ __device__ __forceinline__ int a_offset(int row, int k)
 {
     const int vc = row >> 3, sc = vc & 7, sr = k & 3;
     const int ps = sc >> 1;
     const int pc = (sr ^ ps) | ((sc & 1) << 2);
-    return (((vc >> 3) * 8 + pc) * 8 + (row & 7)) + ((k >> 2) * 4 + ps) * BM;
+    return (((vc >> 3) * 8 + pc) * 8 + (row & 7)) + ((k >> 2) * 4 + ps) * SMEM_STRIDE;
 }
 __host__ __device__ __forceinline__ int b_offset(int k, int col)
 {
     const int vc = col >> 3, sc = vc & 7, sr = k & 3;
     const int ps = sc & 3;
     const int pc = (sr ^ ps) | (sc & 4);
-    return (((vc >> 3) * 8 + pc) * 8 + (col & 7)) + ((k >> 2) * 4 + ps) * BN;
+    return (((vc >> 3) * 8 + pc) * 8 + (col & 7)) + ((k >> 2) * 4 + ps) * SMEM_STRIDE;
 }
+
 __device__ __forceinline__ void mma8(float (&d)[8], unsigned a0, unsigned a1, unsigned b0, unsigned b1)
 {
     asm volatile("mma.sync.aligned.m8n8k4.col.row.f32.f16.f16.f32 "
@@ -36,43 +42,16 @@ __device__ __forceinline__ void mma8(float (&d)[8], unsigned a0, unsigned a1, un
         "+f"(d[4]), "+f"(d[5]), "+f"(d[6]), "+f"(d[7])
         : "r"(a0), "r"(a1), "r"(b0), "r"(b1));
 }
-__device__ __forceinline__ void mma_tile(float acc[8][8],
-    const unsigned a0[4], const unsigned a1[4],
-    const unsigned b0[4], const unsigned b1[4])
+
+__device__ __forceinline__ void mma_tile_small(
+    float (&acc)[4][8], const unsigned (&a0)[2], const unsigned (&a1)[2],
+    const unsigned (&b0)[2], const unsigned (&b1)[2])
 {
 #pragma unroll
-    for (int om = 0; om < 2; ++om)
+    for (int nc = 0; nc < 2; ++nc)
 #pragma unroll
         for (int im = 0; im < 2; ++im)
-#pragma unroll
-            for (int nc = 0; nc < 2; ++nc) {
-                const int group = 4 * om + 2 * nc + im;
-                const int mr = 2 * om + im;
-                mma8(acc[group], a0[mr], a1[mr], b0[nc], b1[nc]);
-            }
-}
-__device__ __forceinline__ void read_a(const uint4* ap0, const uint4* ap1,
-    int byte_offset, unsigned a0[4], unsigned a1[4])
-{
-    const uint4 x = *reinterpret_cast<const uint4*>(reinterpret_cast<const char*>(ap0) + byte_offset);
-    const uint4 y = *reinterpret_cast<const uint4*>(reinterpret_cast<const char*>(ap1) + byte_offset);
-    a0[0] = x.x;
-    a1[0] = x.y;
-    a0[1] = x.z;
-    a1[1] = x.w;
-    a0[2] = y.x;
-    a1[2] = y.y;
-    a0[3] = y.z;
-    a1[3] = y.w;
-}
-__device__ __forceinline__ void read_b(const uint4* bp, int byte_offset,
-    unsigned b0[4], unsigned b1[4])
-{
-    const uint4 x = *reinterpret_cast<const uint4*>(reinterpret_cast<const char*>(bp) + byte_offset);
-    b0[0] = x.x;
-    b1[0] = x.y;
-    b0[1] = x.z;
-    b1[1] = x.w;
+            mma8(acc[2 * nc + im], a0[im], a1[im], b0[nc], b1[nc]);
 }
 template <int P>
 struct ProductConfig {
@@ -175,117 +154,110 @@ __device__ __forceinline__ uint4 load_packed_A(
     return *reinterpret_cast<const uint4*>(
         A + size_t(product) * plane + size_t(kk) * (h / 2) + row);
 }
-
-__device__ __forceinline__ void select_prepack_b(int p, int& q0, int& q1, int& sign)
-{
-    switch (p) {
-    case 0:
-        q0 = ProductConfig<0>::bq0;
-        q1 = ProductConfig<0>::bq1;
-        sign = ProductConfig<0>::bo;
-        break;
-    case 1:
-        q0 = ProductConfig<1>::bq0;
-        q1 = ProductConfig<1>::bq1;
-        sign = ProductConfig<1>::bo;
-        break;
-    case 2:
-        q0 = ProductConfig<2>::bq0;
-        q1 = ProductConfig<2>::bq1;
-        sign = ProductConfig<2>::bo;
-        break;
-    case 3:
-        q0 = ProductConfig<3>::bq0;
-        q1 = ProductConfig<3>::bq1;
-        sign = ProductConfig<3>::bo;
-        break;
-    case 4:
-        q0 = ProductConfig<4>::bq0;
-        q1 = ProductConfig<4>::bq1;
-        sign = ProductConfig<4>::bo;
-        break;
-    case 5:
-        q0 = ProductConfig<5>::bq0;
-        q1 = ProductConfig<5>::bq1;
-        sign = ProductConfig<5>::bo;
-        break;
-    case 6:
-        q0 = ProductConfig<6>::bq0;
-        q1 = ProductConfig<6>::bq1;
-        sign = ProductConfig<6>::bo;
-        break;
-    default:
-        q0 = q1 = sign = 0;
-        break;
-    }
-}
-__device__ __forceinline__ half2 f32_to_h2(float x, float y)
-{
-    return __floats2half2_rn(x, y);
-}
-__global__ void prepack_b(const float* __restrict__ B, half* __restrict__ dst,
-    int w, int k)
-{
-    const int hk = k / 2, wn = w / 2;
-    const size_t plane = size_t(hk) * wn;
-    const size_t idx = (size_t(blockIdx.x) * blockDim.x + threadIdx.x) * 4;
-    if (idx >= plane)
-        return;
-    const int row = int(idx / wn), col = int(idx % wn);
-    int q0, q1, sign;
-    select_prepack_b(int(blockIdx.y), q0, q1, sign);
-    const float* s0 = B + size_t(row + (q0 >> 1) * hk) * w + col + (q0 & 1) * wn;
-    const float4 x = *reinterpret_cast<const float4*>(s0);
-    half2 v0 = f32_to_h2(x.x, x.y), v1 = f32_to_h2(x.z, x.w);
-    if (q1 >= 0) {
-        const float* s1 = B + size_t(row + (q1 >> 1) * hk) * w + col + (q1 & 1) * wn;
-        const float4 y = *reinterpret_cast<const float4*>(s1);
-        const half2 y0 = f32_to_h2(y.x, y.y), y1 = f32_to_h2(y.z, y.w);
-        if (sign > 0) {
-            v0 = __hadd2(v0, y0);
-            v1 = __hadd2(v1, y1);
-        } else {
-            v0 = __hsub2(v0, y0);
-            v1 = __hsub2(v1, y1);
-        }
-    }
-    half2* o = reinterpret_cast<half2*>(dst + size_t(blockIdx.y) * plane + idx);
-    o[0] = v0;
-    o[1] = v1;
-}
-
 __device__ __forceinline__ uint4 load_B(const half* B, int quadr, int k, int col, int w, int hk, int wn)
 {
     return *reinterpret_cast<const uint4*>(B + size_t(k + (quadr >> 1) * hk) * w + col + (quadr & 1) * wn);
 }
+
 template <int P>
-__device__ __forceinline__ void prefetch(const half* A, const half* B,
-    int bm, int bn, int k0, int tid, int h, int w, int k, uint4 a[2], uint4 b[2])
+__device__ __forceinline__ void prefetch_small(const half* A, const half* B,
+    int bm, int bn, int k0, int tid, int h, int w, int k,
+    uint4 (&pa)[2], uint4 (&pb)[2])
 {
     using Q = ProductConfig<P>;
-    const int hm = h / 2, wn = w / 2, hk = k / 2;
+    const int wn = w / 2, hk = k / 2;
 #pragma unroll
     for (int rep = 0; rep < 2; ++rep) {
         const int vec = tid + rep * THREADS;
-        const int kk = k0 + (vec >> 4);
-        const int along = (vec & 15) * 8;
-        const uint4 x = load_packed_A(A, P, bm + along, kk, h, k);
-        const size_t bplane = size_t(hk) * wn;
-        const uint4 y = *reinterpret_cast<const uint4*>(
-            B + size_t(P) * bplane + size_t(kk) * wn + bn + along);
-        a[rep] = x;
-        b[rep] = y;
+        const int kk = k0 + (vec >> 3);
+        const int along = (vec & 7) * 8;
+        pa[rep] = load_packed_A(A, P, bm + along, kk, h, k);
+        uint4 b = load_B(B, Q::bq0, kk, bn + along, w, hk, wn);
+        if constexpr (Q::bq1 >= 0)
+            b = combine(b, load_B(B, Q::bq1, kk, bn + along, w, hk, wn), Q::bo);
+        pb[rep] = b;
     }
 }
-__device__ __forceinline__ void store_stage(half (&smem)[4][4096], int stage, int tid,
-    const uint4 a[2], const uint4 b[2])
+__device__ __forceinline__ void store_stage_small(
+    half (&smem)[4][4096], int stage, int tid,
+    const uint4 (&pa)[2], const uint4 (&pb)[2])
 {
 #pragma unroll
     for (int rep = 0; rep < 2; ++rep) {
         const int vec = tid + rep * THREADS;
-        const int kk = vec >> 4, along = (vec & 15) * 8;
-        *reinterpret_cast<uint4*>(&smem[stage][a_offset(along, kk)]) = a[rep];
-        *reinterpret_cast<uint4*>(&smem[stage + 2][b_offset(kk, along)]) = b[rep];
+        const int kk = vec >> 3;
+        const int logical = (vec & 7) * 8;
+        const int physical = logical + (logical >= 32 ? 32 : 0);
+        *reinterpret_cast<uint4*>(&smem[stage][a_offset(physical, kk)]) = pa[rep];
+        *reinterpret_cast<uint4*>(&smem[stage + 2][b_offset(kk, logical)]) = pb[rep];
+    }
+}
+template <int P>
+__device__ __forceinline__ void mma_product(
+    const half* __restrict__ A, const half* __restrict__ B,
+    int bm, int bn, int h, int w, int k, half (&smem)[4][4096],
+    float (&acc)[4][8])
+{
+    const int tid = threadIdx.x;
+    const int lane = tid & 31;
+    const int warp = tid >> 5;
+    const int warp_m = warp & 1;  // 2 x 2 warps in each 64x64 CTA
+    const int warp_n = warp >> 1;
+    const int vr0 = lane >> 4, vc = (lane & 4) >> 2;
+    const int ac = (vc << 2) | ((lane & 3) ^ vr0);
+    const int as = vr0;
+    const int bs = (lane >> 3) & 3;
+    const int bc = (lane ^ (lane >> 3)) & 3;
+#pragma unroll
+    for (int g = 0; g < 4; ++g)
+#pragma unroll
+        for (int r = 0; r < 8; ++r)
+            acc[g][r] = 0.0f;
+
+    uint4 preA[2], preB[2];
+    prefetch_small<P>(A, B, bm, bn, 0, tid, h, w, k, preA, preB);
+    store_stage_small(smem, 0, tid, preA, preB);
+    __syncthreads();
+    int stage = 0;
+    for (int k0 = 0; k0 < k / 2; k0 += BK) {
+        const int next = k0 + BK;
+        if (next < k / 2)
+            prefetch_small<P>(A, B, bm, bn, next, tid, h, w, k, preA, preB);
+        const uint4* baseA = reinterpret_cast<const uint4*>(smem[stage]);
+        const uint4* baseB = reinterpret_cast<const uint4*>(smem[stage + 2]);
+        const uint4* ap = baseA + ac + as * 16;
+        const uint4* bp = baseB + bc + bs * 16;
+        const int a_base = warp_m * 128;  // skip 64 old-swizzle half positions
+        const int b_base = warp_n * 32 * sizeof(half);
+
+        unsigned a0[2][2], a1[2][2], b0[2][2], b1[2][2];
+        // Prefetch the first of eight K=4 groups from shared into registers.
+        uint4 xa = *reinterpret_cast<const uint4*>(
+            reinterpret_cast<const char*>(ap) + a_base);
+        uint4 xb = *reinterpret_cast<const uint4*>(
+            reinterpret_cast<const char*>(bp) + b_base);
+        a0[0][0] = xa.x; a1[0][0] = xa.y;
+        a0[0][1] = xa.z; a1[0][1] = xa.w;
+        b0[0][0] = xb.x; b1[0][0] = xb.y;
+        b0[0][1] = xb.z; b1[0][1] = xb.w;
+#pragma unroll
+        for (int t = 0; t < 7; ++t) {
+            const int cur = t & 1, nxt = (t + 1) & 1;
+            xa = *reinterpret_cast<const uint4*>(
+                reinterpret_cast<const char*>(ap) + a_base + (t + 1) * 1024);
+            xb = *reinterpret_cast<const uint4*>(
+                reinterpret_cast<const char*>(bp) + b_base + (t + 1) * 1024);
+            a0[nxt][0] = xa.x; a1[nxt][0] = xa.y;
+            a0[nxt][1] = xa.z; a1[nxt][1] = xa.w;
+            b0[nxt][0] = xb.x; b1[nxt][0] = xb.y;
+            b0[nxt][1] = xb.z; b1[nxt][1] = xb.w;
+            mma_tile_small(acc, a0[cur], a1[cur], b0[cur], b1[cur]);
+        }
+        mma_tile_small(acc, a0[1], a1[1], b0[1], b1[1]);
+        if (next < k / 2)
+            store_stage_small(smem, stage ^ 1, tid, preA, preB);
+        __syncthreads();
+        stage ^= 1;
     }
 }
 __device__ __forceinline__ int scratch_offset(int row, int col)
@@ -293,170 +265,108 @@ __device__ __forceinline__ int scratch_offset(int row, int col)
     const int mask = ((row & 1) << 2) | ((row & 8) << 1);
     return row * BN + (col ^ mask);
 }
-__device__ __forceinline__ void emit_product(float4 v, float* P,
-    int w, int h, int product, int row, int col)
+
+template <int QUAD>
+__device__ __forceinline__ void emit_quadrant(
+    const float (&acc)[4][8], float* C, int h, int w,
+    int bm, int bn, float* scratch)
 {
-    const size_t plane = size_t(h / 2) * (w / 2);
-    float* out = P + size_t(product) * plane + size_t(row) * (w / 2) + col;
-    *reinterpret_cast<float4*>(out) = v;
-}
-__device__ __forceinline__ float4 vadd(float4 a, float4 b)
-{
-    return make_float4(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w);
-}
-__device__ __forceinline__ float4 vsub(float4 a, float4 b)
-{
-    return make_float4(a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w);
-}
-__global__ void combine_strassen(const float* __restrict__ P,
-    float* __restrict__ C, int h, int w)
-{
-    const int hm = h / 2, wn = w / 2;
-    const size_t plane = size_t(hm) * wn;
-    const size_t i = (size_t(blockIdx.x) * blockDim.x + threadIdx.x) * 4;
-    if (i >= plane)
-        return;
-    const float4 p0 = *reinterpret_cast<const float4*>(P + 0 * plane + i);
-    const float4 p1 = *reinterpret_cast<const float4*>(P + 1 * plane + i);
-    const float4 p2 = *reinterpret_cast<const float4*>(P + 2 * plane + i);
-    const float4 p3 = *reinterpret_cast<const float4*>(P + 3 * plane + i);
-    const float4 p4 = *reinterpret_cast<const float4*>(P + 4 * plane + i);
-    const float4 p5 = *reinterpret_cast<const float4*>(P + 5 * plane + i);
-    const float4 p6 = *reinterpret_cast<const float4*>(P + 6 * plane + i);
-    const size_t base = (i / wn) * w + (i % wn);
-    *reinterpret_cast<float4*>(C + base) = vadd(vsub(vadd(p0, p3), p4), p6);
-    *reinterpret_cast<float4*>(C + base + wn) = vadd(p2, p4);
-    *reinterpret_cast<float4*>(C + base + size_t(hm) * w) = vadd(p1, p3);
-    *reinterpret_cast<float4*>(C + base + size_t(hm) * w + wn) = vadd(vsub(vadd(p0, p2), p1), p5);
-}
-using InputA = half;
-using InputB = half;
-template <int P>
-__device__ __forceinline__ void strassen_gemm_core(
-    const InputA* __restrict__ A, const InputB* __restrict__ B,
-    float* __restrict__ C, int h, int w, int k, half (&smem)[4][4096])
-{
-    const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
+    const int tid = threadIdx.x;
+    const int lane = tid & 31;
+    const int warp = tid >> 5;
     const int warp_m = warp & 1, warp_n = warp >> 1;
-    const int bm = blockIdx.y * BM, bn = blockIdx.x * BN;
-    constexpr int outer = P;
-    const int leaf_k = k / 2;
     const int quad = lane >> 2, lq = lane & 3;
-    const int vr0 = lane >> 4, vc = (lane & 4) >> 2, vr1 = vr0 | 2;
-    const int ac0 = (vc << 2) | ((lane & 3) ^ vr0), as0 = vr0;
-    const int ac1 = (vc << 2) | ((lane & 3) ^ vr1), as1 = vr1;
-    const int bs = (lane >> 3) & 3, bc = (lane ^ (lane >> 3)) & 3;
     const int lane_m = (((quad & 4) >> 1) + (quad & 1)) * 8 + (lq & 1);
     const int lane_n = ((quad >> 1) & 1) * 8 + (lq & 2);
-    float acc[8][8];
 #pragma unroll
-    for (int i = 0; i < 8; ++i)
+    for (int mma_n = 0; mma_n < 2; ++mma_n)
 #pragma unroll
-        for (int j = 0; j < 8; ++j)
-            acc[i][j] = 0.0f;
-    uint4 preA[2], preB[2];
-    prefetch<P>(A, B, bm, bn, 0, tid, h, w, k, preA, preB);
-    store_stage(smem, 0, tid, preA, preB);
+        for (int mma_m = 0; mma_m < 2; ++mma_m) {
+            const int group = mma_n * 2 + mma_m;
+#pragma unroll
+            for (int pp = 0; pp < 2; ++pp)
+#pragma unroll
+                for (int mm = 0; mm < 2; ++mm) {
+                    const int r = warp_m * 32 + lane_m + mma_m * 4 + mm * 2;
+                    const int c = warp_n * 32 + lane_n + mma_n * 4 + pp * 16;
+                    const float2 pair = make_float2(
+                        acc[group][pp * 4 + mm * 2],
+                        acc[group][pp * 4 + mm * 2 + 1]);
+                    *reinterpret_cast<float2*>(scratch + scratch_offset(r, c)) = pair;
+                }
+        }
     __syncthreads();
-    int stage = 0;
-    for (int k0 = 0; k0 < leaf_k; k0 += BK) {
-        const int next = k0 + BK;
-        if (next < leaf_k)
-            prefetch<P>(A, B, bm, bn, next, tid, h, w, k, preA, preB);
-        const uint4* baseA = reinterpret_cast<const uint4*>(smem[stage]);
-        const uint4* baseB = reinterpret_cast<const uint4*>(smem[stage + 2]);
-        const uint4* ap0 = baseA + ac0 + as0 * 16;
-        const uint4* ap1 = baseA + ac1 + as1 * 16;
-        const uint4* bp = baseB + bc + bs * 16;
-        int abyte = warp_m * 128;
-        int bbyte = warp_n * 32 * sizeof(half);
-        unsigned a0[2][4], a1[2][4], b0[2][4], b1[2][4];
-        read_a(ap0, ap1, abyte, a0[0], a1[0]);
-        read_b(bp, bbyte, b0[0], b1[0]);
-        abyte += 1024;
-        bbyte += 1024;
+    const int row_bias = (QUAD >> 1) * (h / 2);
+    const int col_bias = (QUAD & 1) * (w / 2);
 #pragma unroll
-        for (int t = 0; t < 7; ++t) {
-            const int cur = t & 1, nxt = (t + 1) & 1;
-            read_a(ap0, ap1, abyte, a0[nxt], a1[nxt]);
-            read_b(bp, bbyte, b0[nxt], b1[nxt]);
-            abyte += 1024;
-            bbyte += 1024;
-            mma_tile(acc, a0[cur], a1[cur], b0[cur], b1[cur]);
-        }
-        mma_tile(acc, a0[1], a1[1], b0[1], b1[1]);
-        if (next < leaf_k)
-            store_stage(smem, stage ^ 1, tid, preA, preB);
-        __syncthreads();
-        stage ^= 1;
+    for (int rep = 0; rep < 8; ++rep) {
+        const int i = (tid + rep * THREADS) * 4;
+        const int r = i / BN, c = i % BN;
+        const float4 val = *reinterpret_cast<const float4*>(scratch + scratch_offset(r, c));
+        *reinterpret_cast<float4*>(
+            C + size_t(bm + row_bias + r) * w + bn + col_bias + c) = val;
     }
-    float* scratch = reinterpret_cast<float*>(smem);
-#pragma unroll 1
-    for (int pass = 0; pass < 2; ++pass) {
-        const int row_lo = pass * 64;
-#pragma unroll
-        for (int tile_n = 0; tile_n < 1; ++tile_n)
-#pragma unroll
-            for (int tile_m = 0; tile_m < 2; ++tile_m)
-#pragma unroll
-                for (int mma_n = 0; mma_n < 2; ++mma_n)
-#pragma unroll
-                    for (int mma_m = 0; mma_m < 2; ++mma_m) {
-                        const int group = ((tile_n * 2 + tile_m) * 2 + mma_n) * 2 + mma_m;
-#pragma unroll
-                        for (int pp = 0; pp < 2; ++pp)
-#pragma unroll
-                            for (int mm = 0; mm < 2; ++mm) {
-                                const int local_m = warp_m * 64 + lane_m + tile_m * 32 + mma_m * 4 + mm * 2;
-                                const int local_n = warp_n * 32 + lane_n + tile_n * 32 + mma_n * 4 + pp * 16;
-                                if (local_m >= row_lo && local_m < row_lo + 64) {
-                                    const int row = local_m - row_lo;
-                                    const float2 vv = make_float2(acc[group][pp * 4 + mm * 2], acc[group][pp * 4 + mm * 2 + 1]);
-                                    *reinterpret_cast<float2*>(scratch + scratch_offset(row, local_n)) = vv;
-                                }
-                            }
-                    }
-        __syncthreads();
-#pragma unroll
-        for (int rep = 0; rep < 8; ++rep) {
-            const int elem = (tid + rep * THREADS) * 4;
-            const int local_row = elem / BN, local_col = elem % BN;
-            const float4 vv = *reinterpret_cast<const float4*>(scratch + scratch_offset(local_row, local_col));
-            emit_product(vv, C, w, h, outer, bm + row_lo + local_row, bn + local_col);
-        }
-        if (pass == 0)
-            __syncthreads();
-    }
+    __syncthreads();
 }
-__global__ __launch_bounds__(THREADS, 2) void strassen_gemm(
-    const InputA* __restrict__ A, const InputB* __restrict__ B,
+
+__global__ void strassen_register_fused(
+    const half* __restrict__ A, const half* __restrict__ B,
     float* __restrict__ C, int h, int w, int k)
 {
     __shared__ __align__(16) half smem[4][4096];
-    switch (int(blockIdx.z)) {
-    case 0:
-        strassen_gemm_core<0>(A, B, C, h, w, k, smem);
-        break;
-    case 1:
-        strassen_gemm_core<1>(A, B, C, h, w, k, smem);
-        break;
-    case 2:
-        strassen_gemm_core<2>(A, B, C, h, w, k, smem);
-        break;
-    case 3:
-        strassen_gemm_core<3>(A, B, C, h, w, k, smem);
-        break;
-    case 4:
-        strassen_gemm_core<4>(A, B, C, h, w, k, smem);
-        break;
-    case 5:
-        strassen_gemm_core<5>(A, B, C, h, w, k, smem);
-        break;
-    case 6:
-        strassen_gemm_core<6>(A, B, C, h, w, k, smem);
-        break;
-    }
+    const int bm = blockIdx.y * BM;
+    const int bn = blockIdx.x * BN;
+    float p[4][8];
+    float c00[4][8], c01[4][8], c10[4][8], c11[4][8];
+    mma_product<0>(A, B, bm, bn, h, w, k, smem, p);
+#pragma unroll
+    for (int i = 0; i < 4; ++i)
+#pragma unroll
+        for (int j = 0; j < 8; ++j) {c00[i][j] = p[i][j]; c11[i][j] = p[i][j];}
+
+    mma_product<2>(A, B, bm, bn, h, w, k, smem, p);
+#pragma unroll
+    for (int i = 0; i < 4; ++i)
+#pragma unroll
+        for (int j = 0; j < 8; ++j) {c01[i][j] = p[i][j]; c11[i][j] += p[i][j];}
+
+    mma_product<1>(A, B, bm, bn, h, w, k, smem, p);
+#pragma unroll
+    for (int i = 0; i < 4; ++i)
+#pragma unroll
+        for (int j = 0; j < 8; ++j) {c10[i][j] = p[i][j]; c11[i][j] -= p[i][j];}
+
+    mma_product<5>(A, B, bm, bn, h, w, k, smem, p);
+#pragma unroll
+    for (int i = 0; i < 4; ++i)
+#pragma unroll
+        for (int j = 0; j < 8; ++j) c11[i][j] += p[i][j];
+
+    mma_product<3>(A, B, bm, bn, h, w, k, smem, p);
+#pragma unroll
+    for (int i = 0; i < 4; ++i)
+#pragma unroll
+        for (int j = 0; j < 8; ++j) {c00[i][j] += p[i][j]; c10[i][j] += p[i][j];}
+
+    mma_product<4>(A, B, bm, bn, h, w, k, smem, p);
+#pragma unroll
+    for (int i = 0; i < 4; ++i)
+#pragma unroll
+        for (int j = 0; j < 8; ++j) {c00[i][j] -= p[i][j]; c01[i][j] += p[i][j];}
+
+    mma_product<6>(A, B, bm, bn, h, w, k, smem, p);
+#pragma unroll
+    for (int i = 0; i < 4; ++i)
+#pragma unroll
+        for (int j = 0; j < 8; ++j) c00[i][j] += p[i][j];
+
+    float* scratch = reinterpret_cast<float*>(smem);
+    emit_quadrant<0>(c00, C, h, w, bm, bn, scratch);
+    emit_quadrant<1>(c01, C, h, w, bm, bn, scratch);
+    emit_quadrant<2>(c10, C, h, w, bm, bn, scratch);
+    emit_quadrant<3>(c11, C, h, w, bm, bn, scratch);
 }
+
 __global__ void prepack_a(const float* __restrict__ A, half* __restrict__ out,
     int h, int k)
 {
@@ -498,13 +408,11 @@ __global__ void convert_b(const float* __restrict__ B, half* __restrict__ out, s
         out[i + 3] = __float2half_rn(v.w);
     }
 }
+
 struct Workspace {
-    InputA* a = nullptr;
-    float* products = nullptr;
-    size_t cap_products = 0;
-    InputB* b = nullptr;
-    size_t cap_a = 0;
-    size_t cap_b = 0;
+    half* a = nullptr;
+    half* b = nullptr;
+    size_t cap_a = 0, cap_b = 0;
 };
 template <typename T>
 void reserve(T*& p, size_t& cap, size_t count)
@@ -516,26 +424,26 @@ void reserve(T*& p, size_t& cap, size_t count)
     CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&p), count * sizeof(T)));
     cap = count;
 }
-}
+
+} // namespace
 namespace cuda {
-void matrix_multiply_wmma_prepack_b(const gpu::WorkSize& workSize,
+void matrix_multiply_wmma(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
     unsigned w, unsigned h, unsigned k)
 {
     (void)workSize;
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
-    rassert(a.number() >= size_t(h) * k && b.number() >= size_t(k) * w && c.number() >= size_t(h) * w, 810082703);
-    if (!h || !w)
-        return;
+    rassert(a.number() >= size_t(h)*k && b.number() >= size_t(k)*w && c.number() >= size_t(h)*w, 810082703);
+    if (!h || !w) return;
     cudaStream_t stream = context.cudaStream();
     if (!k) {
-        CUDA_SAFE_CALL(cudaMemsetAsync(c.cuptr(), 0, size_t(h) * w * sizeof(float), stream));
+        CUDA_SAFE_CALL(cudaMemsetAsync(c.cuptr(), 0, size_t(h)*w*sizeof(float), stream));
         CUDA_CHECK_KERNEL_SYNC(stream);
         return;
     }
-    const bool okay = (h % 256 == 0 && w % 256 == 0 && k % 64 == 0);
-    if (!okay) {
+    // Only invoke vectorized fused path on shapes fully divisible by tile dims.
+    if (h % 128 != 0 || w % 128 != 0 || k % 64 != 0) {
         const gpu::WorkSize fallback(CUDA_MM_THREADS, 1,
             ((size_t(w) + CUDA_MM_BLOCK_N - 1) / CUDA_MM_BLOCK_N) * CUDA_MM_THREADS,
             (size_t(h) + CUDA_MM_BLOCK_M - 1) / CUDA_MM_BLOCK_M);
@@ -543,23 +451,30 @@ void matrix_multiply_wmma_prepack_b(const gpu::WorkSize& workSize,
         return;
     }
     static Workspace ws;
-    const size_t packed_b = size_t(LEAVES) * (k / 2) * (w / 2);
-    const size_t packed_a = size_t(LEAVES) * (h / 2) * (k / 2);
-    reserve(ws.a, ws.cap_a, packed_a);
+    const size_t na = size_t(LEAVES) * (h/2) * (k/2);
+    const size_t nb = size_t(k) * w;
+    reserve(ws.a, ws.cap_a, na);
+    reserve(ws.b, ws.cap_b, nb);
     prepack_a<<<dim3((k / 2) / 32, (h / 2) / 32, LEAVES), dim3(32, 8), 0, stream>>>(
         a.cuptr(), ws.a, int(h), int(k));
-    reserve(ws.b, ws.cap_b, packed_b);
-    const size_t bplane = size_t(k / 2) * (w / 2);
-    prepack_b<<<dim3(unsigned((bplane / 4 + 255) / 256), LEAVES), 256, 0, stream>>>(
-        b.cuptr(), ws.b, int(w), int(k));
-    const InputB* ptr_b = ws.b;
-    const size_t elements_per_product = size_t(h / 2) * (w / 2);
-    reserve(ws.products, ws.cap_products, 7 * elements_per_product);
-    const int shrink = 2;
-    const dim3 grid((w / shrink) / BN, (h / shrink) / BM, LEAVES);
-    strassen_gemm<<<grid, THREADS, 0, stream>>>(ws.a, ptr_b, ws.products, int(h), int(w), int(k));
-    combine_strassen<<<unsigned((elements_per_product / 4 + 255) / 256), 256, 0, stream>>>(
-        ws.products, c.cuptr(), int(h), int(w));
+    convert_b<<<unsigned((nb / 4 + 255) / 256), 256, 0, stream>>>(b.cuptr(), ws.b, nb);
+    // Diagnostic metadata is captured once; normal kernel is not instrumented.
+    static bool printed_resources = false;
+    if (!printed_resources) {
+        printed_resources = true;
+        cudaFuncAttributes attr{};
+        if (cudaFuncGetAttributes(&attr, strassen_register_fused) == cudaSuccess) {
+            int resident = 0;
+            cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+                &resident, strassen_register_fused, THREADS, 0);
+            std::printf("[REGISTER_FUSED] regs/thread=%d localBytes/thread=%zu "
+                        "shared=%zuB CTAs/SM=%d threads/CTA=%d\n",
+                attr.numRegs, size_t(attr.localSizeBytes),
+                size_t(attr.sharedSizeBytes), resident, THREADS);
+        }
+    }
+    const dim3 grid((w / 2) / BN, (h / 2) / BM);
+    strassen_register_fused<<<grid, THREADS, 0, stream>>>(ws.a, ws.b, c.cuptr(), int(h), int(w), int(k));
     CUDA_CHECK_KERNEL_SYNC(stream);
 }
-}
+} // namespace cuda
