@@ -1,21 +1,29 @@
 #include "../defines.h"
 #include "../kernels.h"
 #include "helpers/rassert.cu"
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 #include <libgpu/context.h>
 #include <libgpu/cuda/cu/common.cu>
 #include <libgpu/shared_device_buffer.h>
 #include <libgpu/work_size.h>
+#include <vector>
+#ifndef STRASSEN_PROFILE
+#define STRASSEN_PROFILE 1
+#endif
+#ifndef STRASSEN_PROFILE_SAMPLES
+#define STRASSEN_PROFILE_SAMPLES 20
+#endif
 
 namespace {
 constexpr int BM = 128, BN = 128, BK = 32, THREADS = 256;
 constexpr int SMEM_TILE = BM * BK;
 constexpr int LEAVES = 7;
 static_assert(4 * SMEM_TILE * sizeof(half) == 32768);
-
 __host__ __device__ __forceinline__ int a_offset(int row, int k)
 {
     const int vc = row >> 3, sc = vc & 7, sr = k & 3;
@@ -109,7 +117,6 @@ struct ProductConfig {
                                                    : 3;
     static constexpr int bo = P == 2 || P == 3 ? -1 : 1;
 };
-
 __device__ __forceinline__ void select_prepack_a(int p, int& aq0, int& aq1, int& ao)
 {
     switch (p) {
@@ -153,7 +160,6 @@ __device__ __forceinline__ void select_prepack_a(int p, int& aq0, int& aq1, int&
         break;
     }
 }
-
 __device__ __forceinline__ unsigned add2(unsigned x, unsigned y)
 {
     unsigned z;
@@ -202,7 +208,6 @@ __device__ __forceinline__ void prefetch(const half* A, const half* B,
         b[rep] = y;
     }
 }
-
 __device__ __forceinline__ void store_stage(half (&smem)[4][4096], int stage, int tid,
     const uint4 a[2], const uint4 b[2])
 {
@@ -226,7 +231,6 @@ __device__ __forceinline__ void emit_product(float4 v, float* P,
     float* out = P + size_t(product) * plane + size_t(row) * (w / 2) + col;
     *reinterpret_cast<float4*>(out) = v;
 }
-
 __device__ __forceinline__ float4 vadd(float4 a, float4 b)
 {
     return make_float4(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w);
@@ -256,14 +260,20 @@ __global__ void combine_strassen(const float* __restrict__ P,
     *reinterpret_cast<float4*>(C + base + size_t(hm) * w) = vadd(p1, p3);
     *reinterpret_cast<float4*>(C + base + size_t(hm) * w + wn) = vadd(vsub(vadd(p0, p2), p1), p5);
 }
-
 using InputA = half;
 using InputB = half;
+struct CycleProbe {
+    unsigned long long initial;
+    unsigned long long prefetch;
+    unsigned long long mma_shared;
+    unsigned long long store_barrier;
+    unsigned long long epilogue;
+};
 
-template <int P>
+template <int P, bool DIAGNOSTIC = false>
 __device__ __forceinline__ void strassen_gemm_core(
     const InputA* __restrict__ A, const InputB* __restrict__ B,
-    float* __restrict__ C, int h, int w, int k, half (&smem)[4][4096])
+    float* __restrict__ C, int h, int w, int k, half (&smem)[4][4096], CycleProbe* probe)
 {
     const int tid = threadIdx.x, lane = tid & 31, warp = tid >> 5;
     const int warp_m = warp & 1, warp_n = warp >> 1;
@@ -277,23 +287,32 @@ __device__ __forceinline__ void strassen_gemm_core(
     const int bs = (lane >> 3) & 3, bc = (lane ^ (lane >> 3)) & 3;
     const int lane_m = (((quad & 4) >> 1) + (quad & 1)) * 8 + (lq & 1);
     const int lane_n = ((quad >> 1) & 1) * 8 + (lq & 2);
-
     float acc[8][8];
 #pragma unroll
     for (int i = 0; i < 8; ++i)
 #pragma unroll
         for (int j = 0; j < 8; ++j)
             acc[i][j] = 0.0f;
-
+    unsigned long long initial0 = 0, initial1 = 0;
+    unsigned long long prefetch_cycles = 0, mma_cycles = 0, sync_cycles = 0;
+    if constexpr (DIAGNOSTIC)
+        initial0 = clock64();
     uint4 preA[2], preB[2];
     prefetch<P>(A, B, bm, bn, 0, tid, h, w, k, preA, preB);
     store_stage(smem, 0, tid, preA, preB);
     __syncthreads();
+    if constexpr (DIAGNOSTIC)
+        initial1 = clock64();
     int stage = 0;
     for (int k0 = 0; k0 < leaf_k; k0 += BK) {
+        unsigned long long t_pref0 = 0, t_pref1 = 0, t_mma_end = 0;
+        if constexpr (DIAGNOSTIC)
+            t_pref0 = clock64();
         const int next = k0 + BK;
         if (next < leaf_k)
             prefetch<P>(A, B, bm, bn, next, tid, h, w, k, preA, preB);
+        if constexpr (DIAGNOSTIC)
+            t_pref1 = clock64();
         const uint4* baseA = reinterpret_cast<const uint4*>(smem[stage]);
         const uint4* baseB = reinterpret_cast<const uint4*>(smem[stage + 2]);
         const uint4* ap0 = baseA + ac0 + as0 * 16;
@@ -316,12 +335,22 @@ __device__ __forceinline__ void strassen_gemm_core(
             mma_tile(acc, a0[cur], a1[cur], b0[cur], b1[cur]);
         }
         mma_tile(acc, a0[1], a1[1], b0[1], b1[1]);
+        if constexpr (DIAGNOSTIC)
+            t_mma_end = clock64();
         if (next < leaf_k)
             store_stage(smem, stage ^ 1, tid, preA, preB);
         __syncthreads();
+        if constexpr (DIAGNOSTIC) {
+            const unsigned long long t_end = clock64();
+            prefetch_cycles += t_pref1 - t_pref0;
+            mma_cycles += t_mma_end - t_pref1;
+            sync_cycles += t_end - t_mma_end;
+        }
         stage ^= 1;
     }
-
+    unsigned long long epilogue0 = 0;
+    if constexpr (DIAGNOSTIC)
+        epilogue0 = clock64();
     float* scratch = reinterpret_cast<float*>(smem);
 #pragma unroll 1
     for (int pass = 0; pass < 2; ++pass) {
@@ -359,8 +388,15 @@ __device__ __forceinline__ void strassen_gemm_core(
         if (pass == 0)
             __syncthreads();
     }
+    if constexpr (DIAGNOSTIC) {
+        const unsigned long long epilogue1 = clock64();
+        if (tid == 0) {
+            const size_t index = (size_t(blockIdx.z) * gridDim.y + blockIdx.y) * gridDim.x + blockIdx.x;
+            probe[index] = CycleProbe { initial1 - initial0, prefetch_cycles,
+                mma_cycles, sync_cycles, epilogue1 - epilogue0 };
+        }
+    }
 }
-
 __global__ __launch_bounds__(THREADS, 2) void strassen_gemm(
     const InputA* __restrict__ A, const InputB* __restrict__ B,
     float* __restrict__ C, int h, int w, int k)
@@ -368,28 +404,59 @@ __global__ __launch_bounds__(THREADS, 2) void strassen_gemm(
     __shared__ __align__(16) half smem[4][4096];
     switch (int(blockIdx.z)) {
     case 0:
-        strassen_gemm_core<0>(A, B, C, h, w, k, smem);
+        strassen_gemm_core<0, false>(A, B, C, h, w, k, smem, nullptr);
         break;
     case 1:
-        strassen_gemm_core<1>(A, B, C, h, w, k, smem);
+        strassen_gemm_core<1, false>(A, B, C, h, w, k, smem, nullptr);
         break;
     case 2:
-        strassen_gemm_core<2>(A, B, C, h, w, k, smem);
+        strassen_gemm_core<2, false>(A, B, C, h, w, k, smem, nullptr);
         break;
     case 3:
-        strassen_gemm_core<3>(A, B, C, h, w, k, smem);
+        strassen_gemm_core<3, false>(A, B, C, h, w, k, smem, nullptr);
         break;
     case 4:
-        strassen_gemm_core<4>(A, B, C, h, w, k, smem);
+        strassen_gemm_core<4, false>(A, B, C, h, w, k, smem, nullptr);
         break;
     case 5:
-        strassen_gemm_core<5>(A, B, C, h, w, k, smem);
+        strassen_gemm_core<5, false>(A, B, C, h, w, k, smem, nullptr);
         break;
     case 6:
-        strassen_gemm_core<6>(A, B, C, h, w, k, smem);
+        strassen_gemm_core<6, false>(A, B, C, h, w, k, smem, nullptr);
         break;
     }
 }
+#if STRASSEN_PROFILE
+__global__ __launch_bounds__(THREADS, 2) void strassen_gemm_probe(
+    const InputA* __restrict__ A, const InputB* __restrict__ B,
+    float* __restrict__ C, int h, int w, int k, CycleProbe* probe)
+{
+    __shared__ __align__(16) half smem[4][4096];
+    switch (int(blockIdx.z)) {
+    case 0:
+        strassen_gemm_core<0, true>(A, B, C, h, w, k, smem, probe);
+        break;
+    case 1:
+        strassen_gemm_core<1, true>(A, B, C, h, w, k, smem, probe);
+        break;
+    case 2:
+        strassen_gemm_core<2, true>(A, B, C, h, w, k, smem, probe);
+        break;
+    case 3:
+        strassen_gemm_core<3, true>(A, B, C, h, w, k, smem, probe);
+        break;
+    case 4:
+        strassen_gemm_core<4, true>(A, B, C, h, w, k, smem, probe);
+        break;
+    case 5:
+        strassen_gemm_core<5, true>(A, B, C, h, w, k, smem, probe);
+        break;
+    case 6:
+        strassen_gemm_core<6, true>(A, B, C, h, w, k, smem, probe);
+        break;
+    }
+}
+#endif
 
 __global__ void prepack_a(const float* __restrict__ A, half* __restrict__ out,
     int h, int k)
@@ -432,7 +499,6 @@ __global__ void convert_b(const float* __restrict__ B, half* __restrict__ out, s
         out[i + 3] = __float2half_rn(v.w);
     }
 }
-
 struct Workspace {
     InputA* a = nullptr;
     float* products = nullptr;
@@ -451,8 +517,222 @@ void reserve(T*& p, size_t& cap, size_t count)
     CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&p), count * sizeof(T)));
     cap = count;
 }
+
+#if STRASSEN_PROFILE
+struct Distribution {
+    double min, median, p90, mean;
+};
+
+Distribution summary(std::vector<double> values)
+{
+    std::sort(values.begin(), values.end());
+    const size_t n = values.size();
+    double sum = 0.0;
+    for (double x : values)
+        sum += x;
+    return { values.front(), (values[(n - 1) / 2] + values[n / 2]) * 0.5,
+        values[(n - 1) * 9 / 10], sum / n };
 }
 
+void print_distribution(const char* name, const std::vector<double>& data)
+{
+    const auto v = summary(data);
+    std::printf("[STRASSEN_PROFILE] %-20s min=%9.3f  median=%9.3f  p90=%9.3f  mean=%9.3f us\n",
+        name, v.min, v.median, v.p90, v.mean);
+}
+
+template <typename Kernel>
+void print_kernel_attributes(const char* name, Kernel func)
+{
+    cudaFuncAttributes a { };
+    CUDA_SAFE_CALL(cudaFuncGetAttributes(&a, func));
+    std::printf("[STRASSEN_PROFILE] %-20s regs/thread=%d localBytes/thread=%zu staticSmem=%zuB maxThreads=%d\n",
+        name, a.numRegs, size_t(a.localSizeBytes), size_t(a.sharedSizeBytes), a.maxThreadsPerBlock);
+}
+
+void profile_kernel_pipeline(const float* a, const float* b, float* c,
+    int h, int w, int k, Workspace& ws, cudaStream_t stream)
+{
+    const size_t nb = size_t(k) * w;
+    const size_t plane = size_t(h / 2) * (w / 2);
+    const dim3 grid((w / 2) / BN, (h / 2) / BM, LEAVES);
+    const dim3 prepack_grid((k / 2) / 32, (h / 2) / 32, LEAVES);
+    const unsigned convert_blocks = unsigned((nb / 4 + 255) / 256);
+    const unsigned combine_blocks = unsigned((plane / 4 + 255) / 256);
+
+    const auto stage_a = [&]() {
+        prepack_a<<<prepack_grid, dim3(32, 8), 0, stream>>>(a, ws.a, h, k);
+    };
+    const auto stage_b = [&]() {
+        convert_b<<<convert_blocks, 256, 0, stream>>>(b, ws.b, nb);
+    };
+    const auto stage_gemm = [&]() {
+        strassen_gemm<<<grid, THREADS, 0, stream>>>(ws.a, ws.b, ws.products, h, w, k);
+    };
+    const auto stage_combine = [&]() {
+        combine_strassen<<<combine_blocks, 256, 0, stream>>>(ws.products, c, h, w);
+    };
+    const auto complete_pipeline = [&]() {
+        stage_a();
+        stage_b();
+        stage_gemm();
+        stage_combine();
+    };
+
+    std::printf("\n[STRASSEN_PROFILE] ==== M=%d K=%d N=%d | warmup=3 samples=%d ====\n",
+        h, k, w, STRASSEN_PROFILE_SAMPLES);
+    cudaDeviceProp prop { };
+    int device = 0;
+    CUDA_SAFE_CALL(cudaGetDevice(&device));
+    CUDA_SAFE_CALL(cudaGetDeviceProperties(&prop, device));
+    std::printf("[STRASSEN_PROFILE] GPU=%s sm=%d regs/SM=%d smem/SM=%zuB clock=%d kHz\n",
+        prop.name, prop.multiProcessorCount, prop.regsPerMultiprocessor,
+        size_t(prop.sharedMemPerMultiprocessor), prop.clockRate);
+    print_kernel_attributes("prepack_a", prepack_a);
+    print_kernel_attributes("convert_b", convert_b);
+    print_kernel_attributes("strassen_gemm", strassen_gemm);
+    print_kernel_attributes("combine", combine_strassen);
+    print_kernel_attributes("gemm_probe", strassen_gemm_probe);
+    int resident = 0;
+    CUDA_SAFE_CALL(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &resident, strassen_gemm, THREADS, 0));
+    std::printf("[STRASSEN_PROFILE] gemm estimated occupancy: %d CTA/SM, %.1f%% warps, blocks=%u\n",
+        resident, 100.0 * resident * THREADS / prop.maxThreadsPerMultiProcessor,
+        grid.x * grid.y * grid.z);
+
+    cudaEvent_t e[5] { };
+    for (auto& event : e)
+        CUDA_SAFE_CALL(cudaEventCreate(&event));
+
+    for (int i = 0; i < 3; ++i)
+        complete_pipeline();
+    CUDA_SAFE_CALL(cudaStreamSynchronize(stream));
+
+    std::vector<double> clean, segmented, t_a, t_b, t_gemm, t_combine;
+    clean.reserve(STRASSEN_PROFILE_SAMPLES);
+    segmented.reserve(STRASSEN_PROFILE_SAMPLES);
+    for (int i = 0; i < STRASSEN_PROFILE_SAMPLES; ++i) {
+        CUDA_SAFE_CALL(cudaEventRecord(e[0], stream));
+        complete_pipeline();
+        CUDA_SAFE_CALL(cudaEventRecord(e[4], stream));
+        CUDA_SAFE_CALL(cudaEventSynchronize(e[4]));
+        float ms = 0;
+        CUDA_SAFE_CALL(cudaEventElapsedTime(&ms, e[0], e[4]));
+        clean.push_back(double(ms) * 1000);
+    }
+
+    for (int i = 0; i < STRASSEN_PROFILE_SAMPLES; ++i) {
+        CUDA_SAFE_CALL(cudaEventRecord(e[0], stream));
+        stage_a();
+        CUDA_SAFE_CALL(cudaEventRecord(e[1], stream));
+        stage_b();
+        CUDA_SAFE_CALL(cudaEventRecord(e[2], stream));
+        stage_gemm();
+        CUDA_SAFE_CALL(cudaEventRecord(e[3], stream));
+        stage_combine();
+        CUDA_SAFE_CALL(cudaEventRecord(e[4], stream));
+        CUDA_SAFE_CALL(cudaEventSynchronize(e[4]));
+        float intervals[4] { };
+        for (int j = 0; j < 4; ++j)
+            CUDA_SAFE_CALL(cudaEventElapsedTime(&intervals[j], e[j], e[j + 1]));
+        float total_ms = 0;
+        CUDA_SAFE_CALL(cudaEventElapsedTime(&total_ms, e[0], e[4]));
+        t_a.push_back(double(intervals[0]) * 1000);
+        t_b.push_back(double(intervals[1]) * 1000);
+        t_gemm.push_back(double(intervals[2]) * 1000);
+        t_combine.push_back(double(intervals[3]) * 1000);
+        segmented.push_back(double(total_ms) * 1000);
+    }
+
+    print_distribution("pipeline_clean", clean);
+    print_distribution("pipeline_5events", segmented);
+    print_distribution("prepack_a", t_a);
+    print_distribution("convert_b", t_b);
+    print_distribution("GEMM", t_gemm);
+    print_distribution("combine", t_combine);
+    const double base = summary(clean).median;
+    const double gemm = summary(t_gemm).median;
+    const double effective_tflops = 2.0 * double(h) * w * k / (base * 1e9);
+    std::printf("[STRASSEN_PROFILE] effective TFLOPS=%.2f\n", effective_tflops);
+    std::printf("[STRASSEN_PROFILE] GEMM-only share≈%.1f%% of pipeline; other stages≈%.3f us (different event overheads!)\n",
+        100 * gemm / base, base - gemm);
+    if (h == 2048 && k == 1024 && w == 4096) {
+        const double required_us = 2.0 * double(h) * w * k / (68.91 * 1e9);
+        std::printf("[STRASSEN_PROFILE] target=68.91 TFLOPS => %.3f us (save %.3f us)\n",
+            required_us, base - required_us);
+        if (gemm > required_us)
+            std::printf("[STRASSEN_PROFILE] Even zero-cost other kernels are insufficient: GEMM needs >= %.1f%% reduction.\n",
+                100 * (gemm - required_us) / gemm);
+        else
+            std::printf("[STRASSEN_PROFILE] In theory, removing non-GEMM time might suffice.\n");
+    } else {
+        std::printf("[STRASSEN_PROFILE] NOTE: benchmark shape differs from original 2048x1024x4096; #262 target is not comparable.\n");
+    }
+
+    const auto isolated = [&](const char* name, auto launch) {
+        std::vector<double> samples;
+        for (int i = 0; i < STRASSEN_PROFILE_SAMPLES; ++i) {
+            CUDA_SAFE_CALL(cudaEventRecord(e[0], stream));
+            launch();
+            CUDA_SAFE_CALL(cudaEventRecord(e[4], stream));
+            CUDA_SAFE_CALL(cudaEventSynchronize(e[4]));
+            float ms = 0;
+            CUDA_SAFE_CALL(cudaEventElapsedTime(&ms, e[0], e[4]));
+            samples.push_back(double(ms) * 1000);
+        }
+        print_distribution(name, samples);
+    };
+    isolated("prepack_a_isolated", stage_a);
+    isolated("convert_b_isolated", stage_b);
+    isolated("GEMM_isolated", stage_gemm);
+    isolated("combine_isolated", stage_combine);
+
+    const size_t block_count = size_t(grid.x) * grid.y * grid.z;
+    CycleProbe* device_probe = nullptr;
+    CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&device_probe), block_count * sizeof(CycleProbe)));
+    stage_a();
+    stage_b();
+    strassen_gemm_probe<<<grid, THREADS, 0, stream>>>(ws.a, ws.b, ws.products, h, w, k, device_probe);
+    CUDA_SAFE_CALL(cudaGetLastError());
+    std::vector<CycleProbe> host_probe(block_count);
+    CUDA_SAFE_CALL(cudaStreamSynchronize(stream));
+    CUDA_SAFE_CALL(cudaMemcpy(host_probe.data(), device_probe,
+        block_count * sizeof(CycleProbe), cudaMemcpyDeviceToHost));
+    CUDA_SAFE_CALL(cudaFree(device_probe));
+
+    std::printf("[STRASSEN_PROFILE] CLOCK64 diagnostic: mean per-CTA cycles, not absolute kernel time.\n");
+    std::printf("[STRASSEN_PROFILE] product | initial | prefetch | smem+MMA | store+barrier | epilogue | total | %%MMA | %%prefetch\n");
+    for (int p = 0; p < LEAVES; ++p) {
+        double sum[5] { };
+        int count = 0;
+        for (size_t i = size_t(p) * grid.x * grid.y;
+            i < size_t(p + 1) * grid.x * grid.y; ++i) {
+            const auto& t = host_probe[i];
+            sum[0] += t.initial;
+            sum[1] += t.prefetch;
+            sum[2] += t.mma_shared;
+            sum[3] += t.store_barrier;
+            sum[4] += t.epilogue;
+            ++count;
+        }
+        double total = 0;
+        for (double& v : sum) {
+            v /= count;
+            total += v;
+        }
+        std::printf("[STRASSEN_PROFILE]     P%d  | %7.0f | %8.0f | %8.0f | %13.0f | %8.0f | %7.0f | %5.1f%% | %8.1f%%\n",
+            p, sum[0], sum[1], sum[2], sum[3], sum[4], total,
+            100 * sum[2] / total, 100 * sum[1] / total);
+    }
+    std::printf("[STRASSEN_PROFILE] Probe changes register pressure/scheduling. Compare percentages qualitatively.\n");
+    std::printf("[STRASSEN_PROFILE] GPU timing is complete. Regular uninstrumented kernel follows.\n\n");
+    std::fflush(stdout);
+
+    for (auto& event : e)
+        CUDA_SAFE_CALL(cudaEventDestroy(event));
+}
+#endif
+}
 namespace cuda {
 void matrix_multiply_wmma(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
@@ -489,6 +769,14 @@ void matrix_multiply_wmma(const gpu::WorkSize& workSize,
     const InputB* ptr_b = ws.b;
     const size_t elements_per_product = size_t(h / 2) * (w / 2);
     reserve(ws.products, ws.cap_products, 7 * elements_per_product);
+#if STRASSEN_PROFILE
+    static bool profile_done = false;
+    if (!profile_done) {
+        profile_done = true;
+        profile_kernel_pipeline(a.cuptr(), b.cuptr(), c.cuptr(),
+            int(h), int(w), int(k), ws, stream);
+    }
+#endif
     const int shrink = 2;
     const dim3 grid((w / shrink) / BN, (h / shrink) / BM, LEAVES);
     strassen_gemm<<<grid, THREADS, 0, stream>>>(ws.a, ptr_b, ws.products, int(h), int(w), int(k));
