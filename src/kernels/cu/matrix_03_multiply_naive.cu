@@ -15,7 +15,16 @@ __global__ void matrix_multiply_naive(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO
+    const unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x < w && y < h) {
+        float sum = 0.0f;
+        for (unsigned int i = 0; i < k; ++i) {
+            sum += a[size_t(y) * k + i] * b[size_t(i) * w + x];
+        }
+        c[size_t(y) * w + x] = sum;
+    }
 }
 
 namespace cuda {
@@ -26,6 +35,6 @@ void matrix_multiply_naive(const gpu::WorkSize &workSize,
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
     ::matrix_multiply_naive<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), c.cuptr(), w, h, k);
-    CUDA_CHECK_KERNEL(stream);
+    CUDA_CHECK_KERNEL_SYNC(stream);
 }
 } // namespace cuda
