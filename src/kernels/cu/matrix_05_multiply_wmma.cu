@@ -454,7 +454,7 @@ void reserve(T*& p, size_t& cap, size_t count)
 }
 
 namespace cuda {
-void matrix_multiply_wmma_n32_workspace_prepack_specialized(const gpu::WorkSize& workSize,
+void matrix_multiply_wmma(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
     unsigned w, unsigned h, unsigned k)
 {
