@@ -96,6 +96,7 @@ void run(int argc, char** argv)
         "CPU with OpenMP",
         "01 naive",
         "02 using local memory",
+        "03 using WMMA (Tensor Cores) [+Prestige Points]"
     };
 
     // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
@@ -148,7 +149,7 @@ void run(int argc, char** argv)
                     } else if (algorithm == "02 using local memory") {
                         cuda::matrix_multiply_via_local_memory(gpu::WorkSize(MATMUL_DIM, MATMUL_DIM, w/4, h/4), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
-                        cuda::matrix_multiply_wmma(gpu::WorkSize(32, 8, w, h * 2 / 16), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                        cuda::matrix_multiply_wmma(gpu::WorkSize(16, 16, w, h / 8), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
