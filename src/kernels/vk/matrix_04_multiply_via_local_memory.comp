@@ -4,6 +4,8 @@
 
 #include "../defines.h"
 
+#extension GL_EXT_control_flow_attributes : require
+
 layout (std430, binding = 0) readonly buffer MatrixAIn   { float a[]; }; // rows=h x cols=k
 layout (std430, binding = 1) readonly buffer MatrixBIn   { float b[]; }; // rows=k x cols=w
 layout (std430, binding = 2)          buffer MatrixCOut  { float c[]; }; // rows=h x cols=w
@@ -43,9 +45,11 @@ void main()
 
         barrier();
 
+        [[unroll]]
         for (uint l = 0; l < GROUP_SIZE_XY; ++l) {
-            sum0 += part_a[local_j][l] * part_b[l][local_i];
-            sum1 += part_a[local_j][l] * part_b[l][local_i + GROUP_SIZE_XY];
+            const float pa = part_a[local_j][l];
+            sum0 += pa * part_b[l][local_i];
+            sum1 += pa * part_b[l][local_i + GROUP_SIZE_XY];
         }
 
         barrier();
