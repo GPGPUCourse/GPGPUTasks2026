@@ -92,10 +92,10 @@ void run(int argc, char** argv)
     bool I_Want_Super_Puper_Prestige_Points = true;
     if (I_Want_Super_Puper_Prestige_Points) {
         if (context.type() == gpu::Context::TypeCUDA) {
-            algorithm_names.push_back("03 one-level Strassen (direct atomic) [+Prestige Points]");
-            algorithm_names.push_back("04 one-level Strassen (warp N32) [+Prestige Points]");
-            algorithm_names.push_back("05 one-level Strassen (BK64) [+Prestige Points]");
-            algorithm_names.push_back("06 one-level Strassen (workspace) [+Prestige Points]");
+            algorithm_names.push_back("03 one-level Strassen N32 (workspace) [+Prestige Points]");
+            algorithm_names.push_back("04 one-level Strassen N32 (prepack A) [+Prestige Points]");
+            algorithm_names.push_back("05 one-level Strassen N32 (row-major A) [+Prestige Points]");
+            algorithm_names.push_back("06 one-level Strassen N32 (specialized) [+Prestige Points]");
         }
         if (context.type() == gpu::Context::TypeVulkan) {
             rassert(context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix"), 32452365324632);
@@ -127,17 +127,17 @@ void run(int argc, char** argv)
             } else if (algorithm == "02 using local memory") {
                 cuda::matrix_multiply_via_local_memory(multiply_work_size,
                     matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-            } else if (algorithm == "03 one-level Strassen (direct atomic) [+Prestige Points]") {
-                cuda::matrix_multiply_wmma_direct_atomic(strassen_work_size,
+            } else if (algorithm == "03 one-level Strassen N32 (workspace) [+Prestige Points]") {
+                cuda::matrix_multiply_wmma_n32_workspace(strassen_work_size,
                     matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-            } else if (algorithm == "04 one-level Strassen (warp N32) [+Prestige Points]") {
-                cuda::matrix_multiply_wmma_warp_n32(strassen_work_size,
+            } else if (algorithm == "04 one-level Strassen N32 (prepack A) [+Prestige Points]") {
+                cuda::matrix_multiply_wmma_n32_workspace_prepack_a(strassen_work_size,
                     matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-            } else if (algorithm == "05 one-level Strassen (BK64) [+Prestige Points]") {
-                cuda::matrix_multiply_wmma_bk64(strassen_work_size,
+            } else if (algorithm == "05 one-level Strassen N32 (row-major A) [+Prestige Points]") {
+                cuda::matrix_multiply_wmma_n32_workspace_row_major_a(strassen_work_size,
                     matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-            } else if (algorithm == "06 one-level Strassen (workspace) [+Prestige Points]") {
-                cuda::matrix_multiply_wmma_workspace(strassen_work_size,
+            } else if (algorithm == "06 one-level Strassen N32 (specialized) [+Prestige Points]") {
+                cuda::matrix_multiply_wmma_n32_workspace_specialized(strassen_work_size,
                     matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
             } else {
                 rassert(false, 810082605, algorithm, algorithm_index);
