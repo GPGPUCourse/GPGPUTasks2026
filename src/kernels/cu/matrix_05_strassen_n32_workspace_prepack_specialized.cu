@@ -110,6 +110,50 @@ struct ProductConfig {
     static constexpr int bo = P == 2 || P == 3 ? -1 : 1;
 };
 
+__device__ __forceinline__ void select_prepack_a(int p, int& aq0, int& aq1, int& ao)
+{
+    switch (p) {
+    case 0:
+        aq0 = ProductConfig<0>::aq0;
+        aq1 = ProductConfig<0>::aq1;
+        ao = ProductConfig<0>::ao;
+        break;
+    case 1:
+        aq0 = ProductConfig<1>::aq0;
+        aq1 = ProductConfig<1>::aq1;
+        ao = ProductConfig<1>::ao;
+        break;
+    case 2:
+        aq0 = ProductConfig<2>::aq0;
+        aq1 = ProductConfig<2>::aq1;
+        ao = ProductConfig<2>::ao;
+        break;
+    case 3:
+        aq0 = ProductConfig<3>::aq0;
+        aq1 = ProductConfig<3>::aq1;
+        ao = ProductConfig<3>::ao;
+        break;
+    case 4:
+        aq0 = ProductConfig<4>::aq0;
+        aq1 = ProductConfig<4>::aq1;
+        ao = ProductConfig<4>::ao;
+        break;
+    case 5:
+        aq0 = ProductConfig<5>::aq0;
+        aq1 = ProductConfig<5>::aq1;
+        ao = ProductConfig<5>::ao;
+        break;
+    case 6:
+        aq0 = ProductConfig<6>::aq0;
+        aq1 = ProductConfig<6>::aq1;
+        ao = ProductConfig<6>::ao;
+        break;
+    default:
+        aq0 = aq1 = ao = 0;
+        break;
+    }
+}
+
 __device__ __forceinline__ unsigned add2(unsigned x, unsigned y)
 {
     unsigned z;
@@ -128,9 +172,12 @@ __device__ __forceinline__ uint4 combine(uint4 x, uint4 y, int sign)
         return make_uint4(add2(x.x, y.x), add2(x.y, y.y), add2(x.z, y.z), add2(x.w, y.w));
     return make_uint4(sub2(x.x, y.x), sub2(x.y, y.y), sub2(x.z, y.z), sub2(x.w, y.w));
 }
-__device__ __forceinline__ uint4 load_A(const half* A, int quadr, int row, int k, int h, int hk, int hm)
+__device__ __forceinline__ uint4 load_packed_A(
+    const half* A, int product, int row, int kk, int h, int k)
 {
-    return *reinterpret_cast<const uint4*>(A + size_t(k + (quadr & 1) * hk) * h + row + (quadr >> 1) * hm);
+    const size_t plane = size_t(h / 2) * (k / 2);
+    return *reinterpret_cast<const uint4*>(
+        A + size_t(product) * plane + size_t(kk) * (h / 2) + row);
 }
 __device__ __forceinline__ uint4 load_B(const half* B, int quadr, int k, int col, int w, int hk, int wn)
 {
@@ -147,10 +194,8 @@ __device__ __forceinline__ void prefetch(const half* A, const half* B,
         const int vec = tid + rep * THREADS;
         const int kk = k0 + (vec >> 4);
         const int along = (vec & 15) * 8;
-        uint4 x = load_A(A, Q::aq0, bm + along, kk, h, hk, hm);
+        const uint4 x = load_packed_A(A, P, bm + along, kk, h, k);
         uint4 y = load_B(B, Q::bq0, kk, bn + along, w, hk, wn);
-        if constexpr (Q::aq1 >= 0)
-            x = combine(x, load_A(A, Q::aq1, bm + along, kk, h, hk, hm), Q::ao);
         if constexpr (Q::bq1 >= 0)
             y = combine(y, load_B(B, Q::bq1, kk, bn + along, w, hk, wn), Q::bo);
         a[rep] = x;
@@ -346,21 +391,35 @@ __global__ __launch_bounds__(THREADS, 2) void strassen_gemm(
     }
 }
 
-__global__ void transpose_a(const float* __restrict__ A, InputA* __restrict__ out, int h, int k)
+__global__ void prepack_a(const float* __restrict__ A, half* __restrict__ out,
+    int h, int k)
 {
-    __shared__ float tile[32][33];
-    const int col = blockIdx.x * 32 + threadIdx.x;
-    const int row = blockIdx.y * 32 + threadIdx.y;
-#pragma unroll
-    for (int j = 0; j < 32; j += 8)
-        tile[threadIdx.y + j][threadIdx.x] = A[size_t(row + j) * k + col];
-    __syncthreads();
-    const int rr = blockIdx.y * 32 + threadIdx.x;
-    const int cc = blockIdx.x * 32 + threadIdx.y;
+    __shared__ half tile[32][34];
+    const int p = int(blockIdx.z);
+    const int row = int(blockIdx.y) * 32 + int(threadIdx.y);
+    const int col = int(blockIdx.x) * 32 + int(threadIdx.x);
+    int aq0, aq1, ao;
+    select_prepack_a(p, aq0, aq1, ao);
+    const int hm = h / 2, hk = k / 2;
 #pragma unroll
     for (int j = 0; j < 32; j += 8) {
-        out[size_t(cc + j) * h + rr] = __float2half_rn(tile[threadIdx.x][threadIdx.y + j]);
+        const int r = row + j;
+        const size_t pos0 = size_t((aq0 >> 1) * hm + r) * k + col + (aq0 & 1) * hk;
+        half a0 = __float2half_rn(A[pos0]);
+        if (aq1 >= 0) {
+            const size_t pos1 = size_t((aq1 >> 1) * hm + r) * k + col + (aq1 & 1) * hk;
+            const half a1 = __float2half_rn(A[pos1]);
+            a0 = ao > 0 ? __hadd(a0, a1) : __hsub(a0, a1);
+        }
+        tile[threadIdx.y + j][threadIdx.x] = a0;
     }
+    __syncthreads();
+    const int rr = int(blockIdx.y) * 32 + int(threadIdx.x);
+    const int cc = int(blockIdx.x) * 32 + int(threadIdx.y);
+    half* dst = out + size_t(p) * size_t(hm) * hk;
+#pragma unroll
+    for (int j = 0; j < 32; j += 8)
+        dst[size_t(cc + j) * hm + rr] = tile[threadIdx.x][threadIdx.y + j];
 }
 __global__ void convert_b(const float* __restrict__ B, half* __restrict__ out, size_t count)
 {
@@ -395,7 +454,7 @@ void reserve(T*& p, size_t& cap, size_t count)
 }
 
 namespace cuda {
-void matrix_multiply_wmma_n32_workspace_specialized(const gpu::WorkSize& workSize,
+void matrix_multiply_wmma_n32_workspace_prepack_specialized(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
     unsigned w, unsigned h, unsigned k)
 {
@@ -420,9 +479,11 @@ void matrix_multiply_wmma_n32_workspace_specialized(const gpu::WorkSize& workSiz
         return;
     }
     static Workspace ws;
-    const size_t na = size_t(h) * k, nb = size_t(k) * w;
-    reserve(ws.a, ws.cap_a, na);
-    transpose_a<<<dim3(k / 32, h / 32), dim3(32, 8), 0, stream>>>(a.cuptr(), ws.a, int(h), int(k));
+    const size_t nb = size_t(k) * w;
+    const size_t packed_a = size_t(LEAVES) * (h / 2) * (k / 2);
+    reserve(ws.a, ws.cap_a, packed_a);
+    prepack_a<<<dim3((k / 2) / 32, (h / 2) / 32, LEAVES), dim3(32, 8), 0, stream>>>(
+        a.cuptr(), ws.a, int(h), int(k));
     reserve(ws.b, ws.cap_b, nb);
     convert_b<<<unsigned((nb / 4 + 255) / 256), 256, 0, stream>>>(b.cuptr(), ws.b, nb);
     const InputB* ptr_b = ws.b;
