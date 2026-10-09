@@ -15,7 +15,7 @@ layout (push_constant) uniform PushConstants {
 } params;
 
 shared float part_a[GROUP_SIZE_XY][GROUP_SIZE_XY];
-shared float part_b[GROUP_SIZE_XY][GROUP_SIZE_XY];
+shared float part_b[GROUP_SIZE_XY][GROUP_SIZE_XY * 2];
 
 layout (local_size_x = GROUP_SIZE_XY, local_size_y = GROUP_SIZE_XY) in;
 void main()
@@ -23,31 +23,38 @@ void main()
     const uint local_i = gl_LocalInvocationID.x;
     const uint local_j = gl_LocalInvocationID.y;
 
-    const uint i = gl_GlobalInvocationID.x;
     const uint j = gl_GlobalInvocationID.y;
+    const uint i0 = gl_WorkGroupID.x * GROUP_SIZE_XY * 2 + local_i;
+    const uint i1 = i0 + GROUP_SIZE_XY;
 
-    if (i >= params.w || j >= params.h) {
-        return;
-    }
-
-    float sum = 0;
+    float sum0 = 0;
+    float sum1 = 0;
     for (uint step = 0; step < params.k; step += GROUP_SIZE_XY) {
         part_a[local_j][local_i] = (step + local_i < params.k && j < params.h)
                                         ? a[j * params.k + step + local_i]
                                         : 0;
 
-        part_b[local_j][local_i] = (step + local_j < params.k && i < params.w)
-                                        ? b[i + params.w * (step + local_j)]
+        part_b[local_j][local_i] = (step + local_j < params.k && i0 < params.w)
+                                        ? b[i0 + params.w * (step + local_j)]
                                         : 0;
+        part_b[local_j][local_i + GROUP_SIZE_XY] = (step + local_j < params.k && i1 < params.w)
+                                                        ? b[i1 + params.w * (step + local_j)]
+                                                        : 0;
 
         barrier();
 
         for (uint l = 0; l < GROUP_SIZE_XY; ++l) {
-            sum += part_a[local_j][l] * part_b[l][local_i];
+            sum0 += part_a[local_j][l] * part_b[l][local_i];
+            sum1 += part_a[local_j][l] * part_b[l][local_i + GROUP_SIZE_XY];
         }
 
         barrier();
     }
 
-    c[j * params.w + i] = sum;
+    if (i0 < params.w && j < params.h) {
+        c[j * params.w + i0] = sum0;
+    }
+    if (i1 < params.w && j < params.h) {
+        c[j * params.w + i1] = sum1;
+    }
 }

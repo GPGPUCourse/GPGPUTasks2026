@@ -133,7 +133,7 @@ void run(int argc, char** argv)
             } else if (algorithm == "01 naive") {
                 vk_matrix03MultiplyNaive.exec(params, gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
             } else if (algorithm == "02 using local memory") {
-                vk_matrix04MultiplyViaLocalMemory.exec(params, gpu::WorkSize(GROUP_SIZE_XY, GROUP_SIZE_XY, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
+                vk_matrix04MultiplyViaLocalMemory.exec(params, gpu::WorkSize(GROUP_SIZE_XY, GROUP_SIZE_XY, ceil(w / 2), h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
             } else if (algorithm == "03 using cooperative matrix [+Prestige Points]") {
                 vk_matrix05MultiplyCooperativeMatrix.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
             } else {
