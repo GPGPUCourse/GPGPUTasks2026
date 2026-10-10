@@ -148,11 +148,7 @@ void run(int argc, char** argv)
                     } else if (algorithm == "02 using local memory") {
                         cuda::matrix_multiply_via_local_memory(gpu::WorkSize(MATMUL_DIM, MATMUL_DIM, w/4, h/4), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
-                        int groupsX = div_ceil((int)w, TILE_SIZE * TILES_X);
-                        int groupsY = div_ceil((int)h, TILE_SIZE * TILES_Y);
-                        int threadsX = groupsX * WGSIZE_X;
-                        int threadsY = groupsY * WGSIZE_Y;
-                        cuda::matrix_multiply_wmma(gpu::WorkSize(WGSIZE_X, WGSIZE_Y, threadsX, threadsY), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                        cuda::matrix_multiply_wmma(gpu::WorkSize(16, 16, w / 8, h / 8), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
