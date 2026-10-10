@@ -21,8 +21,8 @@ __global__ void matrix_multiply_wmma(
                        unsigned int k)
 {
     // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
-    __shared__ half local_a[TILES_Y][TILE_SIZE][WGSIZE_X/TILE_SIZE][TILE_SIZE];
-    __shared__ half local_b[WGSIZE_X/TILE_SIZE][TILES_X][TILE_SIZE][TILE_SIZE];
+    __shared__ half local_a[TILES_Y][WGSIZE_X/TILE_SIZE][TILE_SIZE][TILE_SIZE];
+    __shared__ half local_b[WGSIZE_X/TILE_SIZE][TILES_X][TILE_SIZE][TILE_SIZE+8];
 
     uint32_t wi = threadIdx.y;
     wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> a_frag;
@@ -39,8 +39,8 @@ __global__ void matrix_multiply_wmma(
         uint32_t offsetX = i * TILE_SIZE + threadIdx.x;
         half a1 = a[offsetY1 * k + offsetX];
         half a2 = a[offsetY2 * k + offsetX];
-        local_a[tile_y][threadIdx.y][threadIdx.x/TILE_SIZE][threadIdx.x%TILE_SIZE] = a1; // load two tiles' rows at once
-        local_a[tile_y][threadIdx.y + WGSIZE_Y][threadIdx.x/TILE_SIZE][threadIdx.x%TILE_SIZE] = a2; // load two tiles' rows at once
+        local_a[tile_y][threadIdx.x/TILE_SIZE][threadIdx.y][threadIdx.x%TILE_SIZE] = a1; // load two tiles' rows at once
+        local_a[tile_y][threadIdx.x/TILE_SIZE][threadIdx.y + WGSIZE_Y][threadIdx.x%TILE_SIZE] = a2; // load two tiles' rows at once
       }
       for (int tile_y = 0; tile_y < WGSIZE_X/TILE_SIZE; ++tile_y) {
         for (int tile_x = 0; tile_x < TILES_X; tile_x += 2) {
@@ -55,11 +55,11 @@ __global__ void matrix_multiply_wmma(
       }
       __syncthreads();
       for (int tile_x = 0; tile_x < TILES_X; ++tile_x) {
-        wmma::load_matrix_sync(a_frag, (half*)local_a[wi][0][0], WGSIZE_X);
-        wmma::load_matrix_sync(b_frag, (half*)local_b[0][tile_x], 16);
+        wmma::load_matrix_sync(a_frag, (half*)local_a[wi][0], 16);
+        wmma::load_matrix_sync(b_frag, (half*)local_b[0][tile_x], 24);
         wmma::mma_sync(c_frag[tile_x], a_frag, b_frag, c_frag[tile_x]);
-        wmma::load_matrix_sync(a_frag, (half*)local_a[wi][0][1], WGSIZE_X);
-        wmma::load_matrix_sync(b_frag, (half*)local_b[1][tile_x], 16);
+        wmma::load_matrix_sync(a_frag, (half*)local_a[wi][1], 16);
+        wmma::load_matrix_sync(b_frag, (half*)local_b[1][tile_x],24);
         wmma::mma_sync(c_frag[tile_x], a_frag, b_frag, c_frag[tile_x]);
       }
       __syncthreads();
