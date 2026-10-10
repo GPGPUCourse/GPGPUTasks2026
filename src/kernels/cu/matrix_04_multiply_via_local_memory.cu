@@ -4,9 +4,7 @@
 
 #include <libgpu/cuda/cu/common.cu>
 
-#include "helpers/rassert.cu"
-#include "../defines.h"
-
+// blockDim.x == blockDim.y only
 __global__ void matrix_multiply_via_local_memory(
                        const float* a, // rows=h x cols=k
                        const float* b, // rows=k x cols=w
@@ -15,7 +13,47 @@ __global__ void matrix_multiply_via_local_memory(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO
+    const unsigned int TILE = 32;
+    const unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    __shared__ float local_a[TILE * TILE];
+    __shared__ float local_b[TILE * TILE];
+
+    float res = 0.0f;
+
+    unsigned int iters = (k + TILE - 1) / TILE;
+
+    for (unsigned int i = 0; i < iters; ++i) {
+        unsigned int a_col = i * TILE + threadIdx.x;
+        unsigned int b_row = i * TILE + threadIdx.y;
+
+        if (y < h && a_col < k) {
+            local_a[threadIdx.y * TILE + threadIdx.x] = a[y * k + a_col];
+        }
+        else {
+            local_a[threadIdx.y * TILE + threadIdx.x] = 0;
+        }
+
+        if (b_row < k && x < w) {
+            local_b[threadIdx.y * TILE + threadIdx.x] = b[b_row * w + x];
+        }
+        else {
+            local_b[threadIdx.y * TILE + threadIdx.x] = 0;
+        }
+
+        __syncthreads();
+
+        for (unsigned int j = 0; j < TILE; ++j) {
+            res += local_a[threadIdx.y * TILE + j] * local_b[j * TILE + threadIdx.x];
+        }
+
+        __syncthreads();
+    }
+
+    if (x < w && y < h) {
+        c[y * w + x] = res;
+    }
 }
 
 namespace cuda {

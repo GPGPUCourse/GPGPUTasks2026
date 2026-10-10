@@ -4,16 +4,31 @@
 
 #include <libgpu/cuda/cu/common.cu>
 
-#include "helpers/rassert.cu"
-#include "../defines.h"
-
+// blockDim.x == blockDim.y only
 __global__ void matrix_transpose_coalesced_via_local_memory(
                        const float* matrix,            // w x h
                              float* transposed_matrix, // h x w
                              unsigned int w,
                              unsigned int h)
 {
-    // TODO
+    const unsigned int TILE = 32;
+    __shared__ float local_data[TILE * TILE];
+    const unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= w || y >= h) {
+        return;
+    }
+
+    // cyclic shift of each row by threadIdx.y
+    local_data[threadIdx.y * TILE + ((threadIdx.x + threadIdx.y) % TILE)] = matrix[y * w + x];
+    
+    __syncthreads();
+
+    const unsigned int trans_x = blockIdx.y * TILE + threadIdx.x;
+    const unsigned int trans_y = blockIdx.x * TILE + threadIdx.y;
+
+    transposed_matrix[trans_y * h + trans_x] = local_data[threadIdx.x * TILE + ((threadIdx.y + threadIdx.x) % TILE)];
 }
 
 namespace cuda {
