@@ -12,6 +12,8 @@
 #include <mma.h>
 using namespace nvcuda;
 
+#define TILE_SIZE_SQ TILE_SIZE_CUDA * TILE_SIZE_CUDA
+
 __global__ void matrix_multiply_wmma(
                        const float* a, // rows=h x cols=k
                        const float* b, // rows=k x cols=w
@@ -21,16 +23,19 @@ __global__ void matrix_multiply_wmma(
                        unsigned int k)
 {
   wmma::fragment<wmma::matrix_a, TILE_SIZE_CUDA, TILE_SIZE_CUDA, TILE_SIZE_CUDA, half, wmma::row_major> frag_a;
-  wmma::fragment<wmma::matrix_b, TILE_SIZE_CUDA, TILE_SIZE_CUDA, TILE_SIZE_CUDA, half, wmma::row_major> frag_b;
-  wmma::fragment<wmma::accumulator, TILE_SIZE_CUDA, TILE_SIZE_CUDA, TILE_SIZE_CUDA, float> frag_c;
+  wmma::fragment<wmma::matrix_b, TILE_SIZE_CUDA, TILE_SIZE_CUDA, TILE_SIZE_CUDA, half, wmma::row_major> frag_b0;
+  wmma::fragment<wmma::matrix_b, TILE_SIZE_CUDA, TILE_SIZE_CUDA, TILE_SIZE_CUDA, half, wmma::row_major> frag_b1;
+  wmma::fragment<wmma::accumulator, TILE_SIZE_CUDA, TILE_SIZE_CUDA, TILE_SIZE_CUDA, float> frag_c0;
+  wmma::fragment<wmma::accumulator, TILE_SIZE_CUDA, TILE_SIZE_CUDA, TILE_SIZE_CUDA, float> frag_c1;
 
-  wmma::fill_fragment(frag_c, 0.0f);
+  wmma::fill_fragment(frag_c0, 0.0f);
+  wmma::fill_fragment(frag_c1, 0.0f);
 
-  __shared__ __align__(32) half tile_a[TILE_SIZE_CUDA * TILE_SIZE_CUDA];
-  __shared__ __align__(32) half tile_b[TILE_SIZE_CUDA * TILE_SIZE_CUDA];
+  __shared__ __align__(32) half tile_a[TILE_SIZE_SQ];
+  __shared__ __align__(32) half tile_b[2 * TILE_SIZE_SQ];
 
   for (unsigned step = 0; step < k; step += TILE_SIZE_CUDA) {
-    for (unsigned n = threadIdx.x; n < TILE_SIZE_CUDA * TILE_SIZE_CUDA; n += blockDim.x) {
+    for (unsigned n = threadIdx.x; n < TILE_SIZE_SQ; n += blockDim.x) {
       const uint j = n / TILE_SIZE_CUDA;
       const uint i = n % TILE_SIZE_CUDA;
 
@@ -39,24 +44,34 @@ __global__ void matrix_multiply_wmma(
       tile_a[n] = (a_j < h && a_i < k) ? __float2half(a[a_j * k + a_i]) : __float2half(0.0);
 
       const uint b_j = step + j;
-      const uint b_i = blockIdx.x * TILE_SIZE_CUDA + i;
-      tile_b[n] = (b_j < k && b_i < w) ? __float2half(b[b_j * w + b_i]) : __float2half(0.0);
+      const uint b_i0 = blockIdx.x * 2 * TILE_SIZE_CUDA + i;
+      tile_b[n] = (b_j < k && b_i0 < w) ? __float2half(b[b_j * w + b_i0]) : __float2half(0.0);
+
+      const uint b_i1 = b_i0 + TILE_SIZE_CUDA;
+      tile_b[n + TILE_SIZE_SQ] = (b_j < k && b_i1 < w)
+                                                      ? __float2half(b[b_j * w + b_i1])
+                                                      : __float2half(0.0);
     }
 
     __syncthreads();
 
     wmma::load_matrix_sync(frag_a, tile_a, TILE_SIZE_CUDA);
-    wmma::load_matrix_sync(frag_b, tile_b, TILE_SIZE_CUDA);
+    wmma::load_matrix_sync(frag_b0, tile_b, TILE_SIZE_CUDA);
+    wmma::load_matrix_sync(frag_b1, tile_b + TILE_SIZE_SQ, TILE_SIZE_CUDA);
 
-    wmma::mma_sync(frag_c, frag_a, frag_b, frag_c);
+    wmma::mma_sync(frag_c0, frag_a, frag_b0, frag_c0);
+    wmma::mma_sync(frag_c1, frag_a, frag_b1, frag_c1);
 
     __syncthreads();
   }
 
-  float* tile_c = c + blockIdx.y * TILE_SIZE_CUDA * w + blockIdx.x * TILE_SIZE_CUDA;
+  float* tile_c0 = c + blockIdx.y * TILE_SIZE_CUDA * w + blockIdx.x * 2 * TILE_SIZE_CUDA;
+  float* tile_c1 = tile_c0 + TILE_SIZE_CUDA;
 
   wmma::store_matrix_sync(
-      tile_c, frag_c, w, wmma::mem_row_major);
+      tile_c0, frag_c0, w, wmma::mem_row_major);
+  wmma::store_matrix_sync(
+      tile_c1, frag_c1, w, wmma::mem_row_major);
 }
 
 namespace cuda {

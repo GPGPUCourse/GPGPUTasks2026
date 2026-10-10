@@ -7,7 +7,7 @@
 #define GROUP_SIZE_XY     32
 #define GROUP_SIZE_COOP   32
 #define TILE_SIZE_VULKAN  8
-#define TILE_SIZE_CUDA    32
+#define TILE_SIZE_CUDA    16
 
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
 

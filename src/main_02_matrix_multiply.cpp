@@ -232,7 +232,7 @@ void RunCudaTensorKernel(int argc, char** argv) {
   for (std::size_t iteration = 0; iteration < 10; ++iteration) {
     timer t;
 
-    const unsigned tile_cnt_x = (w + TILE_SIZE_CUDA - 1) / TILE_SIZE_CUDA;
+    const unsigned tile_cnt_x = (w + 2 * TILE_SIZE_CUDA - 1) / (2 * TILE_SIZE_CUDA);
     const unsigned tile_cnt_y = (h + TILE_SIZE_CUDA - 1) / TILE_SIZE_CUDA;
     cuda::matrix_multiply_wmma(
       gpu::WorkSize(GROUP_SIZE_COOP, 1, tile_cnt_x * GROUP_SIZE_COOP,
