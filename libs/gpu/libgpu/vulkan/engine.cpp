@@ -217,7 +217,7 @@ avk2::InstanceContext::InstanceContext(bool enable_validation_layers)
 	// because now was (optionally) created with enabled validation layers and debug extensions
 	// f.e. this init is required for vkCreateDebugUtilsMessengerEXT loading - see rassert 378392459011272
 	// also this init is required for vkCmdPushConstants loading - see rassert 315723128637936
-	VKF.init(vk::Instance(*instance_));
+	VKF.init(**instance_);
 
 	is_debug_callback_triggered_ = false;
 	if (enable_validation_layers) {
@@ -419,9 +419,9 @@ public:
 		}
 		// see https://gpuopen-librariesandsdks.github.io/VulkanMemoryAllocator/html/quick_start.html
 		allocatorCreateInfo.vulkanApiVersion = VULKAN_MIN_VERSION; // it should be equal to vk::ApplicationInfo.apiVersion
-		allocatorCreateInfo.physicalDevice = vk::PhysicalDevice(*physical_device_.get());
-		allocatorCreateInfo.device = vk::Device(*device_.get());
-		allocatorCreateInfo.instance = vk::Instance(*instance_context_->instance());
+		allocatorCreateInfo.physicalDevice = **physical_device_;
+		allocatorCreateInfo.device = **device_;
+		allocatorCreateInfo.instance = static_cast<VkInstance>(*instance_context_->instance());
 		allocatorCreateInfo.pVulkanFunctions = &vulkanFunctions;
 		vma_ = std::shared_ptr<VmaAllocator>(new VmaAllocator());
 		VK_CHECK_RESULT(vmaCreateAllocator(&allocatorCreateInfo, vma_.get()), 56748938637);
@@ -516,7 +516,7 @@ vk::raii::CommandPool &avk2::VulkanEngine::getCommandPool()
 
 vk::raii::CommandBuffer avk2::VulkanEngine::createCommandBuffer()
 {
-	vk::CommandBufferAllocateInfo command_buffer_allocate_info(getCommandPool(), vk::CommandBufferLevel::ePrimary, 1);
+	vk::CommandBufferAllocateInfo command_buffer_allocate_info(*getCommandPool(), vk::CommandBufferLevel::ePrimary, 1);
 	vk::raii::CommandBuffer command_buffer = std::move(vk::raii::CommandBuffers(getDevice(), command_buffer_allocate_info)[0]);
 	return command_buffer;
 }
@@ -524,16 +524,16 @@ vk::raii::CommandBuffer avk2::VulkanEngine::createCommandBuffer()
 void avk2::VulkanEngine::submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer)
 {
 	std::shared_ptr<vk::raii::Fence> fence = submitCommandBufferAsync(command_buffer);
-	VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 345123451241);
+	VK_CHECK_RESULT(getDevice().waitForFences(**fence, true, VULKAN_TIMEOUT_NANOSECS), 345123451241);
 }
 
 std::shared_ptr<vk::raii::Fence> avk2::VulkanEngine::submitCommandBufferAsync(const vk::raii::CommandBuffer &command_buffer)
 {
-	vk::CommandBuffer command_buffer_non_raii = command_buffer;
+	vk::CommandBuffer command_buffer_non_raii = *command_buffer;
 	std::shared_ptr<vk::raii::Fence> fence = std::make_shared<vk::raii::Fence>(getDevice(), vk::FenceCreateInfo());
 
 	vk::SubmitInfo submit_info(nullptr, nullptr, command_buffer_non_raii);
-	getQueue().submit({submit_info}, *fence);
+	getQueue().submit({submit_info}, **fence);
 
 	return fence;
 }
@@ -544,8 +544,8 @@ vk::raii::DescriptorSet avk2::VulkanEngine::allocateDescriptor(vk::raii::Descrip
 	for (auto type: descriptor_types) {
 		rassert(std::find(supported_types.begin(), supported_types.end(), type) != supported_types.end(), 389005302, to_string(type));
 	}
-	vk::DescriptorSetLayout descriptor_set_layout_non_raii = descriptor_set_layout;
-	vk::DescriptorSetAllocateInfo allocate_info(getDescriptorPool(), descriptor_set_layout_non_raii);
+	vk::DescriptorSetLayout descriptor_set_layout_non_raii = *descriptor_set_layout;
+	vk::DescriptorSetAllocateInfo allocate_info(*getDescriptorPool(), descriptor_set_layout_non_raii);
 	std::vector<vk::raii::DescriptorSet> descriptor_sets = avk2_context_->device_->allocateDescriptorSets(allocate_info);
 	rassert(descriptor_sets.size() == 1, 764756099177612);
 	return std::move(descriptor_sets[0]);
@@ -765,7 +765,7 @@ void avk2::VulkanEngine::writeImage(const avk2::raii::ImageData &image_dst, cons
 			}
 
 			if (is_prev_chunk_exists) {
-				VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 4512341231);
+				VK_CHECK_RESULT(getDevice().waitForFences(**fence, true, VULKAN_TIMEOUT_NANOSECS), 4512341231);
 			}
 		}
 	}
@@ -857,7 +857,7 @@ void avk2::VulkanEngine::readImage(const avk2::raii::ImageData &image_src, const
 			}
 
 			if (is_cur_chunk_exists) {
-				VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 34124125123);
+				VK_CHECK_RESULT(getDevice().waitForFences(**fence, true, VULKAN_TIMEOUT_NANOSECS), 34124125123);
 			}
 		}
 	}
@@ -962,7 +962,7 @@ void avk2::VulkanEngine::writeBuffer(const avk2::raii::BufferData &buffer_dst, s
 		}
 
 		if (is_prev_chunk_exists) {
-			VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 453151251236);
+		VK_CHECK_RESULT(getDevice().waitForFences(**fence, true, VULKAN_TIMEOUT_NANOSECS), 453151251236);
 		}
 	}
 }
@@ -1006,7 +1006,7 @@ void avk2::VulkanEngine::readBuffer(const avk2::raii::BufferData &buffer_src, si
 		}
 
 		if (is_cur_chunk_exists) {
-			VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 675623543242141);
+			VK_CHECK_RESULT(getDevice().waitForFences(**fence, true, VULKAN_TIMEOUT_NANOSECS), 675623543242141);
 		}
 	}
 }
@@ -1154,7 +1154,7 @@ avk2::VulkanKernel *avk2::KernelSource::compileComputeKernel(const std::shared_p
 	avk2::ShaderModuleInfo shader_module_info;
 	vk::raii::ShaderModule shader_module = createShaderModule(vk, *compute_program, &shader_module_info);
 
-	vk::PipelineShaderStageCreateInfo pipeline_stages_create_info({}, vk::ShaderStageFlagBits::eCompute, shader_module, name_.c_str());
+	vk::PipelineShaderStageCreateInfo pipeline_stages_create_info({}, vk::ShaderStageFlagBits::eCompute, *shader_module, name_.c_str());
 
         vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo require_subgroup;
         if (shader_module_info.getGroupSize(name_)[0] % VK_SUBGROUP_SIZE == 0) {
@@ -1176,7 +1176,7 @@ avk2::VulkanKernel *avk2::KernelSource::compileComputeKernel(const std::shared_p
 
 	vk::raii::DescriptorSetLayout descriptor_set_layout_raii = vk->getDevice().createDescriptorSetLayout(vk::DescriptorSetLayoutCreateInfo({}, descriptor_set_layout_bindings));
 	vk::raii::DescriptorSetLayout descriptor_set_layout_rassert_raii = vk->getDevice().createDescriptorSetLayout(vk::DescriptorSetLayoutCreateInfo({}, descriptor_set_layout_rassert_binding));
-	std::vector<vk::DescriptorSetLayout> descriptor_set_layouts_non_raii = { descriptor_set_layout_raii, descriptor_set_layout_rassert_raii };
+	std::vector<vk::DescriptorSetLayout> descriptor_set_layouts_non_raii = { *descriptor_set_layout_raii, *descriptor_set_layout_rassert_raii };
 	vk::PipelineLayoutCreateInfo pipeline_create_info(vk::PipelineLayoutCreateFlags(), descriptor_set_layouts_non_raii);
 
 	// see https://vkguide.dev/docs/new_chapter_2/vulkan_pushconstants/ and https://vkguide.dev/docs/chapter-3/push_constants/
@@ -1189,7 +1189,7 @@ avk2::VulkanKernel *avk2::KernelSource::compileComputeKernel(const std::shared_p
 //	vk::PipelineShaderStageCreateInfo pipeline_shader_create_info(vk::PipelineShaderStageCreateFlags(), vk::ShaderStageFlagBits::eCompute, shader_module, name_.c_str());
 
 	vk::ComputePipelineCreateInfo compute_pipeline_create_info;
-	compute_pipeline_create_info.setLayout(pipeline_layout);
+	compute_pipeline_create_info.setLayout(*pipeline_layout);
 	compute_pipeline_create_info.setStage(pipeline_stages_create_info);
 
     // To make possible automatic subdivision of workload (i.e. to use dispatchBase(baseGroup, groupCount)),
@@ -1320,7 +1320,7 @@ void avk2::KernelSource::exec(const PushConstant &params, const gpu::WorkSize &w
 	std::vector<vk::WriteDescriptorSet> descriptor_writes(nargs);
 	for (size_t i = 0; i < nargs; ++i) {
 		unsigned int binding = i;
-		descriptor_writes[i] = vk::WriteDescriptorSet(descriptor_set, binding, 0, 1, descriptor_types[i]);
+		descriptor_writes[i] = vk::WriteDescriptorSet(*descriptor_set, binding, 0, 1, descriptor_types[i]);
 		if (args[i].buffer) {
 			rassert(vk::DescriptorType::eStorageBuffer == descriptor_types[i], 963647016);
 
@@ -1353,9 +1353,9 @@ void avk2::KernelSource::exec(const PushConstant &params, const gpu::WorkSize &w
 	vk::raii::CommandBuffer command_buffer = context.vk()->createCommandBuffer();
 
 	command_buffer.begin(vk::CommandBufferBeginInfo(vk::CommandBufferUsageFlagBits::eOneTimeSubmit));
-	command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, kernel->pipeline());
+	command_buffer.bindPipeline(vk::PipelineBindPoint::eCompute, *kernel->pipeline());
 
-	std::vector<vk::DescriptorSet> descriptor_sets_non_raii = { descriptor_set };
+	std::vector<vk::DescriptorSet> descriptor_sets_non_raii = { *descriptor_set };
 	std::shared_ptr<vk::raii::DescriptorSetLayout> descriptor_set_layout_rassert_raii;
 	std::shared_ptr<vk::raii::DescriptorSet> rassert_descriptor_set;
 	if (kernel->isRassertUsed()) {
@@ -1366,18 +1366,18 @@ void avk2::KernelSource::exec(const PushConstant &params, const gpu::WorkSize &w
 		rassert_descriptor_set = std::make_shared<vk::raii::DescriptorSet>(std::move(context.vk()->allocateDescriptor(*descriptor_set_layout_rassert_raii, rassert_descriptor_types)));
 
 		vk::DescriptorBufferInfo buffer_info = vk::DescriptorBufferInfo(kernel->rassertCodeAndLineBuffer().vkBufferData()->getBuffer(), kernel->rassertCodeAndLineBuffer().vkoffset(), kernel->rassertCodeAndLineBuffer().size());
-		vk::WriteDescriptorSet descriptor_write = vk::WriteDescriptorSet(*rassert_descriptor_set, VK_RASSERT_CODE_BINDING_SLOT, 0, 1, rassert_descriptor_types[0]);
+		vk::WriteDescriptorSet descriptor_write = vk::WriteDescriptorSet(**rassert_descriptor_set, VK_RASSERT_CODE_BINDING_SLOT, 0, 1, rassert_descriptor_types[0]);
 		descriptor_write.setBufferInfo(buffer_info);
 
 		context.vk()->getDevice().updateDescriptorSets(descriptor_write, nullptr);
 
-		descriptor_sets_non_raii.push_back(*rassert_descriptor_set);
+		descriptor_sets_non_raii.push_back(**rassert_descriptor_set);
 	}
-	command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, vk::PipelineLayout(kernel->pipelineLayout()), 0, descriptor_sets_non_raii, nullptr);
+	command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *kernel->pipelineLayout(), 0, descriptor_sets_non_raii, nullptr);
  
 	// we don't use C++ API here because we want to manually specify size of push constant (via passing push_constant.size())
 	rassert(VKF.vkCmdPushConstants, 315723128637936);
-	VKF.vkCmdPushConstants(vk::CommandBuffer(command_buffer), VkPipelineLayout(vk::PipelineLayout(kernel->pipelineLayout())), VK_SHADER_STAGE_COMPUTE_BIT, 0, push_constant.size(), push_constant.ptr());
+	VKF.vkCmdPushConstants(*command_buffer, static_cast<VkPipelineLayout>(*kernel->pipelineLayout()), VK_SHADER_STAGE_COMPUTE_BIT, 0, push_constant.size(), push_constant.ptr());
 
 	std::vector<size_t> spirv_group_size = kernel->shaderModuleInfo().getGroupSize(name_);
 	for (size_t d = 0; d < 3; ++d) {
@@ -1506,7 +1506,7 @@ void avk2::KernelSource::launchRender(const RenderBuilder &params, const Arg &ar
 			std::shared_ptr<vk::raii::ShaderModule> shader_module = std::make_shared<vk::raii::ShaderModule>(std::move(createShaderModule(context.vk(), *program, &shader_module_info)));
 			shader_modules.push_back(shader_module);
 
-			vk::PipelineShaderStageCreateInfo pipeline_stages_create_info({}, shader_stage, *shader_module, name_.c_str());
+			vk::PipelineShaderStageCreateInfo pipeline_stages_create_info({}, shader_stage, **shader_module, name_.c_str());
 			pipeline_stages.push_back(pipeline_stages_create_info);
 			pipeline_stages_shader_module_info.push_back(shader_module_info);
 		}
@@ -1521,11 +1521,11 @@ void avk2::KernelSource::launchRender(const RenderBuilder &params, const Arg &ar
 				std::vector<vk::DescriptorSetLayoutBinding> descriptor_set_layout_bindings = createDescriptorSetLayoutBindings(descriptor_types, vk::ShaderStageFlagBits::eAllGraphics);
 				descriptor_set_layout_raii = std::make_shared<vk::raii::DescriptorSetLayout>(std::move(vk->getDevice().createDescriptorSetLayout(vk::DescriptorSetLayoutCreateInfo({}, descriptor_set_layout_bindings))));
 				descriptor_set = std::make_shared<vk::raii::DescriptorSet>(std::move(context.vk()->allocateDescriptor(*descriptor_set_layout_raii, descriptor_types)));
-				descriptor_set_layouts_non_raii.push_back(*descriptor_set_layout_raii);
+				descriptor_set_layouts_non_raii.push_back(**descriptor_set_layout_raii);
 			} else if (descriptors_sets.count(VK_RASSERT_CODE_SET) > 0) {
 				// we need to create empty descriptor at set#0 (i.e. VK_MAIN_BINDING_SET) so that next one will be set#1 (i.e. VK_RASSERT_CODE_SET)
 				descriptor_set_layout_raii = std::make_shared<vk::raii::DescriptorSetLayout>(std::move(vk->getDevice().createDescriptorSetLayout(vk::DescriptorSetLayoutCreateInfo({}, 0))));
-				descriptor_set_layouts_non_raii.push_back(*descriptor_set_layout_raii);
+				descriptor_set_layouts_non_raii.push_back(**descriptor_set_layout_raii);
 			}
 
 			if (descriptors_sets.count(VK_RASSERT_CODE_SET) > 0) {
@@ -1547,12 +1547,12 @@ void avk2::KernelSource::launchRender(const RenderBuilder &params, const Arg &ar
 					rassert(rassert_descriptor_types[0] == vk::DescriptorType::eStorageBuffer, 132105684);
 
 					vk::DescriptorBufferInfo buffer_info = vk::DescriptorBufferInfo(rassert_code_and_line_.vkBufferData()->getBuffer(), rassert_code_and_line_.vkoffset(), rassert_code_and_line_.size());
-					vk::WriteDescriptorSet descriptor_write = vk::WriteDescriptorSet(*rassert_descriptor_set.get(), VK_RASSERT_CODE_BINDING_SLOT, 0, 1, rassert_descriptor_types[0]);
+					vk::WriteDescriptorSet descriptor_write = vk::WriteDescriptorSet(**rassert_descriptor_set, VK_RASSERT_CODE_BINDING_SLOT, 0, 1, rassert_descriptor_types[0]);
 					descriptor_write.setBufferInfo(buffer_info);
 
 					context.vk()->getDevice().updateDescriptorSets(descriptor_write, nullptr);
 				}
-				descriptor_set_layouts_non_raii.push_back(*descriptor_set_layout_rassert_raii);
+				descriptor_set_layouts_non_raii.push_back(**descriptor_set_layout_rassert_raii);
 			}
 
 			vk::PipelineLayoutCreateInfo pipeline_create_info(vk::PipelineLayoutCreateFlags(), descriptor_set_layouts_non_raii);
@@ -1581,7 +1581,7 @@ void avk2::KernelSource::launchRender(const RenderBuilder &params, const Arg &ar
 	for (size_t i = 0; i < nargs; ++i) {
 		unsigned int binding = i;
 		rassert(descriptor_set, 787763202);
-		descriptor_writes[i] = vk::WriteDescriptorSet(*descriptor_set, binding, 0, 1, descriptor_types[i]);
+		descriptor_writes[i] = vk::WriteDescriptorSet(**descriptor_set, binding, 0, 1, descriptor_types[i]);
 		if (args_uniforms[i].buffer) {
 			rassert(vk::DescriptorType::eStorageBuffer == descriptor_types[i], 9636470163);
 
@@ -1698,7 +1698,7 @@ void avk2::KernelSource::launchRender(const RenderBuilder &params, const Arg &ar
 			}
 		}
 		rassert(nlayers >= 1, 488150461);
-		vk::FramebufferCreateInfo framebuffer_create_info({}, *render_pass, attachments_image_views, params.viewport_width_, params.viewport_height_, nlayers);
+		vk::FramebufferCreateInfo framebuffer_create_info({}, **render_pass, attachments_image_views, params.viewport_width_, params.viewport_height_, nlayers);
 		framebuffer = std::shared_ptr<vk::raii::Framebuffer>(new vk::raii::Framebuffer(context.vk()->getDevice(), framebuffer_create_info));
 	}
 
@@ -1776,8 +1776,8 @@ void avk2::KernelSource::launchRender(const RenderBuilder &params, const Arg &ar
 			&pipeline_depth_stencil,
 			&pipeline_color_blend,
 			&pipeline_dynamic,
-			*pipeline_layout, // TODO: rework this
-			vk::RenderPass(*render_pass)
+			**pipeline_layout, // TODO: rework this
+			**render_pass
 		);
 
 		// TODO it should be cached (assuming any property haven't changed)
@@ -1816,28 +1816,28 @@ void avk2::KernelSource::launchRender(const RenderBuilder &params, const Arg &ar
 				}
 			}
 		}
-		vk::RenderPassBeginInfo render_pass_begin_info(*render_pass, *framebuffer, render_area, clear_values);
+		vk::RenderPassBeginInfo render_pass_begin_info(**render_pass, **framebuffer, render_area, clear_values);
 		command_buffer.beginRenderPass(render_pass_begin_info, vk::SubpassContents::eInline);
-		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, *graphics_pipeline);
+		command_buffer.bindPipeline(vk::PipelineBindPoint::eGraphics, **graphics_pipeline);
 
 		std::vector<vk::DescriptorSet> descriptor_sets_non_raii;
 		unsigned int first_set = std::numeric_limits<unsigned int>::max();
 		if (descriptor_set) {
 			first_set = std::min(first_set, (unsigned int) VK_MAIN_BINDING_SET);
-			descriptor_sets_non_raii.push_back(*descriptor_set);
+			descriptor_sets_non_raii.push_back(**descriptor_set);
 		}
 		if (rassert_descriptor_set) {
 			first_set = std::min(first_set, (unsigned int) VK_RASSERT_CODE_SET);
-			descriptor_sets_non_raii.push_back(*rassert_descriptor_set);
+			descriptor_sets_non_raii.push_back(**rassert_descriptor_set);
 		}
 		if (descriptor_sets_non_raii.size() > 0) {
-			command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, *pipeline_layout, first_set, descriptor_sets_non_raii, nullptr);
+			command_buffer.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, **pipeline_layout, first_set, descriptor_sets_non_raii, nullptr);
 		}
  
 		// we don't use C++ API here because we want to manually specify size of push constant (via passing push_constant_.size())
 		if (params.push_constant_.size() > 0) {
 			rassert(VKF.vkCmdPushConstants, 3157231286379363);
-			VKF.vkCmdPushConstants(vk::CommandBuffer(command_buffer), VkPipelineLayout(**pipeline_layout), VK_SHADER_STAGE_ALL_GRAPHICS, 0, params.push_constant_.size(), params.push_constant_.ptr());
+			VKF.vkCmdPushConstants(*command_buffer, static_cast<VkPipelineLayout>(**pipeline_layout), VK_SHADER_STAGE_ALL_GRAPHICS, 0, params.push_constant_.size(), params.push_constant_.ptr());
 		}
 
 		rassert(params.viewport_min_depth_ >= 0.0f && params.viewport_max_depth_ <= 1.0f, 691689354);

@@ -20,7 +20,7 @@ __global__ void matrix_multiply_wmma(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
+    
 }
 
 namespace cuda {
