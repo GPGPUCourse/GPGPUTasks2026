@@ -131,7 +131,7 @@ void run(int argc, char** argv)
         for (int iter = 0; iter < iters_count; ++iter) {
             timer t;
 
-            if (algorithm == "CPU with OpenMP") {
+            if (algorithm == "CPU with OpenMP") {//
                 cpu::multiply(input_a_cpu, input_b_cpu, output_c_cpu, w, h, k, true);
             } else {
                 //throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED); // remove me
