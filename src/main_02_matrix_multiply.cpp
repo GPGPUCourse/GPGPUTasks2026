@@ -90,6 +90,8 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32f matrix_a_gpu(h * k); // rows=H x cols=K
     gpu::gpu_mem_32f matrix_b_gpu(k * w); // rows=K x cols=W
     gpu::gpu_mem_32f matrix_c_gpu(h * w); // rows=H x cols=W
+    gpu::shared_device_buffer_typed<__half2> matrix_a_half2_gpu(h * k/2); // rows=H x cols=K
+    gpu::shared_device_buffer_typed<__half2> matrix_b_half2_gpu(k * w/2); // rows=K x cols=W
     gpu::shared_device_buffer_typed<__half> matrix_a_half_gpu(h*k);
     gpu::shared_device_buffer_typed<__half> matrix_b_half_gpu(k*w);
     gpu::shared_device_buffer_typed<__half> matrix_c_half_gpu(h*w);
@@ -143,12 +145,12 @@ void run(int argc, char** argv)
                 } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
                     //cuda::gohalf(gpu::WorkSize(16,16,h,k),matrix_a_gpu,matrix_a_half_gpu,h,k);
                     //cuda::gohalf(gpu::WorkSize(16,16,k,w),matrix_b_gpu,matrix_b_half_gpu,k,w);
-                    cuda::gohalf1(gpu::WorkSize(1024,h*k),matrix_a_gpu,matrix_a_half_gpu,h*k);
-                    cuda::gohalf1(gpu::WorkSize(1024,k*w),matrix_b_gpu,matrix_b_half_gpu,k*w);
+                    cuda::gohalf2(gpu::WorkSize(1024,h*k/2),matrix_a_gpu,matrix_a_half2_gpu,h*k);
+                    cuda::gohalf2(gpu::WorkSize(1024,k*w/2),matrix_b_gpu,matrix_b_half2_gpu,k*w);
                     //cuda::create_half_by_1616(gpu::)
                     //throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-                    //assert(h==2048 && k==1024 && w==4096);
-                    cuda::matrix_multiply_wmma_my4(gpu::WorkSize(512,h*w/8), matrix_a_half_gpu, matrix_b_half_gpu, matrix_c_gpu);
+                    //assert(h==2048 && k==1024 && w==4096); //
+                    cuda::matrix_multiply_wmma_my4(gpu::WorkSize(512,h*w/8), matrix_a_half2_gpu, matrix_b_half2_gpu, matrix_c_gpu);
                     //cuda::gofloat(gpu::WorkSize(1024,h*w),matrix_c_half_gpu,matrix_c_gpu,h*w);
                 } else {
                     rassert(false, 652345234321, algorithm, algorithm_index);

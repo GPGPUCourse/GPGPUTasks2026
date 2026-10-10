@@ -66,6 +66,18 @@ __global__ void gohalf1(
     }*/
     b[ii]=__float2half(a[ii]);
 }
+__global__ void gohalf2(
+                       const float* a, // rows=h x cols=k
+                       __half2* b, // rows=k x cols=w
+                       unsigned int n)
+{
+    int ii=blockIdx.x*blockDim.x+threadIdx.x;
+    /*if (ii==0 && jj==0)
+    {
+        printf("i = %d, j = %d, a[][] = %f",ii,jj,a[jj*w+ii]);
+    }*/
+    b[ii]=__floats2half2_rn(a[2*ii],a[2*ii+1]);
+}
 __global__ void gohalf1616(
                        const float* a, // rows=h x cols=k
                        __half* b, // rows=k x cols=w
@@ -262,7 +274,7 @@ __global__ void __launch_bounds__(1024,1) matrix_multiply_wmma_my3(
     #define kkk 4096
     __shared__ __half
 }*/
-__global__ void matrix_multiply_wmma_my4(const __half *a,const __half *b,float *c)
+__global__ void  matrix_multiply_wmma_my4(const __half2 *a,const __half2 *b,float *c)
 {
 #define nnn 2048
 #define mmm 1024
@@ -290,20 +302,23 @@ __global__ void matrix_multiply_wmma_my4(const __half *a,const __half *b,float *
         int startz=blockz*64;
         for (int u=0;u<4;++u)
         {
-            for (int v=0;v<2;++v)
+            //for (int v=0;v<2;++v)
             {
                 int x1=startx+u*16+i;
-                int y1=starty+v*32+j;
-                A[x1-startx][y1-starty]=a[x1*mmm+y1];
+                int y1=starty+2*j;
+                __half2 u=a[(x1*mmm+y1)/2];
+                A[x1-startx][y1-starty]=__low2half(u);
+                A[x1-startx][y1-starty+1]=__high2half(u);
             }
         }
         for (int u=0;u<4;++u)
         {
-            for (int v=0;v<2;++v)
             {
                 int y1=starty+u*16+i;
-                int z1=startz+v*32+j;
-                B[y1-starty][z1-startz]=b[y1*kkk+z1];
+                int z1=startz+2*j;
+                __half2 u=b[(y1*kkk+z1)/2];
+                B[y1-starty][z1-startz]=__low2half(u);
+                B[y1-starty][z1-startz+1]=__high2half(u);
             }
         }
         __syncthreads();
@@ -313,7 +328,7 @@ __global__ void matrix_multiply_wmma_my4(const __half *a,const __half *b,float *
             wmma::load_matrix_sync(b_frag,&B[whoy*16][whoz*16],72);
             wmma::mma_sync(acc_frag,a_frag,b_frag,acc_frag);
         }
-    }
+    }//
     wmma::store_matrix_sync(c+(blockx*64+whox*16)*kkk+(blockz*64+whoz*16),acc_frag,kkk,wmma::mem_row_major);
 }
 namespace cuda {
@@ -335,6 +350,17 @@ namespace cuda {
         rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
         cudaStream_t stream = context.cudaStream();
         ::gohalf1<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), n);
+        CUDA_CHECK_KERNEL(stream);
+    }
+} // namespace cuda
+namespace cuda {
+    void gohalf2(const gpu::WorkSize &workSize,
+                const gpu::gpu_mem_32f &a, gpu::shared_device_buffer_typed<__half2> &b, unsigned int n)
+    {
+        gpu::Context context;
+        rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
+        cudaStream_t stream = context.cudaStream();
+        ::gohalf2<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), n);
         CUDA_CHECK_KERNEL(stream);
     }
 } // namespace cuda
@@ -384,7 +410,7 @@ namespace cuda {
 }
 namespace cuda {
     void matrix_multiply_wmma_my4(const gpu::WorkSize &workSize,
-                const gpu::shared_device_buffer_typed<__half> &a, const gpu::shared_device_buffer_typed<__half> &b, gpu::gpu_mem_32f &c)
+                const gpu::shared_device_buffer_typed<__half2> &a, const gpu::shared_device_buffer_typed<__half2> &b, gpu::gpu_mem_32f &c)
     {
         gpu::Context context;
         rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
