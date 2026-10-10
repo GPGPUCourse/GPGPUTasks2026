@@ -4,7 +4,6 @@
 
 #include <libgpu/cuda/cu/common.cu>
 
-#include "helpers/rassert.cu"
 #include "../defines.h"
 
 __global__ void matrix_transpose_naive(
@@ -14,6 +13,13 @@ __global__ void matrix_transpose_naive(
                              unsigned int h)
 {
     // TODO
+
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x >= w || y >= h) return;
+
+    transposed_matrix[h * x + y] = matrix[w * y + x];
 }
 
 namespace cuda {

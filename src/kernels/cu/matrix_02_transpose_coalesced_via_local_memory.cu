@@ -7,6 +7,7 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+
 __global__ void matrix_transpose_coalesced_via_local_memory(
                        const float* matrix,            // w x h
                              float* transposed_matrix, // h x w
@@ -14,6 +15,23 @@ __global__ void matrix_transpose_coalesced_via_local_memory(
                              unsigned int h)
 {
     // TODO
+
+    __shared__ float local[32][33];
+
+    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (x < w && y < h)
+        local[threadIdx.y][threadIdx.x] = matrix[w * y + x];
+
+    __syncthreads();
+
+
+    unsigned int out_col = blockIdx.y * blockDim.y + threadIdx.x;
+    unsigned int out_row = blockIdx.x * blockDim.x + threadIdx.y;
+
+    if (out_col < h && out_row < w)
+        transposed_matrix[out_row * h + out_col] = local[threadIdx.x][threadIdx.y];
 }
 
 namespace cuda {
