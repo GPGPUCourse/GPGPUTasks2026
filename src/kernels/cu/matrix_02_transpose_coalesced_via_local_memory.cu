@@ -13,7 +13,19 @@ __global__ void matrix_transpose_coalesced_via_local_memory(
                              unsigned int w,
                              unsigned int h)
 {
-    // TODO
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int j = blockIdx.y * blockDim.y + threadIdx.y;
+    unsigned int locali = threadIdx.x;
+    unsigned int localj = threadIdx.y;
+    __shared__ float local[256];
+    // transposed_matrix[i*h+j]=matrix[j*w+i];
+    float value = matrix[j*w+i];
+    unsigned int su = (locali+localj>= 16 ? locali+localj-16 : locali+localj);
+    local[localj*16+su]=value;
+    __syncthreads();
+    unsigned int i1=blockIdx.x * blockDim.x + localj;
+    unsigned int j1=blockIdx.y * blockDim.y + locali;
+    transposed_matrix[i1*h+j1]=local[locali*16+su]; ///bank conflictов почти нет!
 }
 
 namespace cuda {

@@ -5,8 +5,7 @@ project(GPGPUTasks)
 set(CMAKE_CXX_STANDARD 17)
 
 # Если вы установили CUDA SDK - можете включить поддержку CUDA
-option(GPU_CUDA_SUPPORT "CUDA support." OFF)
-
+option(GPU_CUDA_SUPPORT "CUDA support." ON)
 # GLSLC_BIN используйтся для компиляции Vulkan шейдеров (GLSL)
 if (NOT DEFINED GLSLC_BIN)
     # В случае Linux глобальный glslc будет использован (вы его установили среди прочего в scripts/linux/install_vulkan_sdk.sh)
@@ -90,7 +89,7 @@ foreach(VK_FILE IN LISTS VULKAN_SOURCES)
     compile_vulkan(HEADERS ${VK_FILE} VULKAN_DEFINES)
 endforeach()
 
-if (GPU_CUDA_SUPPORT)
+if (1)
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
 
@@ -108,13 +107,16 @@ if (GPU_CUDA_SUPPORT)
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
+    #set_target_properties(${PROJECT_NAME}_core PROPERTIES
+    #        CUDA_SEPARABLE_COMPILATION ON
+    #        CUDA_RESOLVE_DEVICE_SYMBOLS ON
+    #)
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
     target_include_directories(${PROJECT_NAME}_core PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 else ()
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${HEADERS})
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
 endif ()
-
 add_executable(main_aplusb           src/main_aplusb.cpp)
 add_executable(main_matrix_transpose src/main_01_matrix_transpose.cpp)
 add_executable(main_matrix_multiply  src/main_02_matrix_multiply.cpp)
