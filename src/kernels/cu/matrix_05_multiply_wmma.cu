@@ -262,7 +262,7 @@ __global__ void __launch_bounds__(1024,1) matrix_multiply_wmma_my3(
     #define kkk 4096
     __shared__ __half
 }*/
-__global__ void matrix_multiply_wmma_my4(const __half *a,const __half *b,float *c)
+__global__ void __launch_bounds__(512,4) matrix_multiply_wmma_my4(const __half *a,const __half *b,float *c)
 {
 #define nnn 2048
 #define mmm 1024
@@ -272,10 +272,10 @@ __global__ void matrix_multiply_wmma_my4(const __half *a,const __half *b,float *
     ///workgroupsize=512
     int numberofblocksx=(nnn/64);
     //int numberofblocksz=(kkk/64);
-    int blockx=blockIdx.x%numberofblocksx;
-    int blockz=blockIdx.x/numberofblocksx;
-    int i=threadIdx.x/32;
-    int j=threadIdx.x%32;
+    unsigned char blockx=blockIdx.x%numberofblocksx;
+    unsigned char blockz=blockIdx.x/numberofblocksx;
+    unsigned char i=threadIdx.x/32;
+    unsigned char j=threadIdx.x%32;
     wmma::fragment<wmma::matrix_a,16,16,16,__half,wmma::row_major> a_frag;
     wmma::fragment<wmma::matrix_b,16,16,16,__half,wmma::row_major> b_frag;
     wmma::fragment<wmma::accumulator,16,16,16,float> acc_frag;
@@ -284,7 +284,7 @@ __global__ void matrix_multiply_wmma_my4(const __half *a,const __half *b,float *
     int whoz=i/4;
     for (int blocky=0;blocky<mmm/64;++blocky)
     {
-        __syncthreads();
+        //__syncthreads();
         int startx=blockx*64;
         int starty=blocky*64;
         int startz=blockz*64;
@@ -366,7 +366,7 @@ namespace cuda {
     {
         gpu::Context context;
         rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
-        cudaStream_t stream = context.cudaStream();
+        cudaStream_t stream = context.cudaStream();//
         ::matrix_multiply_wmma_my2<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), c.cuptr(), n, m, k);
         CUDA_CHECK_KERNEL(stream);
     }
