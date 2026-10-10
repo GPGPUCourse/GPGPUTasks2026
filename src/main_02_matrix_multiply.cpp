@@ -123,12 +123,12 @@ void run(int argc, char** argv)
             } else if (algorithm == "02 using local memory") {
                 vk_matrix04MultiplyViaLocalMemory.exec(params, gpu::WorkSize(GROUP_SIZE_XY, GROUP_SIZE_XY, ceil(w / 2), h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
             } else if (algorithm == "03 using cooperative matrix [+Prestige Points]") {
-                rassert(context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix"), 32452365324632);
-                auto device_supported_cooperative_matrix_sizes = context.vk()->device().supportedCooperativeMatrixSizes();
-                rassert(context.vk()->device().isCooperativeMatrixSizeSupported(DataType16f, DataType32f, 16, 16, 16), 235243524356);
-                const unsigned tile_cnt_x = (w + TILE_SIZE - 1) / TILE_SIZE;
-                const unsigned tile_cnt_y = (h + TILE_SIZE - 1) / TILE_SIZE;
-                vk_matrix05MultiplyCooperativeMatrix.exec(params, gpu::WorkSize(GROUP_SIZE_COOP, 1, tile_cnt_x * GROUP_SIZE_COOP, tile_cnt_y), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
+                if (context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix") &&
+                    context.vk()->device().isCooperativeMatrixSizeSupported(DataType16f, DataType32f, TILE_SIZE, TILE_SIZE, TILE_SIZE)) {
+                    const unsigned tile_cnt_x = (w + TILE_SIZE - 1) / TILE_SIZE;
+                    const unsigned tile_cnt_y = (h + TILE_SIZE - 1) / TILE_SIZE;
+                    vk_matrix05MultiplyCooperativeMatrix.exec(params, gpu::WorkSize(GROUP_SIZE_COOP, 1, tile_cnt_x * GROUP_SIZE_COOP, tile_cnt_y), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
+                }
             } else {
                 rassert(false, 7652345234321, algorithm, algorithm_index);
             }
