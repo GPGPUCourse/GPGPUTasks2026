@@ -21,37 +21,54 @@ __global__ void matrix_multiply_wmma(
                        unsigned int k)
 {
     // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
-    __shared__ half local_a[8][16][16];
-    __shared__ half local_b[8][16][16];
+    __shared__ half local_a[TILES_Y][TILE_SIZE][WGSIZE_X/TILE_SIZE][TILE_SIZE];
+    __shared__ half local_b[WGSIZE_X/TILE_SIZE][TILES_X][TILE_SIZE][TILE_SIZE];
 
-    uint32_t wi = threadIdx.y / 2;
+    uint32_t wi = threadIdx.y;
     wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> a_frag;
     wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> b_frag;
-    wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag[8];
-    for (int j = 0; j < 8; ++j) {
+    wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag[TILES_X];
+    for (int j = 0; j < TILES_X; ++j) {
       wmma::fill_fragment(c_frag[j], 0.0f);
     }
 
-    for (int i = 0; i < k/16; ++i) {
+    for (int i = 0; i < k/(TILE_SIZE); i += 2) {
+      for (int tile_y = 0; tile_y < TILES_Y; ++tile_y) {
+        uint32_t offsetY1 = blockIdx.y * TILES_Y * TILE_SIZE + tile_y * TILE_SIZE + threadIdx.y;
+        uint32_t offsetY2 = offsetY1 + WGSIZE_Y; // TILES_SIZE = 2 * WGSIZE_Y
+        uint32_t offsetX = i * TILE_SIZE + threadIdx.x;
+        half a1 = a[offsetY1 * k + offsetX];
+        half a2 = a[offsetY2 * k + offsetX];
+        local_a[tile_y][threadIdx.y][threadIdx.x/TILE_SIZE][threadIdx.x%TILE_SIZE] = a1; // load two tiles' rows at once
+        local_a[tile_y][threadIdx.y + WGSIZE_Y][threadIdx.x/TILE_SIZE][threadIdx.x%TILE_SIZE] = a2; // load two tiles' rows at once
+      }
+      for (int tile_y = 0; tile_y < WGSIZE_X/TILE_SIZE; ++tile_y) {
+        for (int tile_x = 0; tile_x < TILES_X; tile_x += 2) {
+          uint32_t offsetX = blockIdx.x * TILES_X * TILE_SIZE + tile_x * TILE_SIZE + threadIdx.x;
+          uint32_t offsetY1 = i * TILE_SIZE + tile_y * TILE_SIZE + threadIdx.y;
+          uint32_t offsetY2 = offsetY1 + WGSIZE_Y; // TILES_SIZE = 2 * WGSIZE_Y
+          half b1 = b[offsetY1 * w + offsetX];
+          half b2 = b[offsetY2 * w + offsetX];
+          local_b[tile_y][tile_x+threadIdx.x/TILE_SIZE][threadIdx.y][threadIdx.x%TILE_SIZE] = b1;
+          local_b[tile_y][tile_x+threadIdx.x/TILE_SIZE][threadIdx.y+WGSIZE_Y][threadIdx.x%TILE_SIZE] = b2;
+        }
+      }
       __syncthreads();
-      for (int j = 0; j < 8; ++j) {
-        local_a[j][threadIdx.y][threadIdx.x] = a[(threadIdx.y+j*16 + blockIdx.y * 128)*k + threadIdx.x + i*16];
-      }
-      for (int j = 0; j < 8; ++j) {
-        local_b[j][threadIdx.y][threadIdx.x] = b[(i*16 + threadIdx.y)*w + threadIdx.x + blockIdx.x*128 + j*16];
+      for (int tile_x = 0; tile_x < TILES_X; ++tile_x) {
+        wmma::load_matrix_sync(a_frag, (half*)local_a[wi][0][0], WGSIZE_X);
+        wmma::load_matrix_sync(b_frag, (half*)local_b[0][tile_x], 16);
+        wmma::mma_sync(c_frag[tile_x], a_frag, b_frag, c_frag[tile_x]);
+        wmma::load_matrix_sync(a_frag, (half*)local_a[wi][0][1], WGSIZE_X);
+        wmma::load_matrix_sync(b_frag, (half*)local_b[1][tile_x], 16);
+        wmma::mma_sync(c_frag[tile_x], a_frag, b_frag, c_frag[tile_x]);
       }
       __syncthreads();
-      for (int j = 0; j < 8; ++j) {
-        wmma::load_matrix_sync(a_frag, (half*)local_a[wi], 16);
-        wmma::load_matrix_sync(b_frag, (half*)local_b[j], 16);
-        wmma::mma_sync(c_frag[j], a_frag, b_frag, c_frag[j]);
-      }
     }
 
-    uint32_t warpOffsetX = blockIdx.x * 128;
-    uint32_t warpOffsetY = blockIdx.y * (128) + wi * 16;
-    for (int j = 0; j < 8; ++j) {
-      wmma::store_matrix_sync(c + (warpOffsetY*w + warpOffsetX + j*16), c_frag[j], w, wmma::mem_row_major);
+    uint32_t warpOffsetX = blockIdx.x * (TILE_SIZE * TILES_X);
+    uint32_t warpOffsetY = blockIdx.y * (TILE_SIZE * TILES_Y) + wi * TILE_SIZE;
+    for (int tile_x = 0; tile_x < TILES_X; ++tile_x) {
+      wmma::store_matrix_sync(c + (warpOffsetY*w + warpOffsetX + tile_x * TILE_SIZE), c_frag[tile_x], w, wmma::mem_row_major);
     }
 }
 
