@@ -71,11 +71,19 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u reduction_buffer1_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
     gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
 
-    // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
-    input_gpu.writeN(values.data(), n);
-    // TODO 1) замерьте здесь какая достигнута пропускная пособность PCI-E шины
-    // TODO 2) сделайте замер хотя бы три раза
-    // TODO 3) и выведите рассчет на основании медианного времени (в легко понятной форме - GB/s)
+    // Замеряем передачу host -> device. На дискретной GPU это включает PCI-E;
+    // на CPU OpenCL физической передачи по PCI-E нет.
+    std::vector<double> transfer_times;
+    for (int iter = 0; iter < 5; ++iter) {
+        timer t;
+        input_gpu.writeN(values.data(), n);
+        transfer_times.push_back(t.elapsed());
+    }
+    const double transfer_gb = double(sizeof(unsigned int)) * n / 1e9;
+    std::cout << "Host -> device buffer transfer: " << transfer_gb
+              << " GB, median " << stats::median(transfer_times)
+              << " s, bandwidth " << transfer_gb / stats::median(transfer_times)
+              << " GB/s (" << transfer_times.size() << " runs)" << std::endl;
 
     std::vector<std::string> algorithm_names = {
         "CPU",
@@ -113,11 +121,24 @@ void run(int argc, char** argv)
                         ocl_sum02AtomicsLoadK.exec(gpu::WorkSize(GROUP_SIZE, n / LOAD_K_VALUES_PER_ITEM), input_gpu, sum_accum_gpu, n);
                         sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "03 local memory and atomicAdd from master thread") {
-                        // TODO ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        sum_accum_gpu.fill(0);
+                        ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(
+                            gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu, n);
+                        sum_accum_gpu.readN(&gpu_sum, 1);
                     } else if (algorithm == "04 local reduction") {
-                        // TODO ocl_sum04LocalReduction.exec(...);
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        unsigned int remaining = n;
+                        gpu::gpu_mem_32u* reduction_input = &input_gpu;
+                        gpu::gpu_mem_32u* reduction_output = &reduction_buffer1_gpu;
+                        while (remaining > 1) {
+                            ocl_sum04LocalReduction.exec(
+                                gpu::WorkSize(GROUP_SIZE, remaining),
+                                *reduction_input, *reduction_output, remaining);
+                            remaining = div_ceil(remaining, (unsigned int)GROUP_SIZE);
+                            reduction_input = reduction_output;
+                            reduction_output = reduction_output == &reduction_buffer1_gpu
+                                ? &reduction_buffer2_gpu : &reduction_buffer1_gpu;
+                        }
+                        reduction_input->readN(&gpu_sum, 1);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
