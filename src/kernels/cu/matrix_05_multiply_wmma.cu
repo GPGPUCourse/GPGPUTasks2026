@@ -274,7 +274,7 @@ __global__ void __launch_bounds__(1024,1) matrix_multiply_wmma_my3(
     #define kkk 4096
     __shared__ __half
 }*/
-__global__ void  matrix_multiply_wmma_my4(const __half2 *a,const __half2 *b,float *c)
+__global__ void  __launch_bounds__(512,4) matrix_multiply_wmma_my4(const __half2 *a,const __half2 *b,float *c)
 {
 #define nnn 2048
 #define mmm 1024
