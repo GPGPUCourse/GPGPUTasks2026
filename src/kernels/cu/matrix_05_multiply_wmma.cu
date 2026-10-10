@@ -21,7 +21,7 @@ __global__ void matrix_multiply_wmma(
                        unsigned int k)
 {
     // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
-    __shared__ half local_a[TILES_Y][WGSIZE_X/TILE_SIZE][TILE_SIZE][TILE_SIZE];
+    __shared__ half local_a[TILES_Y][WGSIZE_X/TILE_SIZE][TILE_SIZE][TILE_SIZE+8];
     __shared__ half local_b[WGSIZE_X/TILE_SIZE][TILES_X][TILE_SIZE][TILE_SIZE+8];
 
     uint32_t wi = threadIdx.y;
@@ -55,10 +55,10 @@ __global__ void matrix_multiply_wmma(
       }
       __syncthreads();
       for (int tile_x = 0; tile_x < TILES_X; ++tile_x) {
-        wmma::load_matrix_sync(a_frag, (half*)local_a[wi][0], 16);
+        wmma::load_matrix_sync(a_frag, (half*)local_a[wi][0], 24);
         wmma::load_matrix_sync(b_frag, (half*)local_b[0][tile_x], 24);
         wmma::mma_sync(c_frag[tile_x], a_frag, b_frag, c_frag[tile_x]);
-        wmma::load_matrix_sync(a_frag, (half*)local_a[wi][1], 16);
+        wmma::load_matrix_sync(a_frag, (half*)local_a[wi][1], 24);
         wmma::load_matrix_sync(b_frag, (half*)local_b[1][tile_x],24);
         wmma::mma_sync(c_frag[tile_x], a_frag, b_frag, c_frag[tile_x]);
       }
