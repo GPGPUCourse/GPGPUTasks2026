@@ -21,6 +21,38 @@ __global__ void matrix_multiply_wmma(
                        unsigned int k)
 {
     // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
+    __shared__ half local_a[8][16][16];
+    __shared__ half local_b[8][16][16];
+
+    uint32_t wi = threadIdx.y / 2;
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> b_frag;
+    wmma::fragment<wmma::accumulator, 16, 16, 16, float> c_frag[8];
+    for (int j = 0; j < 8; ++j) {
+      wmma::fill_fragment(c_frag[j], 0.0f);
+    }
+
+    for (int i = 0; i < k/16; ++i) {
+      __syncthreads();
+      for (int j = 0; j < 8; ++j) {
+        local_a[j][threadIdx.y][threadIdx.x] = a[(threadIdx.y+j*16 + blockIdx.y * 128)*k + threadIdx.x + i*16];
+      }
+      for (int j = 0; j < 8; ++j) {
+        local_b[j][threadIdx.y][threadIdx.x] = b[(i*16 + threadIdx.y)*w + threadIdx.x + blockIdx.x*128 + j*16];
+      }
+      __syncthreads();
+      for (int j = 0; j < 8; ++j) {
+        wmma::load_matrix_sync(a_frag, (half*)local_a[wi], 16);
+        wmma::load_matrix_sync(b_frag, (half*)local_b[j], 16);
+        wmma::mma_sync(c_frag[j], a_frag, b_frag, c_frag[j]);
+      }
+    }
+
+    uint32_t warpOffsetX = blockIdx.x * 128;
+    uint32_t warpOffsetY = blockIdx.y * (128) + wi * 16;
+    for (int j = 0; j < 8; ++j) {
+      wmma::store_matrix_sync(c + (warpOffsetY*w + warpOffsetX + j*16), c_frag[j], w, wmma::mem_row_major);
+    }
 }
 
 namespace cuda {
