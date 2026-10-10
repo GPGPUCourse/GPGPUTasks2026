@@ -12,6 +12,7 @@
 #include "data_image.h"
 
 #include <atomic>
+#include <cstdlib>
 #include <filesystem>
 
 #include "vk/common_host.h"
@@ -22,6 +23,21 @@
 #endif
 
 namespace {
+	// A timeout does not cancel submitted work. Keep its resources alive until
+	// completion; otherwise exception unwinding can free memory still in use.
+	vk::Result waitForSubmittedFence(const vk::raii::Device &device, const vk::raii::Fence &fence)
+	{
+		bool reported_timeout = false;
+		vk::Result result;
+		do {
+			result = device.waitForFences(vk::Fence(fence), true, VULKAN_TIMEOUT_NANOSECS);
+			if (result == vk::Result::eTimeout && !reported_timeout) {
+				reported_timeout = true;
+			}
+		} while (result == vk::Result::eTimeout);
+		return result;
+	}
+
 	// see https://vulkan-tutorial.com/Drawing_a_triangle/Setup/Validation_layers
 	// this is a debug callback for Vulkan Validation Layers
 	// when they find any problems - this callback will be triggered
@@ -524,7 +540,7 @@ vk::raii::CommandBuffer avk2::VulkanEngine::createCommandBuffer()
 void avk2::VulkanEngine::submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer)
 {
 	std::shared_ptr<vk::raii::Fence> fence = submitCommandBufferAsync(command_buffer);
-	VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 345123451241);
+	VK_CHECK_RESULT(waitForSubmittedFence(getDevice(), *fence), 345123451241);
 }
 
 std::shared_ptr<vk::raii::Fence> avk2::VulkanEngine::submitCommandBufferAsync(const vk::raii::CommandBuffer &command_buffer)
@@ -765,7 +781,7 @@ void avk2::VulkanEngine::writeImage(const avk2::raii::ImageData &image_dst, cons
 			}
 
 			if (is_prev_chunk_exists) {
-				VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 4512341231);
+				VK_CHECK_RESULT(waitForSubmittedFence(getDevice(), *fence), 4512341231);
 			}
 		}
 	}
@@ -857,7 +873,7 @@ void avk2::VulkanEngine::readImage(const avk2::raii::ImageData &image_src, const
 			}
 
 			if (is_cur_chunk_exists) {
-				VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 34124125123);
+				VK_CHECK_RESULT(waitForSubmittedFence(getDevice(), *fence), 34124125123);
 			}
 		}
 	}
@@ -962,7 +978,7 @@ void avk2::VulkanEngine::writeBuffer(const avk2::raii::BufferData &buffer_dst, s
 		}
 
 		if (is_prev_chunk_exists) {
-			VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 453151251236);
+			VK_CHECK_RESULT(waitForSubmittedFence(getDevice(), *fence), 453151251236);
 		}
 	}
 }
@@ -1006,7 +1022,7 @@ void avk2::VulkanEngine::readBuffer(const avk2::raii::BufferData &buffer_src, si
 		}
 
 		if (is_cur_chunk_exists) {
-			VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 675623543242141);
+			VK_CHECK_RESULT(waitForSubmittedFence(getDevice(), *fence), 675623543242141);
 		}
 	}
 }

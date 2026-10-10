@@ -7,11 +7,7 @@
 #extension GL_KHR_memory_scope_semantics : require
 #extension GL_EXT_subgroup_uniform_control_flow : enable
 #extension GL_EXT_shader_explicit_arithmetic_types_float16 : require
-// #extension GL_KHR_cooperative_matrix : require // TODO uncomment me
-// Чтобы это компилировалось вам нужен достаточно свежий GLSL компилятор
-// Например если вы получили ошибку "error: '#extension' : extension not supported: GL_KHR_cooperative_matrix"
-// то вам потребуется его обновить. Для Linux актуальный glslc устанавливается скриптом scripts/linux/install_vulkan_sdk.sh
-// Если потребуется - то явно указать путь к компилятору можно через CMake options: -DGLSLC_BIN=.../glslc.exe
+#extension GL_KHR_cooperative_matrix : require
 
 layout (std430, binding = 0) readonly buffer MatrixAIn   { float a[]; }; // rows=h x cols=k
 layout (std430, binding = 1) readonly buffer MatrixBIn   { float b[]; }; // rows=k x cols=w
@@ -23,8 +19,48 @@ layout (push_constant) uniform PushConstants {
     uint k;
 } params;
 
-layout (local_size_x = 1, local_size_y = 1) in;
+shared float16_t a_f16[TILE_SIZE * TILE_SIZE];
+shared float16_t b_f16[TILE_SIZE * TILE_SIZE];
+
+layout (local_size_x = GROUP_SIZE_COOP, local_size_y = 1) in;
 void main()
 {
-    // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
+    coopmat<float16_t, gl_ScopeSubgroup, TILE_SIZE, TILE_SIZE, gl_MatrixUseA> coop_a;
+    coopmat<float16_t, gl_ScopeSubgroup, TILE_SIZE, TILE_SIZE, gl_MatrixUseB> coop_b;
+    coopmat<float, gl_ScopeSubgroup, TILE_SIZE, TILE_SIZE, gl_MatrixUseAccumulator> coop_c =
+        coopmat<float, gl_ScopeSubgroup, TILE_SIZE, TILE_SIZE, gl_MatrixUseAccumulator>(0.0);
+
+    const uint group_i = gl_WorkGroupID.x;
+    const uint group_j = gl_WorkGroupID.y;
+
+    for (uint step = 0; step < params.k; step += TILE_SIZE) {
+        for (uint n = gl_LocalInvocationID.x;
+             n < TILE_SIZE * TILE_SIZE;
+             n += gl_WorkGroupSize.x) {
+            const uint j = n / TILE_SIZE;
+            const uint i = n % TILE_SIZE;
+
+            const uint a_j = group_j * TILE_SIZE + j;
+            const uint a_i = step + i;
+            a_f16[n] = (a_j < params.h && a_i < params.k) ? float16_t(a[a_j * params.k + a_i]) : float16_t(0.0);
+
+            const uint b_j = step + j;
+            const uint b_i = group_i * TILE_SIZE + i;
+            b_f16[n] = (b_j < params.k && b_i < params.w) ? float16_t(b[b_j * params.w + b_i]) : float16_t(0.0);
+        }
+        barrier();
+
+        coopMatLoad(coop_a, a_f16, 0, TILE_SIZE, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(coop_b, b_f16, 0, TILE_SIZE, gl_CooperativeMatrixLayoutRowMajor);
+
+        coop_c = coopMatMulAdd(coop_a, coop_b, coop_c);
+
+        barrier();
+    }
+
+    coopMatStore(coop_c,
+                 c,
+                 group_j * TILE_SIZE * params.w + group_i * TILE_SIZE,
+                 params.w,
+                 gl_CooperativeMatrixLayoutRowMajor);
 }
