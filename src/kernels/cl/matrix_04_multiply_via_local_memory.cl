@@ -27,6 +27,9 @@ __kernel void matrix_04_multiply_via_local_memory(
         if (x < w && y < h) {
             tile_a[ly][lx] = a[y * k + i + lx];
             tile_b[ly][lx] = b[(i + ly) * w + x];
+        } else {
+            tile_a[ly][lx] = 0.0f;
+            tile_b[ly][lx] = 0.0f;
         }
 
         barrier(CLK_LOCAL_MEM_FENCE);
