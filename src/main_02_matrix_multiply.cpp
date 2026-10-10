@@ -99,7 +99,7 @@ void run(int argc, char** argv)
     };
 
     // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
-    bool I_Want_Super_Puper_Prestige_Points = false;
+    bool I_Want_Super_Puper_Prestige_Points = true;
     if (I_Want_Super_Puper_Prestige_Points) {
         if (context.type() == gpu::Context::TypeCUDA) {
             algorithm_names.push_back("03 using WMMA (Tensor Cores) [+Prestige Points]");
@@ -142,12 +142,12 @@ void run(int argc, char** argv)
                     // _______________________________CUDA___________________________________________
                 } else if (context.type() == gpu::Context::TypeCUDA) {
                     if (algorithm == "01 naive") {
-                        // TODO обязательно замените размер рабочей группы 1x1 на больший
                         cuda::matrix_multiply_naive(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else if (algorithm == "02 using local memory") {
                         cuda::matrix_multiply_via_local_memory(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
-                        cuda::matrix_multiply_wmma(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h * 2 / 16), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                        // Один блок CUDA = один warp из 32 потоков = один тайл C 16x16.
+                        cuda::matrix_multiply_wmma(gpu::WorkSize(32, 1, ((w + 15) / 16) * 32, (h + 15) / 16), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }

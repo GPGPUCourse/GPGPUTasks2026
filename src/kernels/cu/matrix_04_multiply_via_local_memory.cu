@@ -17,7 +17,7 @@ __global__ void matrix_multiply_via_local_memory(
 {
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
-    const uint T = 16;
+    constexpr uint T = 16;
     //C[y,x]
 
     __shared__ float local_mem_A[T][T];
@@ -37,6 +37,7 @@ __global__ void matrix_multiply_via_local_memory(
         }
         __syncthreads();
         acc = 0;
+        #pragma unroll
         for (int t = 0; t < T; ++t) {
             acc += local_mem_A[threadIdx.y][t] * local_mem_B[t][threadIdx.x];
         }
