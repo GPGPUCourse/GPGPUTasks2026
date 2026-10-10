@@ -279,8 +279,8 @@ __global__ void  __launch_bounds__(512,4) matrix_multiply_wmma_my4(const __half2
 #define nnn 2048
 #define mmm 1024
 #define kkk 4096
-    __shared__ __half A[64][72];
-    __shared__ __half B[64][72];
+    __shared__ __half2 A[64][36];
+    __shared__ __half2 B[64][36];
     ///workgroupsize=512
     int numberofblocksx=(nnn/64);
     //int numberofblocksz=(kkk/64);
@@ -296,7 +296,7 @@ __global__ void  __launch_bounds__(512,4) matrix_multiply_wmma_my4(const __half2
     int whoz=i/4;
     for (int blocky=0;blocky<mmm/64;++blocky)
     {
-        //__syncthreads();
+        __syncthreads();
         int startx=blockx*64;
         int starty=blocky*64;
         int startz=blockz*64;
@@ -307,8 +307,8 @@ __global__ void  __launch_bounds__(512,4) matrix_multiply_wmma_my4(const __half2
                 int x1=startx+u*16+i;
                 int y1=starty+2*j;
                 __half2 u=a[(x1*mmm+y1)/2];
-                A[x1-startx][y1-starty]=__low2half(u);
-                A[x1-startx][y1-starty+1]=__high2half(u);
+                A[x1-startx][j]=u;
+                //A[x1-startx][y1-starty+1]=__high2half(u);
             }
         }
         for (int u=0;u<4;++u)
@@ -317,18 +317,18 @@ __global__ void  __launch_bounds__(512,4) matrix_multiply_wmma_my4(const __half2
                 int y1=starty+u*16+i;
                 int z1=startz+2*j;
                 __half2 u=b[(y1*kkk+z1)/2];
-                B[y1-starty][z1-startz]=__low2half(u);
-                B[y1-starty][z1-startz+1]=__high2half(u);
+                B[y1-starty][j]=u;
+                //B[y1-starty][z1-startz+1]=__high2half(u);
             }
         }
         __syncthreads();
         for (int whoy=0;whoy<4;++whoy)
         {
-            wmma::load_matrix_sync(a_frag,&A[whox*16][whoy*16],72);
-            wmma::load_matrix_sync(b_frag,&B[whoy*16][whoz*16],72);
+            wmma::load_matrix_sync(a_frag,reinterpret_cast<const __half*> (&A[whox*16][whoy*8]),72);
+            wmma::load_matrix_sync(b_frag,reinterpret_cast<const __half*> (&B[whoy*16][whoz*8]),72);
             wmma::mma_sync(acc_frag,a_frag,b_frag,acc_frag);
         }
-    }//
+    }////
     wmma::store_matrix_sync(c+(blockx*64+whox*16)*kkk+(blockz*64+whoz*16),acc_frag,kkk,wmma::mem_row_major);
 }
 namespace cuda {
