@@ -38,11 +38,11 @@ void multiply(
     }
 }
 }
-//#define MAKSIM
+#define MAKSIM
 void run(int argc, char** argv)
 {
 #ifdef MAKSIM
-    argc=2;argv[1]="2";
+    argc=2;argv[1]="0";
 #endif
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
@@ -143,12 +143,12 @@ void run(int argc, char** argv)
                 } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
                     //cuda::gohalf(gpu::WorkSize(16,16,h,k),matrix_a_gpu,matrix_a_half_gpu,h,k);
                     //cuda::gohalf(gpu::WorkSize(16,16,k,w),matrix_b_gpu,matrix_b_half_gpu,k,w);
-                    cuda::gohalf(gpu::WorkSize(1024,h*k),matrix_a_gpu,matrix_a_half_gpu,h*k);
-                    cuda::gohalf(gpu::WorkSize(1024,k*w),matrix_b_gpu,matrix_b_half_gpu,k*w);
+                    cuda::gohalf1(gpu::WorkSize(1024,h*k),matrix_a_gpu,matrix_a_half_gpu,h*k);
+                    cuda::gohalf1(gpu::WorkSize(1024,k*w),matrix_b_gpu,matrix_b_half_gpu,k*w);
                     //cuda::create_half_by_1616(gpu::)
                     //throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
                     //assert(h==2048 && k==1024 && w==4096);
-                    cuda::matrix_multiply_wmma_my3(gpu::WorkSize(1024,h*w/16), matrix_a_half_gpu, matrix_b_half_gpu, matrix_c_gpu);
+                    cuda::matrix_multiply_wmma_my4(gpu::WorkSize(512,h*w/8), matrix_a_half_gpu, matrix_b_half_gpu, matrix_c_gpu);
                     //cuda::gofloat(gpu::WorkSize(1024,h*w),matrix_c_half_gpu,matrix_c_gpu,h*w);
                 } else {
                     rassert(false, 652345234321, algorithm, algorithm_index);
