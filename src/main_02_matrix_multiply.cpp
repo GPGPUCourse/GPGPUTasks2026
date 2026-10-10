@@ -154,8 +154,8 @@ bool TryRunVulkanShaders(int argc, char** argv) {
   if (context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix")
     &&
     context.vk()->device().isCooperativeMatrixSizeSupported(
-      DataType16f, DataType32f, TILE_SIZE, TILE_SIZE,
-      TILE_SIZE)) {
+      DataType16f, DataType32f, TILE_SIZE_VULKAN, TILE_SIZE_VULKAN,
+      TILE_SIZE_VULKAN)) {
     algorithm_names.push_back(kTensorCoresAlgoNameVulkan);
     ran_coop_matrix = true;
   }
@@ -190,8 +190,8 @@ bool TryRunVulkanShaders(int argc, char** argv) {
                               matrix_a_gpu, matrix_b_gpu,
                               matrix_c_gpu);
     } else if (algorithm == kTensorCoresAlgoNameVulkan) {
-      const unsigned tile_cnt_x = (w + TILE_SIZE - 1) / TILE_SIZE;
-      const unsigned tile_cnt_y = (h + TILE_SIZE - 1) / TILE_SIZE;
+      const unsigned tile_cnt_x = (w + TILE_SIZE_VULKAN - 1) / TILE_SIZE_VULKAN;
+      const unsigned tile_cnt_y = (h + TILE_SIZE_VULKAN - 1) / TILE_SIZE_VULKAN;
       times = RunVulkanShader(vk_matrix05MultiplyCooperativeMatrix, params,
                               gpu::WorkSize(
                                 GROUP_SIZE_COOP, 1,
@@ -211,7 +211,6 @@ bool TryRunVulkanShaders(int argc, char** argv) {
   return ran_coop_matrix;
 }
 
-/*
 void RunCudaTensorKernel(int argc, char** argv) {
   gpu::Device device = gpu::chooseGPUDevice(
     gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
@@ -233,14 +232,20 @@ void RunCudaTensorKernel(int argc, char** argv) {
   for (std::size_t iteration = 0; iteration < 10; ++iteration) {
     timer t;
 
-    cuda::matrix_multiply_wmma(gpu::WorkSize(1, 1, w, h * 2 / 16), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+    const unsigned tile_cnt_x = (w + TILE_SIZE_CUDA - 1) / TILE_SIZE_CUDA;
+    const unsigned tile_cnt_y = (h + TILE_SIZE_CUDA - 1) / TILE_SIZE_CUDA;
+    cuda::matrix_multiply_wmma(
+      gpu::WorkSize(GROUP_SIZE_COOP, 1, tile_cnt_x * GROUP_SIZE_COOP,
+                    tile_cnt_y), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h,
+      k);
+
+
 
     times.push_back(t.elapsed());
   }
 
   CheckResult(times, matrix_c_gpu);
 }
-*/
 
 void run(int argc, char** argv) {
   std::cout << "C = A x B, matrices size: C (rows=H=" << h << " x cols=W=" << w
@@ -261,7 +266,7 @@ void run(int argc, char** argv) {
   }
 
   if (!TryRunVulkanShaders(argc, argv)) {
-    // ... cuda
+    RunCudaTensorKernel(argc, argv);
   }
 }
 

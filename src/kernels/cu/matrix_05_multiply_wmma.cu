@@ -20,7 +20,43 @@ __global__ void matrix_multiply_wmma(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
+  wmma::fragment<wmma::matrix_a, TILE_SIZE_CUDA, TILE_SIZE_CUDA, TILE_SIZE_CUDA, half, wmma::row_major> frag_a;
+  wmma::fragment<wmma::matrix_b, TILE_SIZE_CUDA, TILE_SIZE_CUDA, TILE_SIZE_CUDA, half, wmma::row_major> frag_b;
+  wmma::fragment<wmma::accumulator, TILE_SIZE_CUDA, TILE_SIZE_CUDA, TILE_SIZE_CUDA, float> frag_c;
+
+  wmma::fill_fragment(frag_c, 0.0f);
+
+  __shared__ __align__(32) half tile_a[TILE_SIZE_CUDA * TILE_SIZE_CUDA];
+  __shared__ __align__(32) half tile_b[TILE_SIZE_CUDA * TILE_SIZE_CUDA];
+
+  for (unsigned step = 0; step < k; step += TILE_SIZE_CUDA) {
+    for (unsigned n = threadIdx.x; n < TILE_SIZE_CUDA * TILE_SIZE_CUDA; n += blockDim.x) {
+      const uint j = n / TILE_SIZE_CUDA;
+      const uint i = n % TILE_SIZE_CUDA;
+
+      const uint a_j = blockIdx.y * TILE_SIZE_CUDA + j;
+      const uint a_i = step + i;
+      tile_a[n] = (a_j < h && a_i < k) ? __float2half(a[a_j * k + a_i]) : __float2half(0.0);
+
+      const uint b_j = step + j;
+      const uint b_i = blockIdx.x * TILE_SIZE_CUDA + i;
+      tile_b[n] = (b_j < k && b_i < w) ? __float2half(b[b_j * w + b_i]) : __float2half(0.0);
+    }
+
+    __syncthreads();
+
+    wmma::load_matrix_sync(frag_a, tile_a, TILE_SIZE_CUDA);
+    wmma::load_matrix_sync(frag_b, tile_b, TILE_SIZE_CUDA);
+
+    wmma::mma_sync(frag_c, frag_a, frag_b, frag_c);
+
+    __syncthreads();
+  }
+
+  float* tile_c = c + blockIdx.y * TILE_SIZE_CUDA * w + blockIdx.x * TILE_SIZE_CUDA;
+
+  wmma::store_matrix_sync(
+      tile_c, frag_c, w, wmma::mem_row_major);
 }
 
 namespace cuda {
