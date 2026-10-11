@@ -11,7 +11,7 @@ __kernel void matrix_02_transpose_coalesced_via_local_memory(
                                 unsigned int w,
                                 unsigned int h)
 {
-    __local float local_matrix[(GROUP_SIZE_X) * GROUP_SIZE_Y];
+    __local float local_matrix[(GROUP_SIZE_X + 1) * GROUP_SIZE_Y];
 
     const uint x = get_global_id(0);
     const uint y = get_global_id(1);
