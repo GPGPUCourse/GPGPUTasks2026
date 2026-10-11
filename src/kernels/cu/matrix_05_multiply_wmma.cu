@@ -38,23 +38,18 @@ __global__ void matrix_multiply_wmma(
     for (unsigned int i = 0; i < k; i += 16) {
         #pragma unroll
         for (unsigned int idx = threadIdx.x; idx < 512; idx += 256) {
-            const unsigned int y = idx / 4;
-            const unsigned int x = (idx % 4) * 4;
+            const unsigned int ay = idx / 4;
+            const unsigned int ax = (idx % 4) * 4;
+            const unsigned int by = idx / 32;
+            const unsigned int bx = (idx % 32) * 4;
 
-            const float4 v = *reinterpret_cast<const float4*>(a + (blockIdx.y * 128 + y) * k + i + x);
+            const float4 av = *reinterpret_cast<const float4*>(a + (blockIdx.y * 128 + ay) * k + i + ax);
+            const float4 bv = *reinterpret_cast<const float4*>(b + (i + by) * w + blockIdx.x * 128 + bx);
 
-            *reinterpret_cast<half2*>(&local_a[y][x]) = __floats2half2_rn(v.x, v.y);
-            *reinterpret_cast<half2*>(&local_a[y][x + 2]) = __floats2half2_rn(v.z, v.w);
-        }
-
-        for (unsigned int idx = threadIdx.x; idx < 512; idx += 256) {
-            const unsigned int y = idx / 32;
-            const unsigned int x = (idx % 32) * 4;
-
-            const float4 v = *reinterpret_cast<const float4*>(b + (i + y) * w + blockIdx.x * 128 + x);
-
-            *reinterpret_cast<half2*>(&local_b[y][x]) = __floats2half2_rn(v.x, v.y);
-            *reinterpret_cast<half2*>(&local_b[y][x + 2]) = __floats2half2_rn(v.z, v.w);
+            *reinterpret_cast<half2*>(&local_a[ay][ax]) = __floats2half2_rn(av.x, av.y);
+            *reinterpret_cast<half2*>(&local_a[ay][ax + 2]) = __floats2half2_rn(av.z, av.w);
+            *reinterpret_cast<half2*>(&local_b[by][bx]) = __floats2half2_rn(bv.x, bv.y);
+            *reinterpret_cast<half2*>(&local_b[by][bx + 2]) = __floats2half2_rn(bv.z, bv.w);
         }
 
         __syncthreads();
