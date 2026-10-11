@@ -5,7 +5,7 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-#define REDUCE_FACTOR 8
+#define REDUCE_FACTOR 16
 
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void prefix_sum_01_reduction(

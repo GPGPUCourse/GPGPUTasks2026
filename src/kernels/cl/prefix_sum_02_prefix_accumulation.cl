@@ -20,7 +20,7 @@ prefix_sum_02_prefix_accumulation(
         return;
 
     int count = j + 1;
-    int digit = (count >> pow2) & 7u;
+    int digit = (count >> pow2) & 15u;
     if (digit == 0) {
         return;
     }

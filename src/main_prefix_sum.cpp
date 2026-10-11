@@ -26,7 +26,7 @@ void run(int argc, char** argv)
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
     gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
-    constexpr unsigned int kReduceFactor = 8;
+    constexpr unsigned int kReduceFactor = 16;
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -93,7 +93,7 @@ void run(int argc, char** argv)
             gpu::gpu_mem_32u* pow2_half = &buffer2_pow2_sum_gpu;
             for (int level = 0; ; level++) {
                 int half_n = (cur_n + kReduceFactor - 1) / kReduceFactor;
-                int next_pow2 = 3 * (level + 1); // log kReduce
+                int next_pow2 = 4 * (level + 1); // log2(kReduceFactor)
                 if (half_n == 0 || next_pow2 >= 32 || (1u << next_pow2) > n)
                     break;
 
