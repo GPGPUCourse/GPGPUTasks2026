@@ -94,8 +94,8 @@ void run(int argc, char** argv)
 
     std::vector<std::string> algorithm_names = {
         "CPU with OpenMP",
-        "01 naive",
-        "02 using local memory",
+        // "01 naive",
+        // "02 using local memory",
     };
 
     // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
@@ -122,7 +122,7 @@ void run(int argc, char** argv)
 
         // Запускаем алгоритм (несколько раз и с замером времени выполнения)
         std::vector<double> times;
-        int iters_count = (algorithm == "CPU with OpenMP") ? 1 : 10; // CPU is too slow
+        int iters_count = (algorithm == "CPU with OpenMP") ? 1 : 1000; // CPU is too slow
         for (int iter = 0; iter < iters_count; ++iter) {
             timer t;
 
@@ -146,7 +146,11 @@ void run(int argc, char** argv)
                     } else if (algorithm == "02 using local memory") {
                         cuda::matrix_multiply_via_local_memory(gpu::WorkSize(16, 16, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
-                        cuda::matrix_multiply_wmma(gpu::WorkSize(256, 1, w * 4, h / 64), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                        static_assert(BLOCK_K == 16);
+                        static_assert(BLOCK_H % (16 * WARPS_H) == 0);
+                        static_assert(BLOCK_W % (16 * WARPS_W) == 0);
+                        constexpr unsigned int threads = 32 * WARPS_H * WARPS_W;
+                        cuda::matrix_multiply_wmma(gpu::WorkSize(threads, 1, w * threads / BLOCK_W, h / BLOCK_H), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
