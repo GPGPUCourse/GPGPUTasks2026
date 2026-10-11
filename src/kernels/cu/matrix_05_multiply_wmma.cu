@@ -1,11 +1,11 @@
 #include <libgpu/context.h>
-#include <libgpu/shared_device_buffer.h>
 #include <libgpu/work_size.h>
+#include <libgpu/shared_device_buffer.h>
 
 #include <libgpu/cuda/cu/common.cu>
 
-#include "../defines.h"
 #include "helpers/rassert.cu"
+#include "../defines.h"
 
 // Include WMMA header with nvcuda::wmma namespace
 // Если строка "using namespace nvcuda;" не компилируется, добавьте в CMake options: -DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo
@@ -13,12 +13,12 @@
 using namespace nvcuda;
 
 __global__ void matrix_multiply_wmma(
-    const float* __restrict__ a, // rows=h x cols=k
-    const float* __restrict__ b, // rows=k x cols=w
-    float* __restrict__ c, // rows=h x cols=w
-    unsigned int w,
-    unsigned int h,
-    unsigned int k)
+                       const float* __restrict__ a, // rows=h x cols=k
+                       const float* __restrict__ b, // rows=k x cols=w
+                             float* __restrict__ c, // rows=h x cols=w
+                       unsigned int w,
+                       unsigned int h,
+                       unsigned int k)
 {
     constexpr unsigned int blockH = 128;
     constexpr unsigned int blockK = 16;
@@ -94,8 +94,8 @@ __global__ void matrix_multiply_wmma(
 }
 
 namespace cuda {
-void matrix_multiply_wmma(const gpu::WorkSize& workSize,
-    const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c, unsigned int w, unsigned int h, unsigned int k)
+void matrix_multiply_wmma(const gpu::WorkSize &workSize,
+            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
