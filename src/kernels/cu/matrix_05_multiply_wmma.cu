@@ -5,6 +5,7 @@
 #include <libgpu/cuda/cu/common.cu>
 
 #include "../defines.h"
+#include "../wmma_test.h"
 #include "helpers/rassert.cu"
 
 // Include WMMA header with nvcuda::wmma namespace
@@ -12,6 +13,7 @@
 #include <mma.h>
 using namespace nvcuda;
 
+template <unsigned int BLOCK_H, unsigned int BLOCK_K, unsigned int BLOCK_W, unsigned int WARPS_H, unsigned int WARPS_W>
 __global__ void matrix_multiply_wmma(
     const float* __restrict__ a, // rows=h x cols=k
     const float* __restrict__ b, // rows=k x cols=w
@@ -88,13 +90,94 @@ __global__ void matrix_multiply_wmma(
 }
 
 namespace cuda {
+template <unsigned int BLOCK_H, unsigned int BLOCK_K, unsigned int BLOCK_W, unsigned int WARPS_H, unsigned int WARPS_W>
 void matrix_multiply_wmma(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c, unsigned int w, unsigned int h, unsigned int k)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::matrix_multiply_wmma<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), c.cuptr(), w, h, k);
+    ::matrix_multiply_wmma<BLOCK_H, BLOCK_K, BLOCK_W, WARPS_H, WARPS_W><<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(), b.cuptr(), c.cuptr(), w, h, k);
     CUDA_CHECK_KERNEL(stream);
+}
+
+void matrix_multiply_wmma_test(
+    const WmmaConfig& q,
+    const gpu::gpu_mem_32f& a,
+    const gpu::gpu_mem_32f& b,
+    gpu::gpu_mem_32f& c,
+    unsigned int w, unsigned int h, unsigned int k)
+{
+#define TRY(BH, BK, BW, WH, WW)                                                                                                            \
+    if (q.blockH == BH && q.blockK == BK && q.blockW == BW && q.warpsH == WH && q.warpsW == WW) {                                          \
+        const unsigned int threads = WH * WW * 32;                                                                                         \
+        cuda::matrix_multiply_wmma<BH, BK, BW, WH, WW>(gpu::WorkSize(threads, 1, w * threads / q.blockW, h / q.blockH), a, b, c, w, h, k); \
+        return;                                                                                                                            \
+    }
+
+    TRY(32, 16, 64, 2, 4)
+    TRY(32, 16, 128, 2, 4)
+    TRY(32, 16, 256, 2, 4)
+    TRY(64, 16, 32, 4, 2)
+    TRY(64, 16, 64, 2, 4)
+    TRY(64, 16, 64, 4, 2)
+    TRY(64, 16, 128, 2, 4)
+    TRY(64, 16, 128, 4, 2)
+    TRY(64, 16, 256, 2, 4)
+    TRY(64, 16, 256, 4, 2)
+    TRY(128, 16, 32, 4, 2)
+    TRY(128, 16, 64, 2, 4)
+    TRY(128, 16, 64, 4, 2)
+    TRY(128, 16, 128, 2, 4)
+    TRY(128, 16, 128, 4, 2)
+    TRY(128, 16, 256, 2, 4)
+    TRY(128, 16, 256, 4, 2)
+    TRY(256, 16, 32, 4, 2)
+    TRY(256, 16, 64, 2, 4)
+    TRY(256, 16, 64, 4, 2)
+    TRY(256, 16, 128, 2, 4)
+    TRY(256, 16, 128, 4, 2)
+    TRY(256, 16, 256, 2, 4)
+    TRY(256, 16, 256, 4, 2)
+
+    TRY(64, 16, 64, 4, 4)
+    TRY(64, 16, 128, 4, 4)
+    TRY(64, 16, 256, 4, 4)
+    TRY(128, 16, 64, 4, 4)
+    TRY(128, 16, 128, 4, 4)
+    TRY(128, 16, 256, 4, 4)
+    TRY(256, 16, 64, 4, 4)
+    TRY(256, 16, 128, 4, 4)
+    TRY(256, 16, 256, 4, 4)
+
+    TRY(64, 16, 128, 4, 8)
+    TRY(64, 16, 256, 4, 8)
+    TRY(64, 16, 512, 4, 8)
+    TRY(128, 16, 64, 8, 4)
+    TRY(128, 16, 128, 4, 8)
+    TRY(128, 16, 128, 8, 4)
+    TRY(128, 16, 256, 4, 8)
+    TRY(128, 16, 256, 8, 4)
+    TRY(128, 16, 512, 4, 8)
+    TRY(128, 16, 512, 8, 4)
+    TRY(256, 16, 64, 8, 4)
+    TRY(256, 16, 128, 4, 8)
+    TRY(256, 16, 128, 8, 4)
+    TRY(256, 16, 256, 4, 8)
+    TRY(256, 16, 256, 8, 4)
+    TRY(256, 16, 512, 4, 8)
+    TRY(256, 16, 512, 8, 4)
+    TRY(512, 16, 64, 8, 4)
+    TRY(512, 16, 128, 4, 8)
+    TRY(512, 16, 128, 8, 4)
+    TRY(512, 16, 256, 4, 8)
+    TRY(512, 16, 256, 8, 4)
+    TRY(512, 16, 512, 4, 8)
+    TRY(512, 16, 512, 8, 4)
+
+#undef TRY
+
+    std::fprintf(stderr, "Unknown WMMA configuration\n");
+    std::abort();
 }
 } // namespace cuda

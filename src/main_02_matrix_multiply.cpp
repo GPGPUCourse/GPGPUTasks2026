@@ -10,6 +10,7 @@
 
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
+#include "kernels/wmma_test.h"
 
 #include <fstream>
 #include <iomanip>
@@ -19,12 +20,12 @@ void multiply(
     const std::vector<float> &a,
     const std::vector<float> &b,
           std::vector<float> &c,
-                 unsigned int w,
-                 unsigned int h,
-                 unsigned int k,
-                  bool with_omp)
+    unsigned int w,
+    unsigned int h,
+    unsigned int k,
+    bool with_omp)
 {
-    #pragma omp parallel for schedule(dynamic, 1) if (with_omp)
+#pragma omp parallel for schedule(dynamic, 1) if (with_omp)
     for (ptrdiff_t j = 0; j < h; ++j) {
         for (ptrdiff_t i = 0; i < w; ++i) {
             float acc = 0.0f;
@@ -38,6 +39,74 @@ void multiply(
     }
 }
 }
+
+struct WmmaResult {
+    WmmaConfig cfg;
+    double gflops;
+    double us;
+};
+
+std::vector<WmmaConfig> tests = {
+    { 32, 16, 64, 2, 4 },
+    { 32, 16, 128, 2, 4 },
+    { 32, 16, 256, 2, 4 },
+    { 64, 16, 32, 4, 2 },
+    { 64, 16, 64, 2, 4 },
+    { 64, 16, 64, 4, 2 },
+    { 64, 16, 128, 2, 4 },
+    { 64, 16, 128, 4, 2 },
+    { 64, 16, 256, 2, 4 },
+    { 64, 16, 256, 4, 2 },
+    { 128, 16, 32, 4, 2 },
+    { 128, 16, 64, 2, 4 },
+    { 128, 16, 64, 4, 2 },
+    { 128, 16, 128, 2, 4 },
+    { 128, 16, 128, 4, 2 },
+    { 128, 16, 256, 2, 4 },
+    { 128, 16, 256, 4, 2 },
+    { 256, 16, 32, 4, 2 },
+    { 256, 16, 64, 2, 4 },
+    { 256, 16, 64, 4, 2 },
+    { 256, 16, 128, 2, 4 },
+    { 256, 16, 128, 4, 2 },
+    { 256, 16, 256, 2, 4 },
+    { 256, 16, 256, 4, 2 },
+
+    { 64, 16, 64, 4, 4 },
+    { 64, 16, 128, 4, 4 },
+    { 64, 16, 256, 4, 4 },
+    { 128, 16, 64, 4, 4 },
+    { 128, 16, 128, 4, 4 },
+    { 128, 16, 256, 4, 4 },
+    { 256, 16, 64, 4, 4 },
+    { 256, 16, 128, 4, 4 },
+    { 256, 16, 256, 4, 4 },
+
+    { 64, 16, 128, 4, 8 },
+    { 64, 16, 256, 4, 8 },
+    { 64, 16, 512, 4, 8 },
+    { 128, 16, 64, 8, 4 },
+    { 128, 16, 128, 4, 8 },
+    { 128, 16, 128, 8, 4 },
+    { 128, 16, 256, 4, 8 },
+    { 128, 16, 256, 8, 4 },
+    { 128, 16, 512, 4, 8 },
+    { 128, 16, 512, 8, 4 },
+    { 256, 16, 64, 8, 4 },
+    { 256, 16, 128, 4, 8 },
+    { 256, 16, 128, 8, 4 },
+    { 256, 16, 256, 4, 8 },
+    { 256, 16, 256, 8, 4 },
+    { 256, 16, 512, 4, 8 },
+    { 256, 16, 512, 8, 4 },
+    { 512, 16, 64, 8, 4 },
+    { 512, 16, 128, 4, 8 },
+    { 512, 16, 128, 8, 4 },
+    { 512, 16, 256, 4, 8 },
+    { 512, 16, 256, 8, 4 },
+    { 512, 16, 512, 4, 8 },
+    { 512, 16, 512, 8, 4 },
+};
 
 void run(int argc, char** argv)
 {
@@ -94,8 +163,8 @@ void run(int argc, char** argv)
 
     std::vector<std::string> algorithm_names = {
         "CPU with OpenMP",
-        // "01 naive",
-        // "02 using local memory",
+        "01 naive",
+        "02 using local memory",
     };
 
     // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
@@ -112,102 +181,173 @@ void run(int argc, char** argv)
         }
     }
 
-    for (size_t algorithm_index = 0; algorithm_index < algorithm_names.size(); ++algorithm_index) {
-        const std::string& algorithm = algorithm_names[algorithm_index];
-        std::cout << "______________________________________________________" << std::endl;
-        std::cout << "Evaluating algorithm #" << (algorithm_index + 1) << "/" << algorithm_names.size() << ": " << algorithm << std::endl;
+    const int warmup = 5;
+    const int reps = 10;
+    const int iters = 100;
 
-        // Обнуляем выходной буфер, чтобы результат предыдущего алгоритма не мог замаскировать ошибку текущего
-        matrix_c_gpu.fill(0.0f);
+    const double total_ops = 1.0 * h * w * (k + k - 1); // общее число сложений и умножений
+    std::vector<WmmaResult> results;
 
-        // Запускаем алгоритм (несколько раз и с замером времени выполнения)
-        std::vector<double> times;
-        int iters_count = (algorithm == "CPU with OpenMP") ? 1 : 1000; // CPU is too slow
-        for (int iter = 0; iter < iters_count; ++iter) {
-            timer t;
+    for (const auto& cfg : tests) {
+        std::cout << std::left
+                  << std::setw(5) << cfg.blockH
+                  << std::setw(5) << cfg.blockK
+                  << std::setw(5) << cfg.blockW
+                  << std::setw(7) << cfg.warpsH
+                  << std::setw(7) << cfg.warpsW
+                  << std::setw(10) << 32 * cfg.warpsH * cfg.warpsW
+                  << '\n';
 
-            if (algorithm == "CPU with OpenMP") {
-                cpu::multiply(input_a_cpu, input_b_cpu, output_c_cpu, w, h, k, true);
-            } else {
-                // _______________________________OpenCL_____________________________________________
-                if (context.type() == gpu::Context::TypeOpenCL) {
-                    if (algorithm == "01 naive") {
-                        // TODO обязательно замените размер рабочей группы 1x1 на больший
-                        ocl_matrix03MultiplyNaive.exec(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else if (algorithm == "02 using local memory") {
-                        ocl_matrix04MultiplyViaLocalMemory.exec(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else {
-                        rassert(false, 7652345234321, algorithm, algorithm_index);
-                    }
-                    // _______________________________CUDA___________________________________________
-                } else if (context.type() == gpu::Context::TypeCUDA) {
-                    if (algorithm == "01 naive") {
-                        cuda::matrix_multiply_naive(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else if (algorithm == "02 using local memory") {
-                        cuda::matrix_multiply_via_local_memory(gpu::WorkSize(16, 16, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
-                        static_assert(BLOCK_K == 16);
-                        static_assert(BLOCK_H % (16 * WARPS_H) == 0);
-                        static_assert(BLOCK_W % (16 * WARPS_W) == 0);
-                        constexpr unsigned int threads = 32 * WARPS_H * WARPS_W;
-                        cuda::matrix_multiply_wmma(gpu::WorkSize(threads, 1, w * threads / BLOCK_W, h / BLOCK_H), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else {
-                        rassert(false, 652345234321, algorithm, algorithm_index);
-                    }
-                    // _______________________________Vulkan_________________________________________
-                } else if (context.type() == gpu::Context::TypeVulkan) {
-                    struct {
-                        unsigned int w;
-                        unsigned int h;
-                        unsigned int k;
-                    } params = {w, h, k};
-                    if (algorithm == "01 naive") {
-                        // TODO обязательно замените размер рабочей группы 1x1 на больший
-//                        vk_matrix03MultiplyNaive.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
-                    } else if (algorithm == "02 using local memory") {
-//                        vk_matrix04MultiplyViaLocalMemory.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
-                    } else if (algorithm == "03 using cooperative matrix [+Prestige Points]") {
-                        vk_matrix05MultiplyCooperativeMatrix.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
-                    } else {
-                        rassert(false, 7652345234321, algorithm, algorithm_index);
-                    }
-                } else {
-                    rassert(false, 546345243, context.type());
-                }
+        try {
+            for (int i = 0; i < warmup; ++i) {
+                cuda::matrix_multiply_wmma_test(cfg, matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
             }
 
-            times.push_back(t.elapsed());
-        }
-        std::cout << "algorithm times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+            std::vector<double> times(reps, 0);
 
-        // Вычисляем достигнутую эффективную пропускную способность алгоритма
-        double total_ops = 1.0 * h * w * (k + k - 1); // общее число сложений и умножений
-        double gflops = 1000*1000*1000;
-        std::cout << "algorithm GFlops: " << total_ops / gflops / stats::median(times) << " GFlops" << std::endl;
-        std::cout << "algorithm effective memory bandwidth: " << 1.0 * (h * k + k * w + h * w) * sizeof(float) / 1024 / 1024 / 1024 / stats::median(times) << " GB/s" << std::endl;
-
-        // Сверяем результат
-        if (algorithm != "CPU with OpenMP") {
-            std::vector<float> results = matrix_c_gpu.readVector();
-            std::vector<float> relative_errors;
-            for (size_t j = 0; j < h; ++j) {
-                for (size_t i = 0; i < w; ++i) {
-                    float gpu_value = results[j * w + i];
-                    float cpu_value = output_c_cpu[j * w + i];
-                    float error = std::abs(gpu_value - cpu_value);
-                    float relative_error = error / std::abs(cpu_value);
-                    relative_errors.push_back(relative_error);
+            for (int rep = 0; rep < reps; ++rep) {
+                timer t;
+                for (int i = 0; i < iters; ++i) {
+                    cuda::matrix_multiply_wmma_test(cfg, matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                 }
+                times[rep] = t.elapsed() / iters;
             }
-            std::cout << "relative differences with CPU: " << stats::valuesStatsLine(relative_errors) << std::endl;
-            float median_relative_error = stats::median(relative_errors);
-            float perc99_relative_error = stats::percentile(relative_errors, 99);
-            std::cout << "median relative difference with CPU: " << median_relative_error << std::endl;
-            std::cout << "99% percentile relative difference with CPU: " << perc99_relative_error << std::endl;
-            rassert(median_relative_error < 1e-3f, 15321452412431, median_relative_error);
-            rassert(perc99_relative_error < 1e-1f, 54623452334232, perc99_relative_error);
+
+            const double med = stats::median(times);
+            results.push_back({ cfg, total_ops / 1e9 / med, med * 1e6 });
+        } catch(...) {
+            results.push_back({ cfg, 0, 0 });
         }
     }
+
+    std::sort(results.begin(), results.end(),
+        [](const WmmaResult& a, const WmmaResult& b) {
+            return a.gflops > b.gflops;
+        });
+
+    std::cout << std::fixed << std::setprecision(2);
+    std::cout << std::left
+              << std::setw(5) << "H"
+              << std::setw(5) << "K"
+              << std::setw(5) << "W"
+              << std::setw(7) << "WH"
+              << std::setw(7) << "WW"
+              << std::setw(10) << "Threads"
+              << std::setw(13) << "GFLOP/s"
+              << std::setw(12) << "Time (us)"
+              << '\n';
+
+    std::cout << std::string(64, '-') << '\n';
+
+    for (const auto& r : results) {
+        std::cout << std::left
+                  << std::setw(5) << r.cfg.blockH
+                  << std::setw(5) << r.cfg.blockK
+                  << std::setw(5) << r.cfg.blockW
+                  << std::setw(7) << r.cfg.warpsH
+                  << std::setw(7) << r.cfg.warpsW
+                  << std::setw(10) << 32 * r.cfg.warpsH * r.cfg.warpsW
+                  << std::setw(13) << r.gflops
+                  << std::setw(12) << r.us
+                  << '\n';
+    }
+
+//     for (size_t algorithm_index = 0; algorithm_index < algorithm_names.size(); ++algorithm_index) {
+//         const std::string& algorithm = algorithm_names[algorithm_index];
+//         std::cout << "______________________________________________________" << std::endl;
+//         std::cout << "Evaluating algorithm #" << (algorithm_index + 1) << "/" << algorithm_names.size() << ": " << algorithm << std::endl;
+
+//         // Обнуляем выходной буфер, чтобы результат предыдущего алгоритма не мог замаскировать ошибку текущего
+//         matrix_c_gpu.fill(0.0f);
+
+//         // Запускаем алгоритм (несколько раз и с замером времени выполнения)
+//         std::vector<double> times;
+//         int iters_count = (algorithm == "CPU with OpenMP") ? 1 : 1000; // CPU is too slow
+//         for (int iter = 0; iter < iters_count; ++iter) {
+//             timer t;
+
+//             if (algorithm == "CPU with OpenMP") {
+//                 cpu::multiply(input_a_cpu, input_b_cpu, output_c_cpu, w, h, k, true);
+//             } else {
+//                 // _______________________________OpenCL_____________________________________________
+//                 if (context.type() == gpu::Context::TypeOpenCL) {
+//                     if (algorithm == "01 naive") {
+//                         // TODO обязательно замените размер рабочей группы 1x1 на больший
+//                         ocl_matrix03MultiplyNaive.exec(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+//                     } else if (algorithm == "02 using local memory") {
+//                         ocl_matrix04MultiplyViaLocalMemory.exec(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+//                     } else {
+//                         rassert(false, 7652345234321, algorithm, algorithm_index);
+//                     }
+//                     // _______________________________CUDA___________________________________________
+//                 } else if (context.type() == gpu::Context::TypeCUDA) {
+//                     if (algorithm == "01 naive") {
+//                         cuda::matrix_multiply_naive(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+//                     } else if (algorithm == "02 using local memory") {
+//                         cuda::matrix_multiply_via_local_memory(gpu::WorkSize(16, 16, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+//                     } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
+//                         static_assert(BLOCK_K == 16);
+//                         static_assert(BLOCK_H % (16 * WARPS_H) == 0);
+//                         static_assert(BLOCK_W % (16 * WARPS_W) == 0);
+//                         constexpr unsigned int threads = 32 * WARPS_H * WARPS_W;
+//                         cuda::matrix_multiply_wmma(gpu::WorkSize(threads, 1, w * threads / BLOCK_W, h / BLOCK_H), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+//                     } else {
+//                         rassert(false, 652345234321, algorithm, algorithm_index);
+//                     }
+//                     // _______________________________Vulkan_________________________________________
+//                 } else if (context.type() == gpu::Context::TypeVulkan) {
+//                     struct {
+//                         unsigned int w;
+//                         unsigned int h;
+//                         unsigned int k;
+//                     } params = {w, h, k};
+//                     if (algorithm == "01 naive") {
+//                         // TODO обязательно замените размер рабочей группы 1x1 на больший
+// //                        vk_matrix03MultiplyNaive.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
+//                     } else if (algorithm == "02 using local memory") {
+// //                        vk_matrix04MultiplyViaLocalMemory.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
+//                     } else if (algorithm == "03 using cooperative matrix [+Prestige Points]") {
+//                         vk_matrix05MultiplyCooperativeMatrix.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
+//                     } else {
+//                         rassert(false, 7652345234321, algorithm, algorithm_index);
+//                     }
+//                 } else {
+//                     rassert(false, 546345243, context.type());
+//                 }
+//             }
+
+//             times.push_back(t.elapsed());
+//         }
+//         std::cout << "algorithm times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+
+//         // Вычисляем достигнутую эффективную пропускную способность алгоритма
+//         double total_ops = 1.0 * h * w * (k + k - 1); // общее число сложений и умножений
+//         double gflops = 1000*1000*1000;
+//         std::cout << "algorithm GFlops: " << total_ops / gflops / stats::median(times) << " GFlops" << std::endl;
+//         std::cout << "algorithm effective memory bandwidth: " << 1.0 * (h * k + k * w + h * w) * sizeof(float) / 1024 / 1024 / 1024 / stats::median(times) << " GB/s" << std::endl;
+
+//         // Сверяем результат
+//         if (algorithm != "CPU with OpenMP") {
+//             std::vector<float> results = matrix_c_gpu.readVector();
+//             std::vector<float> relative_errors;
+//             for (size_t j = 0; j < h; ++j) {
+//                 for (size_t i = 0; i < w; ++i) {
+//                     float gpu_value = results[j * w + i];
+//                     float cpu_value = output_c_cpu[j * w + i];
+//                     float error = std::abs(gpu_value - cpu_value);
+//                     float relative_error = error / std::abs(cpu_value);
+//                     relative_errors.push_back(relative_error);
+//                 }
+//             }
+//             std::cout << "relative differences with CPU: " << stats::valuesStatsLine(relative_errors) << std::endl;
+//             float median_relative_error = stats::median(relative_errors);
+//             float perc99_relative_error = stats::percentile(relative_errors, 99);
+//             std::cout << "median relative difference with CPU: " << median_relative_error << std::endl;
+//             std::cout << "99% percentile relative difference with CPU: " << perc99_relative_error << std::endl;
+//             rassert(median_relative_error < 1e-3f, 15321452412431, median_relative_error);
+//             rassert(perc99_relative_error < 1e-1f, 54623452334232, perc99_relative_error);
+//         }
+//     }
 }
 
 int main(int argc, char** argv)
