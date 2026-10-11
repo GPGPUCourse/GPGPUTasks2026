@@ -19,19 +19,26 @@ __global__ void prefix_sum_02_prefix_accumulation(
     if (index >= n) {
         return;
     }
-    const unsigned prefix_length = index + 1;
-    unsigned sum = 0;
+    const unsigned lane = threadIdx.x & 31;
+    const unsigned warp_base = index & ~31;
+    unsigned big_prefix_sum = 0;
 #pragma unroll
-    for (unsigned int bit = 1, acc = 0; bit < LOG; ++bit) {
-        if (prefix_length >> bit & 1) {
-            sum += pow2_sum[acc + (prefix_length >> bit) - 1];
+    for (unsigned bit = 5, acc = 0; bit < LOG; ++bit) {
+        if (warp_base >> bit & 1) {
+            big_prefix_sum += pow2_sum[acc + (warp_base >> bit) - 1];
         }
         acc += n >> bit;
     }
-    if (prefix_length & 1) {
-        sum += input[index];
+
+    unsigned small_prefix_sum = input[index];
+#pragma unroll
+    for (unsigned offset = 1; offset < 32; offset <<= 1) {
+        const unsigned preceding = __shfl_up_sync(0xffffffffu, small_prefix_sum, offset);
+        if (lane >= offset) {
+            small_prefix_sum += preceding;
+        }
     }
-    prefix_sum_accum[index] = sum;
+    prefix_sum_accum[index] = big_prefix_sum + small_prefix_sum;
 }
 
 namespace cuda {

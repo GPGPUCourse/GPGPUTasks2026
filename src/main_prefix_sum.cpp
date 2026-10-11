@@ -68,7 +68,11 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    unsigned buffer_size = 0;
+    for (unsigned bit = 5; bit < LOG; ++bit) {
+        buffer_size += n >> bit;
+    }
+    gpu::gpu_mem_32u input_gpu(n), buffer_pow2_sum_gpu(buffer_size), prefix_sum_accum_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -81,14 +85,15 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
 
-        cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, n >> 1), input_gpu, buffer1_pow2_sum_gpu, n >> 1);
-        for (unsigned i = 2, acc = (n >> 1); i < LOG; ++i) {
-            gpu::gpu_mem_32u cur_pow2(buffer1_pow2_sum_gpu, acc - (n >> (i - 1)));
-            gpu::gpu_mem_32u next_pow2(buffer1_pow2_sum_gpu, acc);
+        // Store sums of 32 inputs first, then sums of 64, 128, ... inputs.
+        cuda::prefix_sum_01_warp_reduction(gpu::WorkSize(GROUP_SIZE, n), input_gpu, buffer_pow2_sum_gpu, n);
+        for (unsigned i = 6, acc = (n >> 5); i < LOG; ++i) {
+            gpu::gpu_mem_32u cur_pow2(buffer_pow2_sum_gpu, acc - (n >> (i - 1)));
+            gpu::gpu_mem_32u next_pow2(buffer_pow2_sum_gpu, acc);
             cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, n >> i), cur_pow2, next_pow2, n >> i);
             acc += n >> i;
         }
-        cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), buffer1_pow2_sum_gpu, input_gpu, prefix_sum_accum_gpu, n);
+        cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), buffer_pow2_sum_gpu, input_gpu, prefix_sum_accum_gpu, n);
 
         times.push_back(t.elapsed());
     }
