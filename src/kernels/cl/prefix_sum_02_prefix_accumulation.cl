@@ -20,7 +20,15 @@ prefix_sum_02_prefix_accumulation(
         return;
 
     int count = j + 1;
-    if ((count & (1u << pow2)) != 0) {
-        prefix_sum_accum[j] += pow2_sum[(count >> pow2) - 1];
+    int digit = (count >> pow2) & 7u;
+    if (digit == 0) {
+        return;
     }
+
+    int end_block = (count >> pow2) - 1;
+    int add = 0;
+    for (int d = 0; d < digit; d++) {
+        add += pow2_sum[end_block - d];
+    }
+    prefix_sum_accum[j] += add;
 }

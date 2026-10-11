@@ -5,6 +5,8 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
+#define REDUCE_FACTOR 8
+
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void prefix_sum_01_reduction(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
@@ -13,19 +15,18 @@ __kernel void prefix_sum_01_reduction(
     __global       uint* next_pow2_sum, // will contain (n+1)/2 values
     unsigned int n)
 {
-    int j = get_global_id(0); // id куда мы хотим вставить
-
-    if (j >= (n + 1) / 2)
+    int j = get_global_id(0);
+    int out_n = (n + REDUCE_FACTOR - 1) / REDUCE_FACTOR;
+    if (j >= out_n)
         return;
 
-    int i0 = 2 * j;
-    int i1 = i0 + 1;
+    int base = j * REDUCE_FACTOR;
     uint sum = 0;
-    if (i0 < n){
-        sum = pow2_sum[i0];
-    }
-    if (i1 < n) {
-        sum += pow2_sum[i1];
+    for (int t = 0; t < REDUCE_FACTOR; t++) {
+        int i = base + t;
+        if (i < n) {
+            sum += pow2_sum[i];
+        }
     }
     next_pow2_sum[j] = sum;
 }
