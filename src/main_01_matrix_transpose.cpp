@@ -36,22 +36,22 @@ void run(int argc, char** argv)
     avk2::KernelSource vk_matrix02TransposeCoalescedViaLocalMemory(avk2::getMatrix02TransposeCoalescedViaLocalMemory());
 
     unsigned int ksize = 512;
-    unsigned int w = ksize * 32;
-    unsigned int h = ksize * 16;
-    std::cout << "Matrix size: rows=H=" << h << " x cols=W=" << w << " (" << sizeof(float) * w * h / 1024 / 1024 << " MB)" << std::endl;
+    unsigned int width = ksize * 32;
+    unsigned int height = ksize * 16;
+    std::cout << "Matrix size: rows=H=" << height << " x cols=W=" << width << " (" << sizeof(float) * width * height / 1024 / 1024 << " MB)" << std::endl;
 
-    std::vector<float> input_cpu(h * w, 0);
+    std::vector<float> input_cpu(height * width, 0);
     FastRandom r;
-    for (size_t i = 0; i < h * w; ++i) {
+    for (size_t i = 0; i < height * width; ++i) {
         input_cpu[i] = r.nextf();
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32f input_matrix_gpu (h * w); // rows=H x cols=W
-    gpu::gpu_mem_32f output_matrix_gpu(w * h); // rows=W x cols=H
+    gpu::gpu_mem_32f input_matrix_gpu (height * width); // rows=H x cols=W
+    gpu::gpu_mem_32f output_matrix_gpu(width * height); // rows=W x cols=H
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
-    input_matrix_gpu.writeN(input_cpu.data(), h * w);
+    input_matrix_gpu.writeN(input_cpu.data(), height * width);
 
     std::vector<std::string> algorithm_names = {
         "01 naive transpose (non-coalesced)",
@@ -71,35 +71,43 @@ void run(int argc, char** argv)
         for (int iter = 0; iter < 10; ++iter) {
             timer t;
 
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED); // TODO remove me
             // _______________________________OpenCL_____________________________________________
             if (context.type() == gpu::Context::TypeOpenCL) {
                 if (algorithm == "01 naive transpose (non-coalesced)") {
-                    ocl_matrix01TransposeNaive.exec(gpu::WorkSize(1, 1, w, h), input_matrix_gpu, output_matrix_gpu, w, h);
+                    ocl_matrix01TransposeNaive.exec(
+                        gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height),
+                        input_matrix_gpu, output_matrix_gpu,
+                        width,
+                        height);
                 } else if (algorithm == "02 transpose via local memory (coalesced)") {
-                    ocl_matrix02TransposeCoalescedViaLocalMemory.exec(gpu::WorkSize(1, 1, w, h), input_matrix_gpu, output_matrix_gpu, w, h);
+                    ocl_matrix02TransposeCoalescedViaLocalMemory.exec(
+                        gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height),
+                        input_matrix_gpu,
+                        output_matrix_gpu,
+                        width,
+                        height);
                 } else {
                     rassert(false, 652345234321, algorithm, algorithm_index);
                 }
                 // _______________________________CUDA___________________________________________
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 if (algorithm == "01 naive transpose (non-coalesced)") {
-                    cuda::matrix_transpose_naive(gpu::WorkSize(1, 1, w, h), input_matrix_gpu, output_matrix_gpu, w, h);
+                    cuda::matrix_transpose_naive(gpu::WorkSize(1, 1, width, height), input_matrix_gpu, output_matrix_gpu, width, height);
                 } else if (algorithm == "02 transpose via local memory (coalesced)") {
-                    cuda::matrix_transpose_coalesced_via_local_memory(gpu::WorkSize(1, 1, w, h), input_matrix_gpu, output_matrix_gpu, w, h);
+                    cuda::matrix_transpose_coalesced_via_local_memory(gpu::WorkSize(1, 1, width, height), input_matrix_gpu, output_matrix_gpu, width, height);
                 } else {
                     rassert(false, 652345234321, algorithm, algorithm_index);
                 }
                 // _______________________________Vulkan_________________________________________
             } else if (context.type() == gpu::Context::TypeVulkan) {
                 struct {
-                    unsigned int w;
-                    unsigned int h;
-                } params = {w, h};
+                    unsigned int width;
+                    unsigned int height;
+                } params = {width, height};
                 if (algorithm == "01 naive transpose (non-coalesced)") {
-                    vk_matrix01TransposeNaive.exec(params, gpu::WorkSize(1, 1, w, h), input_matrix_gpu, output_matrix_gpu);
+                    vk_matrix01TransposeNaive.exec(params, gpu::WorkSize(1, 1, width, height), input_matrix_gpu, output_matrix_gpu);
                 } else if (algorithm == "02 transpose via local memory (coalesced)") {
-                    vk_matrix02TransposeCoalescedViaLocalMemory.exec(params, gpu::WorkSize(1, 1, w, h), input_matrix_gpu, output_matrix_gpu);
+                    vk_matrix02TransposeCoalescedViaLocalMemory.exec(params, gpu::WorkSize(1, 1, width, height), input_matrix_gpu, output_matrix_gpu);
                 } else {
                     rassert(false, 652345234321, algorithm, algorithm_index);
                 }
@@ -112,14 +120,14 @@ void run(int argc, char** argv)
         std::cout << "algorithm times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 
         // Вычисляем достигнутую эффективную пропускную способность алгоритма (из соображений что мы отработали в один проход по входному массиву)
-        double memory_size_gb = 2.0 * sizeof(float) * w * h / 1024.0 / 1024.0 / 1024.0;
+        double memory_size_gb = 2.0 * sizeof(float) * width * height / 1024.0 / 1024.0 / 1024.0;
         std::cout << "median effective algorithm bandwidth: " << memory_size_gb / stats::median(times) << " GB/s" << std::endl;
 
         // Сверяем результат
-        std::vector<float> results = output_matrix_gpu.readVector(); // input matrix: w x h -> output matrix: h x w
-        for (size_t j = 0; j < h; ++j) {
-            for (size_t i = 0; i < w; ++i) {
-                rassert(results[i * h + j] == input_cpu[j * w + i], 6573452432, i, j);
+        std::vector<float> results = output_matrix_gpu.readVector(); // input matrix: width x height -> output matrix: height x width
+        for (size_t j = 0; j < height; ++j) {
+            for (size_t i = 0; i < width; ++i) {
+                rassert(results[i * height + j] == input_cpu[j * width + i], 6573452432, i, j);
             }
         }
     }
