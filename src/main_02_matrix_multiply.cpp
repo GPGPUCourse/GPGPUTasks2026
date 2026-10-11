@@ -88,6 +88,14 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32f matrix_b_gpu(k * w); // rows=K x cols=W
     gpu::gpu_mem_32f matrix_c_gpu(h * w); // rows=H x cols=W
 
+    const unsigned int packed_h = ((h + MATRIX_WMMA_BLOCK_M - 1) / MATRIX_WMMA_BLOCK_M) * MATRIX_WMMA_BLOCK_M;
+    const unsigned int packed_w = ((w + MATRIX_WMMA_BLOCK_N - 1) / MATRIX_WMMA_BLOCK_N) * MATRIX_WMMA_BLOCK_N;
+    const unsigned int packed_k = ((k + MATRIX_WMMA_BLOCK_K - 1) / MATRIX_WMMA_BLOCK_K) * MATRIX_WMMA_BLOCK_K;
+    const size_t packing_blocks = size_t(packed_h) * packed_k / (MATRIX_WMMA_PACK_THREADS * 4)
+        + size_t(packed_w / 32) * (packed_k / 32);
+    gpu::gpu_mem_16u matrix_a_packed_gpu;
+    gpu::gpu_mem_16u matrix_b_packed_gpu;
+
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     matrix_a_gpu.writeN(input_a_cpu.data(), input_a_cpu.size());
     matrix_b_gpu.writeN(input_b_cpu.data(), input_b_cpu.size());
@@ -120,6 +128,12 @@ void run(int argc, char** argv)
         // Обнуляем выходной буфер, чтобы результат предыдущего алгоритма не мог замаскировать ошибку текущего
         matrix_c_gpu.fill(0.0f);
 
+        if (context.type() == gpu::Context::TypeCUDA && algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
+            matrix_a_packed_gpu.resizeN(size_t(packed_h) * packed_k);
+            matrix_b_packed_gpu.resizeN(size_t(packed_w) * packed_k);
+            cuda::matrix_multiply_wmma_print_device_info();
+        }
+
         // Запускаем алгоритм (несколько раз и с замером времени выполнения)
         std::vector<double> times;
         int iters_count = (algorithm == "CPU with OpenMP") ? 1 : 10; // CPU is too slow
@@ -149,10 +163,12 @@ void run(int argc, char** argv)
                     } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
                         cuda::matrix_multiply_wmma(
                             gpu::WorkSize(
-                                32, 4,
-                                ((w + 63) / 64) * 32,
-                                ((h + 63) / 64) * 4),
-                            matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                                32, MATRIX_WMMA_WARPS,
+                                ((w + MATRIX_WMMA_BLOCK_N - 1) / MATRIX_WMMA_BLOCK_N) * 32,
+                                ((h + MATRIX_WMMA_BLOCK_M - 1) / MATRIX_WMMA_BLOCK_M) * MATRIX_WMMA_WARPS),
+                            gpu::WorkSize(MATRIX_WMMA_PACK_THREADS, packing_blocks * MATRIX_WMMA_PACK_THREADS),
+                            matrix_a_gpu, matrix_b_gpu, matrix_c_gpu,
+                            matrix_a_packed_gpu, matrix_b_packed_gpu, w, h, k);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
