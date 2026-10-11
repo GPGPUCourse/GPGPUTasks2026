@@ -50,18 +50,24 @@ __global__ void matrix_multiply_wmma(
             wmma::fill_fragment(acc[i][j], 0);
 
     for (unsigned int i = 0; i < k; i += blockK) {
-        for (unsigned int idx = threadIdx.x; idx < blockH * blockK; idx += threads) {
-            const unsigned int y = idx / blockK;
-            const unsigned int x = idx % blockK;
+        for (unsigned int idx = threadIdx.x; idx < blockH * (blockK / 4); idx += threads) {
+            const unsigned int y = idx / (blockK / 4);
+            const unsigned int x = (idx % (blockK / 4)) * 4;
 
-            local_a[y][x] = __float2half(a[(blockIdx.y * blockH + y) * k + i + x]);
+            const float4 v = *reinterpret_cast<const float4*>(a + (blockIdx.y * blockH + y) * k + i + x);
+
+            *reinterpret_cast<half2*>(&local_a[y][x]) = __floats2half2_rn(v.x, v.y);
+            *reinterpret_cast<half2*>(&local_a[y][x + 2]) = __floats2half2_rn(v.z, v.w);
         }
 
-        for (unsigned int idx = threadIdx.x; idx < blockW * blockK; idx += threads) {
-            const unsigned int y = idx / blockW;
-            const unsigned int x = idx % blockW;
+        for (unsigned int idx = threadIdx.x; idx < blockK * (blockW / 4); idx += threads) {
+            const unsigned int y = idx / (blockW / 4);
+            const unsigned int x = (idx % (blockW / 4)) * 4;
 
-            local_b[y][x] = __float2half(b[(i + y) * w + blockIdx.x * blockW + x]);
+            const float4 v = *reinterpret_cast<const float4*>(b + (i + y) * w + blockIdx.x * blockW + x);
+
+            *reinterpret_cast<half2*>(&local_b[y][x]) = __floats2half2_rn(v.x, v.y);
+            *reinterpret_cast<half2*>(&local_b[y][x + 2]) = __floats2half2_rn(v.z, v.w);
         }
 
         __syncthreads();
