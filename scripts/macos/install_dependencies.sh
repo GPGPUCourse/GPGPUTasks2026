@@ -8,10 +8,10 @@ njobs=`expr $njobs + $njobs`
 
 install_prefix=/opt
 
-googletest_version=1.10.0
+googletest_version=1.12.1
 
 echo "Downloading sources"
-curl -O https://github.com/google/googletest/archive/refs/tags/release-${googletest_version}.zip
+curl -L -O https://github.com/google/googletest/archive/refs/tags/release-${googletest_version}.zip
 
 # Alternatively you can install googletest simply via: "brew install googletest" - but if you do - you do it on your own risk (version incompatibility is possible)
 echo "Installing googletest"
@@ -21,6 +21,7 @@ pushd googletest-release-${googletest_version}
 mkdir releasebuild
 cd releasebuild
 cmake -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_INSTALL_PREFIX=${install_prefix} ..
-make -j${njobs} install
+make -j${njobs}
+sudo make install
 popd
 rm -rf googletest-release-${googletest_version}
