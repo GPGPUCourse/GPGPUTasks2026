@@ -12,8 +12,13 @@ layout (push_constant) uniform PushConstants {
     uint h;
 } params;
 
-layout (local_size_x = 1, local_size_y = 1) in;
+layout (local_size_x = 32, local_size_y = 32) in;
 void main()
 {
-    // TODO
+    const uint x = gl_GlobalInvocationID.x, y = gl_GlobalInvocationID.y;
+    if (x >= params.w || y >= params.h) {
+        return;
+    }
+
+    transposed_matrix[y + x * params.h] = matrix[x + params.w * y];
 }
