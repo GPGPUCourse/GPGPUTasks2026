@@ -23,8 +23,27 @@ layout (push_constant) uniform PushConstants {
     uint k;
 } params;
 
-layout (local_size_x = 1, local_size_y = 1) in;
+layout(constant_id = 0) const int M = 16;
+layout(constant_id = 1) const int N = 16;
+layout(constant_id = 2) const int K = 16;
+
+layout (local_size_x = 32, local_size_y = 1) in;
 void main()
 {
-    // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
+    uint x = gl_WorkGroupID.x * N, y = gl_WorkGroupID.y * M;
+
+    coopmat<float, gl_ScopeSubgroup, M, K, gl_MatrixUseA> matA;
+    coopmat<float, gl_ScopeSubgroup, K, N, gl_MatrixUseB> matB;
+    coopmat<float, gl_ScopeSubgroup, M, N, gl_MatrixUseAccumulator> acc;
+
+    acc = coopmat<float, gl_ScopeSubgroup, M, N, gl_MatrixUseAccumulator>(0.0);
+
+    for (uint i = 0; i < params.k; i += K) {
+        coopMatLoad(matA, a, i + y * params.k, params.k, gl_CooperativeMatrixLayoutRowMajor);
+        coopMatLoad(matB, b, params.w * i + x, params.w, gl_CooperativeMatrixLayoutRowMajor);
+
+        acc = coopMatMulAdd(matA, matB, acc);
+    }
+
+    coopMatStore(acc, c, y * params.w + x, params.w, gl_CooperativeMatrixLayoutRowMajor);
 }
