@@ -87,30 +87,30 @@ __global__ __launch_bounds__(32 * MATRIX_WMMA_WARPS, 2) void matrix_multiply_wmm
     const unsigned int thread = warp * 32 + lane;
     const unsigned int warp_row = warp / 2;
     const unsigned int warp_col = warp % 2;
-    const unsigned int block_row = blockIdx.y * BM;
-    const unsigned int block_col = blockIdx.x * BN;
+    const unsigned int block_row = blockIdx.x * BM;
+    const unsigned int block_col = blockIdx.y * BN;
 
     __shared__ __align__(32) unsigned char shared_bytes[2 * STAGE_ELEMENTS * sizeof(half)];
     uint4* shared_vectors = reinterpret_cast<uint4*>(shared_bytes);
     float* output_tile = reinterpret_cast<float*>(shared_bytes);
-    const unsigned int copy_row = (warp % 4) * 32 + 2 * ((lane / 4) % 4) + lane / 16;
+    const unsigned int copy_row = (warp % 2) * 64 + 2 * ((lane / 4) % 4) + lane / 16;
     const unsigned int copy_vector = lane % 4;
-    const unsigned int copy_offset = (warp < 4 ? 0 : BM * LD / 8) + copy_row * (LD / 8) + copy_vector;
-    const unsigned int copy_origin = warp < 4 ? block_row : block_col;
-    const half* copy_matrix = warp < 4 ? a : b;
+    const unsigned int copy_offset = (warp < 2 ? 0 : BM * LD / 8) + copy_row * (LD / 8) + copy_vector;
+    const unsigned int copy_origin = warp < 2 ? block_row : block_col;
+    const half* copy_matrix = warp < 2 ? a : b;
     const uint4* input_vectors = reinterpret_cast<const uint4*>(copy_matrix)
         + size_t(copy_origin + copy_row) * (packed_k / 8) + copy_vector;
 
 #pragma unroll
-    for (unsigned int i = 0; i < 4; ++i)
+    for (unsigned int i = 0; i < 8; ++i)
         shared_vectors[copy_offset + i * LD] = input_vectors[size_t(i) * packed_k];
     __syncthreads();
 
-    nvcuda::wmma::fragment<nvcuda::wmma::matrix_a, 16, 16, 16, half, nvcuda::wmma::row_major> a_frag[2];
+    nvcuda::wmma::fragment<nvcuda::wmma::matrix_a, 16, 16, 16, half, nvcuda::wmma::row_major> a_frag[4];
     nvcuda::wmma::fragment<nvcuda::wmma::matrix_b, 16, 16, 16, half, nvcuda::wmma::col_major> b_frag;
-    nvcuda::wmma::fragment<nvcuda::wmma::accumulator, 16, 16, 16, float> c_frag[2][4];
+    nvcuda::wmma::fragment<nvcuda::wmma::accumulator, 16, 16, 16, float> c_frag[4][4];
 #pragma unroll
-    for (unsigned int i = 0; i < 2; ++i) {
+    for (unsigned int i = 0; i < 4; ++i) {
 #pragma unroll
         for (unsigned int j = 0; j < 4; ++j)
             nvcuda::wmma::fill_fragment(c_frag[i][j], 0.0f);
@@ -118,11 +118,11 @@ __global__ __launch_bounds__(32 * MATRIX_WMMA_WARPS, 2) void matrix_multiply_wmm
 
     unsigned int stage = 0;
     for (unsigned int k0 = 0; k0 < packed_k; k0 += BK) {
-        uint4 prefetched[4];
+        uint4 prefetched[8];
         const bool has_next = k0 + BK < packed_k;
         if (has_next) {
 #pragma unroll
-            for (unsigned int i = 0; i < 4; ++i)
+            for (unsigned int i = 0; i < 8; ++i)
                 prefetched[i] = input_vectors[size_t(i) * packed_k + (k0 + BK) / 8];
         }
         half* a_half = reinterpret_cast<half*>(shared_bytes) + stage * STAGE_ELEMENTS;
@@ -130,19 +130,19 @@ __global__ __launch_bounds__(32 * MATRIX_WMMA_WARPS, 2) void matrix_multiply_wmm
 #pragma unroll 1
         for (unsigned int kk = 0; kk < BK; kk += TILE) {
 #pragma unroll
-            for (unsigned int i = 0; i < 2; ++i)
-                nvcuda::wmma::load_matrix_sync(a_frag[i], a_half + (warp_row * 32 + i * TILE) * LD + kk, LD);
+            for (unsigned int i = 0; i < 4; ++i)
+                nvcuda::wmma::load_matrix_sync(a_frag[i], a_half + (warp_row * 64 + i * TILE) * LD + kk, LD);
 #pragma unroll
             for (unsigned int j = 0; j < 4; ++j) {
                 nvcuda::wmma::load_matrix_sync(b_frag, b_half + (warp_col * 64 + j * TILE) * LD + kk, LD);
 #pragma unroll
-                for (unsigned int i = 0; i < 2; ++i)
+                for (unsigned int i = 0; i < 4; ++i)
                     nvcuda::wmma::mma_sync(c_frag[i][j], a_frag[i], b_frag, c_frag[i][j]);
             }
         }
         if (has_next) {
 #pragma unroll
-            for (unsigned int i = 0; i < 4; ++i)
+            for (unsigned int i = 0; i < 8; ++i)
                 shared_vectors[(stage ^ 1) * STAGE_VECTORS + copy_offset + i * LD] = prefetched[i];
         }
         __syncthreads();
@@ -152,12 +152,12 @@ __global__ __launch_bounds__(32 * MATRIX_WMMA_WARPS, 2) void matrix_multiply_wmm
     const bool full_tile = block_row + BM <= h && block_col + BN <= w && (w & 3) == 0;
 #pragma unroll
     for (unsigned int strip = 0; strip < 2; ++strip) {
-        if (warp / 4 == strip) {
+        if (warp / 2 == strip) {
 #pragma unroll
-            for (unsigned int i = 0; i < 2; ++i) {
+            for (unsigned int i = 0; i < 4; ++i) {
 #pragma unroll
                 for (unsigned int j = 0; j < 4; ++j) {
-                    const unsigned int row = (warp_row % 2) * 32 + i * TILE;
+                    const unsigned int row = i * TILE;
                     const unsigned int col = warp_col * 64 + j * TILE;
                     nvcuda::wmma::store_matrix_sync(output_tile + row * BN + col, c_frag[i][j], BN, nvcuda::wmma::mem_row_major);
                 }

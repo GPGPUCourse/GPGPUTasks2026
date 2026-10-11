@@ -94,8 +94,8 @@ void run(int argc, char** argv)
     const size_t packing_blocks = size_t(packed_h) * packed_k / (MATRIX_WMMA_PACK_THREADS * 4)
         + size_t(packed_w / 32) * (packed_k / 32);
     const gpu::WorkSize wmma_work_size(32, MATRIX_WMMA_WARPS,
-        ((w + MATRIX_WMMA_BLOCK_N - 1) / MATRIX_WMMA_BLOCK_N) * 32,
-        ((h + MATRIX_WMMA_BLOCK_M - 1) / MATRIX_WMMA_BLOCK_M) * MATRIX_WMMA_WARPS);
+        ((h + MATRIX_WMMA_BLOCK_M - 1) / MATRIX_WMMA_BLOCK_M) * 32,
+        ((w + MATRIX_WMMA_BLOCK_N - 1) / MATRIX_WMMA_BLOCK_N) * MATRIX_WMMA_WARPS);
     const gpu::WorkSize packing_work_size(MATRIX_WMMA_PACK_THREADS, packing_blocks * MATRIX_WMMA_PACK_THREADS);
     gpu::gpu_mem_16u matrix_a_packed_gpu;
     gpu::gpu_mem_16u matrix_b_packed_gpu;
