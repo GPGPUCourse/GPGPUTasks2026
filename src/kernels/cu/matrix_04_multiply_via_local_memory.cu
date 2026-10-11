@@ -30,14 +30,14 @@ __global__ void matrix_multiply_via_local_memory(
 
     for (int phase = 0; phase < num_phases; ++phase) {
         unsigned int a_col = phase * BANK_SIZE + tx;
-        if (x < w) {
+        if (a_col < w) {
             a_local[ty][tx] = a[y * k + a_col];
         } else {
             a_local[ty][tx] = 0.0f;
         }
 
         unsigned int b_row = phase * BANK_SIZE + ty;
-        if (y < h) {
+        if (b_row < h) {
             b_local[ty][tx] = b[b_row * w + x];
         } else {
             b_local[ty][tx] = 0.0f;
