@@ -26,8 +26,8 @@ __global__ void matrix_multiply_wmma(
     constexpr unsigned int fragsH = BLOCK_H / (16 * WARPS_H);
     constexpr unsigned int fragsW = BLOCK_W / (16 * WARPS_W);
 
-    __shared__ half local_a[BLOCK_H][BLOCK_K];
-    __shared__ half local_b[BLOCK_K][BLOCK_W];
+    __shared__ half local_a[BLOCK_H][BLOCK_K + 8];
+    __shared__ half local_b[BLOCK_K][BLOCK_W + 8];
 
     const int warp = threadIdx.x / 32;
 
@@ -67,11 +67,11 @@ __global__ void matrix_multiply_wmma(
 
         #pragma unroll
         for (int j = 0; j < fragsH; ++j)
-            wmma::load_matrix_sync(af[j], &local_a[(warpH * fragsH + j) * 16][0], BLOCK_K);
+            wmma::load_matrix_sync(af[j], &local_a[(warpH * fragsH + j) * 16][0], BLOCK_K + 8);
 
         #pragma unroll
         for (int j = 0; j < fragsW; ++j)
-            wmma::load_matrix_sync(bf[j], &local_b[0][(warpW * fragsW + j) * 16], BLOCK_W);
+            wmma::load_matrix_sync(bf[j], &local_b[0][(warpW * fragsW + j) * 16], BLOCK_W + 8);
 
         #pragma unroll
         for (int i = 0; i < fragsH; ++i)
