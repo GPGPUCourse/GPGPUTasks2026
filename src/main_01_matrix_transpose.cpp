@@ -71,13 +71,12 @@ void run(int argc, char** argv)
         for (int iter = 0; iter < 10; ++iter) {
             timer t;
 
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED); // TODO remove me
             // _______________________________OpenCL_____________________________________________
             if (context.type() == gpu::Context::TypeOpenCL) {
                 if (algorithm == "01 naive transpose (non-coalesced)") {
-                    ocl_matrix01TransposeNaive.exec(gpu::WorkSize(1, 1, w, h), input_matrix_gpu, output_matrix_gpu, w, h);
+                    ocl_matrix01TransposeNaive.exec(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), input_matrix_gpu, output_matrix_gpu, w, h);
                 } else if (algorithm == "02 transpose via local memory (coalesced)") {
-                    ocl_matrix02TransposeCoalescedViaLocalMemory.exec(gpu::WorkSize(1, 1, w, h), input_matrix_gpu, output_matrix_gpu, w, h);
+                    ocl_matrix02TransposeCoalescedViaLocalMemory.exec(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), input_matrix_gpu, output_matrix_gpu, w, h);
                 } else {
                     rassert(false, 652345234321, algorithm, algorithm_index);
                 }
@@ -117,10 +116,18 @@ void run(int argc, char** argv)
 
         // Сверяем результат
         std::vector<float> results = output_matrix_gpu.readVector(); // input matrix: w x h -> output matrix: h x w
+        size_t error_c = 0;
         for (size_t j = 0; j < h; ++j) {
             for (size_t i = 0; i < w; ++i) {
-                rassert(results[i * h + j] == input_cpu[j * w + i], 6573452432, i, j);
+                if (results[i * h + j] != input_cpu[j * w + i]) {
+                    error_c++;
+                }
+                // rassert(results[i * h + j] == input_cpu[j * w + i], 6573452432, i, j);
             }
+        }
+        if (error_c != 0) {
+            std::cerr << "Errors: " << error_c << " out of " << w*h << std::endl;
+            rassert(false, 124141241414);
         }
     }
 }
