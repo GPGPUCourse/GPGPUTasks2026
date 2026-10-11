@@ -20,12 +20,12 @@ void main()
     const uint x = gl_GlobalInvocationID.x, y = gl_GlobalInvocationID.y;
     const uint lx = gl_LocalInvocationID.x, ly = gl_LocalInvocationID.y;
 
-    local[lx + 32 * ly] = (x < params.w && y < params.h ? matrix[x + params.w * y] : 0);
+    local[lx + 33 * ly] = (x < params.w && y < params.h ? matrix[x + params.w * y] : 0);
 
     barrier();
 
     const uint new_x = gl_WorkGroupID.y * gl_WorkGroupSize.y + lx, new_y = gl_WorkGroupID.x * gl_WorkGroupSize.x + ly;
     if (new_x < params.h && new_y < params.w) {
-        transposed_matrix[new_x + new_y * params.h] = local[lx * 32 + ly];
+        transposed_matrix[new_x + new_y * params.h] = local[lx * 33 + ly];
     }
 }
