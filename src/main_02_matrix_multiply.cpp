@@ -15,25 +15,26 @@
 #include <iomanip>
 
 namespace cpu {
+
 void multiply(
     const std::vector<float> &a,
     const std::vector<float> &b,
-          std::vector<float> &c,
-                 unsigned int w,
-                 unsigned int h,
-                 unsigned int k,
-                  bool with_omp)
+    std::vector<float> &c,
+    unsigned int width,
+    unsigned int height,
+    unsigned int k,
+    bool with_omp)
 {
     #pragma omp parallel for schedule(dynamic, 1) if (with_omp)
-    for (ptrdiff_t j = 0; j < h; ++j) {
-        for (ptrdiff_t i = 0; i < w; ++i) {
+    for (ptrdiff_t j = 0; j < height; ++j) {
+        for (ptrdiff_t i = 0; i < width; ++i) {
             float acc = 0.0f;
 
             for (int ki = 0; ki < k; ++ki) {
-                acc += a[j * k + ki] * b[ki * w + i];
+                acc += a[j * k + ki] * b[ki * width + i];
             }
 
-            c[j * w + i] = acc;
+            c[j * width + i] = acc;
         }
     }
 }
@@ -64,17 +65,17 @@ void run(int argc, char** argv)
     avk2::KernelSource vk_matrix05MultiplyCooperativeMatrix(avk2::getMatrix05MultiplyCooperativeMatrix());
 
     unsigned int ksize = 128;
-    unsigned int w = ksize * 32;
+    unsigned int width = ksize * 32;
     unsigned int k = ksize * 8;
-    unsigned int h = ksize * 16;
-    std::cout << "C = A x B, matrices size: C (rows=H=" << h << " x cols=W=" << w << ")"
-              << " = A (rows=H=" << h << " x cols=K=" << k << ") x B (rows=K=" << k << " x cols=W=" << w << ")" << std::endl;
-    std::cout << "matrices data size: A - " << sizeof(float) * h * k / 1024 / 1024 << " MB, B - " << sizeof(float) * k * w / 1024 / 1024 << " MB, C - " << sizeof(float) * k * w / 1024 / 1024 << " MB" << std::endl;
+    unsigned int height = ksize * 16;
+    std::cout << "C = A x B, matrices size: C (rows=H=" << height << " x cols=W=" << width << ")"
+              << " = A (rows=H=" << height << " x cols=K=" << k << ") x B (rows=K=" << k << " x cols=W=" << width << ")" << std::endl;
+    std::cout << "matrices data size: A - " << sizeof(float) * height * k / 1024 / 1024 << " MB, B - " << sizeof(float) * k * width / 1024 / 1024 << " MB, C - " << sizeof(float) * k * width / 1024 / 1024 << " MB" << std::endl;
 
-    std::vector<float> input_a_cpu(h * k, 0);  // rows=H x cols=K
-    std::vector<float> input_b_cpu(k * w, 0);  // rows=K x cols=W
-    std::vector<float> output_c_cpu(h * w, 0); // rows=H x cols=W
-    std::vector<float> output_c_gpu(h * w, 0); // rows=H x cols=W
+    std::vector<float> input_a_cpu(height * k, 0);  // rows=H x cols=K
+    std::vector<float> input_b_cpu(k * width, 0);  // rows=K x cols=W
+    std::vector<float> output_c_cpu(height * width, 0); // rows=H x cols=W
+    std::vector<float> output_c_gpu(height * width, 0); // rows=H x cols=W
     FastRandom r;
     for (size_t i = 0; i < input_a_cpu.size(); ++i) {
         input_a_cpu[i] = r.nextf();
@@ -84,9 +85,9 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32f matrix_a_gpu(h * k); // rows=H x cols=K
-    gpu::gpu_mem_32f matrix_b_gpu(k * w); // rows=K x cols=W
-    gpu::gpu_mem_32f matrix_c_gpu(h * w); // rows=H x cols=W
+    gpu::gpu_mem_32f matrix_a_gpu(height * k); // rows=H x cols=K
+    gpu::gpu_mem_32f matrix_b_gpu(k * width); // rows=K x cols=W
+    gpu::gpu_mem_32f matrix_c_gpu(height * width); // rows=H x cols=W
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     matrix_a_gpu.writeN(input_a_cpu.data(), input_a_cpu.size());
@@ -127,16 +128,28 @@ void run(int argc, char** argv)
             timer t;
 
             if (algorithm == "CPU with OpenMP") {
-                cpu::multiply(input_a_cpu, input_b_cpu, output_c_cpu, w, h, k, true);
+                cpu::multiply(
+                    input_a_cpu,
+                    input_b_cpu,
+                    output_c_cpu,
+                    width,
+                    height, 
+                    k,
+                    true);
             } else {
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED); // TODO remove me
                 // _______________________________OpenCL_____________________________________________
                 if (context.type() == gpu::Context::TypeOpenCL) {
                     if (algorithm == "01 naive") {
-                        // TODO обязательно замените размер рабочей группы 1x1 на больший
-                        ocl_matrix03MultiplyNaive.exec(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                        ocl_matrix03MultiplyNaive.exec(
+                            gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height),
+                            matrix_a_gpu,
+                            matrix_b_gpu,
+                            matrix_c_gpu,
+                            width,
+                            height,
+                            k);
                     } else if (algorithm == "02 using local memory") {
-                        ocl_matrix04MultiplyViaLocalMemory.exec(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                        ocl_matrix04MultiplyViaLocalMemory.exec(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, width, height, k);
                     } else {
                         rassert(false, 7652345234321, algorithm, algorithm_index);
                     }
@@ -144,28 +157,28 @@ void run(int argc, char** argv)
                 } else if (context.type() == gpu::Context::TypeCUDA) {
                     if (algorithm == "01 naive") {
                         // TODO обязательно замените размер рабочей группы 1x1 на больший
-                        cuda::matrix_multiply_naive(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                        cuda::matrix_multiply_naive(gpu::WorkSize(1, 1, width, height), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, width, height, k);
                     } else if (algorithm == "02 using local memory") {
-                        cuda::matrix_multiply_via_local_memory(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                        cuda::matrix_multiply_via_local_memory(gpu::WorkSize(1, 1, width, height), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, width, height, k);
                     } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
-                        cuda::matrix_multiply_wmma(gpu::WorkSize(1, 1, w, h * 2 / 16), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                        cuda::matrix_multiply_wmma(gpu::WorkSize(1, 1, width, height * 2 / 16), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, width, height, k);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
                     // _______________________________Vulkan_________________________________________
                 } else if (context.type() == gpu::Context::TypeVulkan) {
                     struct {
-                        unsigned int w;
-                        unsigned int h;
+                        unsigned int width;
+                        unsigned int height;
                         unsigned int k;
-                    } params = {w, h, k};
+                    } params = {width, height, k};
                     if (algorithm == "01 naive") {
                         // TODO обязательно замените размер рабочей группы 1x1 на больший
-//                        vk_matrix03MultiplyNaive.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
+//                        vk_matrix03MultiplyNaive.exec(params, gpu::WorkSize(1, 1, width, height), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
                     } else if (algorithm == "02 using local memory") {
-//                        vk_matrix04MultiplyViaLocalMemory.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
+//                        vk_matrix04MultiplyViaLocalMemory.exec(params, gpu::WorkSize(1, 1, width, height), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
                     } else if (algorithm == "03 using cooperative matrix [+Prestige Points]") {
-                        vk_matrix05MultiplyCooperativeMatrix.exec(params, gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
+                        vk_matrix05MultiplyCooperativeMatrix.exec(params, gpu::WorkSize(1, 1, width, height), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu);
                     } else {
                         rassert(false, 7652345234321, algorithm, algorithm_index);
                     }
@@ -179,19 +192,19 @@ void run(int argc, char** argv)
         std::cout << "algorithm times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 
         // Вычисляем достигнутую эффективную пропускную способность алгоритма
-        double total_ops = 1.0 * h * w * (k + k - 1); // общее число сложений и умножений
+        double total_ops = 1.0 * height * width * (k + k - 1); // общее число сложений и умножений
         double gflops = 1000*1000*1000;
         std::cout << "algorithm GFlops: " << total_ops / gflops / stats::median(times) << " GFlops" << std::endl;
-        std::cout << "algorithm effective memory bandwidth: " << 1.0 * (h * k + k * w + h * w) * sizeof(float) / 1024 / 1024 / 1024 / stats::median(times) << " GB/s" << std::endl;
+        std::cout << "algorithm effective memory bandwidth: " << 1.0 * (height * k + k * width + height * width) * sizeof(float) / 1024 / 1024 / 1024 / stats::median(times) << " GB/s" << std::endl;
 
         // Сверяем результат
         if (algorithm != "CPU with OpenMP") {
             std::vector<float> results = matrix_c_gpu.readVector();
             std::vector<float> relative_errors;
-            for (size_t j = 0; j < h; ++j) {
-                for (size_t i = 0; i < w; ++i) {
-                    float gpu_value = results[j * w + i];
-                    float cpu_value = output_c_cpu[j * w + i];
+            for (size_t j = 0; j < height; ++j) {
+                for (size_t i = 0; i < width; ++i) {
+                    float gpu_value = results[j * width + i];
+                    float cpu_value = output_c_cpu[j * width + i];
                     float error = std::abs(gpu_value - cpu_value);
                     float relative_error = error / std::abs(cpu_value);
                     relative_errors.push_back(relative_error);
