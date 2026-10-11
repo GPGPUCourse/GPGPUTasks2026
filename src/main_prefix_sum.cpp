@@ -81,23 +81,33 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            // 1) Обнуляем результат — дальше только += вкладов уровней.
+            ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, n), prefix_sum_accum_gpu, n);
+
+            // 2) Идём по уровням пирамиды:
+            //    level 0 = input, дальше ping-pong buffer1/buffer2.
+            //    На каждом уровне: сначала accumulation, потом reduction в следующий.
+            const gpu::gpu_mem_32u* src = &input_gpu;
+            gpu::gpu_mem_32u* dst = &buffer1_pow2_sum_gpu;
+            unsigned int n_cur = n;
+            unsigned int pow2 = 0;
+            while (true) {
+                ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), *src, prefix_sum_accum_gpu, n, pow2);
+                if (n_cur <= 1)
+                    break;
+
+                unsigned int n_next = (n_cur + 1) / 2;
+                ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, n_next), *src, *dst, n_cur);
+
+                src = dst;
+                dst = (dst == &buffer1_pow2_sum_gpu) ? &buffer2_pow2_sum_gpu : &buffer1_pow2_sum_gpu;
+                n_cur = n_next;
+                ++pow2;
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
         } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fill_with_zeros.exec();
-            // vk_sum_reduction.exec();
-            // vk_prefix_accumulation.exec();
         } else {
             rassert(false, 4531412341, context.type());
         }
