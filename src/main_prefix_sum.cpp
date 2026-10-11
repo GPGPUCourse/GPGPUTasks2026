@@ -8,8 +8,6 @@
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
 
-#include <fstream>
-
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -41,7 +39,7 @@ void run(int argc, char** argv)
     avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
     avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
 
-    unsigned int n = 100*1000*1000;
+    unsigned int n = 100 * 1000 * 1000;
     std::vector<unsigned int> as(n, 0);
     size_t total_sum = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -68,7 +66,11 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), prefix_sum_accum_gpu(n);
+    std::vector<gpu::gpu_mem_32u> sums { input_gpu };
+    for (unsigned int size = n; size > 1; size = (size + 1) / 2) {
+        sums.emplace_back((size + 1) / 2);
+    }
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -82,7 +84,20 @@ void run(int argc, char** argv)
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
             // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            for (size_t level = 1; level < sums.size(); ++level) {
+                unsigned int size = sums[level - 1].number();
+                ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, sums[level].number()),
+                    sums[level - 1], sums[level], size);
+            }
+            for (int level = static_cast<int>(sums.size()) - 2; level >= 0; --level) {
+                unsigned int size = sums[level].number();
+                ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, size), sums[level],
+                    level == 0 ? prefix_sum_accum_gpu : sums[level],
+                    size, sums[level + 1]);
+            }
+            if (n == 1) {
+                input_gpu.copyToN(prefix_sum_accum_gpu, n);
+            }
             // ocl_fill_with_zeros.exec();
             // ocl_sum_reduction.exec();
             // ocl_prefix_accumulation.exec();
