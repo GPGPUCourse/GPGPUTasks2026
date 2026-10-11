@@ -99,18 +99,18 @@ void run(int argc, char** argv)
     };
 
     // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
-    bool I_Want_Super_Puper_Prestige_Points = true;
-    if (I_Want_Super_Puper_Prestige_Points) {
-        if (context.type() == gpu::Context::TypeCUDA) {
-            algorithm_names.push_back("03 using WMMA (Tensor Cores) [+Prestige Points]");
-        }
-        if (context.type() == gpu::Context::TypeVulkan) {
-            rassert(context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix"), 32452365324632);
-            auto device_supported_cooperative_matrix_sizes = context.vk()->device().supportedCooperativeMatrixSizes();
-            rassert(context.vk()->device().isCooperativeMatrixSizeSupported(DataType16f, DataType32f, 16, 16, 16), 235243524356);
-            algorithm_names.push_back("03 using cooperative matrix [+Prestige Points]");
-        }
-    }
+    // bool I_Want_Super_Puper_Prestige_Points = true;
+    // if (I_Want_Super_Puper_Prestige_Points) {
+    //     if (context.type() == gpu::Context::TypeCUDA) {
+    //         algorithm_names.push_back("03 using WMMA (Tensor Cores) [+Prestige Points]");
+    //     }
+    //     if (context.type() == gpu::Context::TypeVulkan) {
+    //         rassert(context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix"), 32452365324632);
+    //         auto device_supported_cooperative_matrix_sizes = context.vk()->device().supportedCooperativeMatrixSizes();
+    //         rassert(context.vk()->device().isCooperativeMatrixSizeSupported(DataType16f, DataType32f, 16, 16, 16), 235243524356);
+    //         algorithm_names.push_back("03 using cooperative matrix [+Prestige Points]");
+    //     }
+    // }
 
     for (size_t algorithm_index = 0; algorithm_index < algorithm_names.size(); ++algorithm_index) {
         const std::string& algorithm = algorithm_names[algorithm_index];
