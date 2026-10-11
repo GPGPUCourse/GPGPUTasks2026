@@ -20,51 +20,38 @@ __global__ void matrix_multiply_wmma(
                        unsigned int h,
                        unsigned int k)
 {
-    constexpr unsigned int blockH = 128;
-    constexpr unsigned int blockK = 16;
-    constexpr unsigned int blockW = 128;
-    constexpr unsigned int warpsH = 2;
-    constexpr unsigned int warpsW = 4;
-
-    constexpr unsigned int threads = warpsH * warpsW * 32;
-    constexpr unsigned int fragsH = blockH / (16 * warpsH);
-    constexpr unsigned int fragsW = blockW / (16 * warpsW);
-
-    __shared__ half local_a[blockH][blockK + 8];
-    __shared__ half local_b[blockK][blockW + 8];
+    __shared__ half local_a[128][24];
+    __shared__ half local_b[16][136];
 
     const int warp = threadIdx.x / 32;
+    const int warpH = warp / 4;
+    const int warpW = warp % 4;
 
-    const int warpH = warp / warpsW;
-    const int warpW = warp % warpsW;
-
-    const unsigned int H = blockIdx.y * blockH + warpH * 16 * fragsH;
-    const unsigned int W = blockIdx.x * blockW + warpW * 16 * fragsW;
-
-    wmma::fragment<wmma::accumulator, 16, 16, 16, float> acc[fragsH][fragsW];
+    wmma::fragment<wmma::accumulator, 16, 16, 16, float> acc[4][2];
 
     #pragma unroll
-    for (int i = 0; i < fragsH; ++i)
+    for (int i = 0; i < 4; ++i)
         #pragma unroll
-        for (int j = 0; j < fragsW; ++j)
+        for (int j = 0; j < 2; ++j)
             wmma::fill_fragment(acc[i][j], 0);
 
-    for (unsigned int i = 0; i < k; i += blockK) {
-        for (unsigned int idx = threadIdx.x; idx < blockH * (blockK / 4); idx += threads) {
-            const unsigned int y = idx / (blockK / 4);
-            const unsigned int x = (idx % (blockK / 4)) * 4;
+    for (unsigned int i = 0; i < k; i += 16) {
+        #pragma unroll
+        for (unsigned int idx = threadIdx.x; idx < 512; idx += 256) {
+            const unsigned int y = idx / 4;
+            const unsigned int x = (idx % 4) * 4;
 
-            const float4 v = *reinterpret_cast<const float4*>(a + (blockIdx.y * blockH + y) * k + i + x);
+            const float4 v = *reinterpret_cast<const float4*>(a + (blockIdx.y * 128 + y) * k + i + x);
 
             *reinterpret_cast<half2*>(&local_a[y][x]) = __floats2half2_rn(v.x, v.y);
             *reinterpret_cast<half2*>(&local_a[y][x + 2]) = __floats2half2_rn(v.z, v.w);
         }
 
-        for (unsigned int idx = threadIdx.x; idx < blockK * (blockW / 4); idx += threads) {
-            const unsigned int y = idx / (blockW / 4);
-            const unsigned int x = (idx % (blockW / 4)) * 4;
+        for (unsigned int idx = threadIdx.x; idx < 512; idx += 256) {
+            const unsigned int y = idx / 32;
+            const unsigned int x = (idx % 32) * 4;
 
-            const float4 v = *reinterpret_cast<const float4*>(b + (i + y) * w + blockIdx.x * blockW + x);
+            const float4 v = *reinterpret_cast<const float4*>(b + (i + y) * w + blockIdx.x * 128 + x);
 
             *reinterpret_cast<half2*>(&local_b[y][x]) = __floats2half2_rn(v.x, v.y);
             *reinterpret_cast<half2*>(&local_b[y][x + 2]) = __floats2half2_rn(v.z, v.w);
@@ -72,31 +59,31 @@ __global__ void matrix_multiply_wmma(
 
         __syncthreads();
 
-        wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> af[fragsH];
-        wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> bf[fragsW];
+        wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> af[4];
+        wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> bf[2];
 
         #pragma unroll
-        for (int j = 0; j < fragsH; ++j)
-            wmma::load_matrix_sync(af[j], &local_a[(warpH * fragsH + j) * 16][0], blockK + 8);
+        for (int j = 0; j < 4; ++j)
+            wmma::load_matrix_sync(af[j], &local_a[(warpH * 4 + j) * 16][0], 24);
 
         #pragma unroll
-        for (int j = 0; j < fragsW; ++j)
-            wmma::load_matrix_sync(bf[j], &local_b[0][(warpW * fragsW + j) * 16], blockW + 8);
+        for (int j = 0; j < 2; ++j)
+            wmma::load_matrix_sync(bf[j], &local_b[0][(warpW * 2 + j) * 16], 136);
 
         #pragma unroll
-        for (int i = 0; i < fragsH; ++i)
+        for (int i = 0; i < 4; ++i)
             #pragma unroll
-            for (int j = 0; j < fragsW; ++j)
+            for (int j = 0; j < 2; ++j)
                 wmma::mma_sync(acc[i][j], af[i], bf[j], acc[i][j]);
 
         __syncthreads();
     }
 
     #pragma unroll
-    for (int i = 0; i < fragsH; ++i)
+    for (int i = 0; i < 4; ++i)
         #pragma unroll
-        for (int j = 0; j < fragsW; ++j)
-            wmma::store_matrix_sync(c + (H + i * 16) * w + W + j * 16, acc[i][j], w, wmma::mem_row_major);
+        for (int j = 0; j < 2; ++j)
+            wmma::store_matrix_sync(c + (blockIdx.y * 128 + warpH * 64 + i * 16) * w + blockIdx.x * 128 + warpW * 32 + j * 16, acc[i][j], w, wmma::mem_row_major);
 }
 
 namespace cuda {
