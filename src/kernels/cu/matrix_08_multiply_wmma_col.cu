@@ -1,3 +1,4 @@
+#include "../matrix_inputs.h"
 #include <libgpu/context.h>
 #include <libgpu/work_size.h>
 #include <libgpu/shared_device_buffer.h>
@@ -39,7 +40,7 @@ __global__ void matrix_multiply_wmma_col_tile(
     constexpr int LOADS = 2;
     constexpr int A_HALVES = BK * LDA;
 
-    __shared__ __align__(16) char raw[BM * BN * sizeof(float)];
+    __shared__ __align__(32) char raw[BM * BN * sizeof(float)];
     half* As = reinterpret_cast<half*>(raw);
     half* Bs = As + A_HALVES;
     float* Cs = reinterpret_cast<float*>(raw);
@@ -163,74 +164,27 @@ __global__ void matrix_multiply_wmma_col_tile(
     }
 }
 
-__global__ void f32_to_f16_rows_for_wmma_col(const float* __restrict__ in, half* __restrict__ out, int n) {
-    int i = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
-    if (i + 3 < n) {
-        float4 v = *reinterpret_cast<const float4*>(in + i);
-        reinterpret_cast<half2*>(out + i)[0] = __floats2half2_rn(v.x, v.y);
-        reinterpret_cast<half2*>(out + i)[1] = __floats2half2_rn(v.z, v.w);
-    }
-}
-
-__global__ void f32_rows_to_f16_cols_for_wmma(const float* __restrict__ in, half* __restrict__ out, int h, int k) {
-    int i = blockIdx.x * blockDim.x + threadIdx.x;
-    int n = h * k;
-    if (i < n) {
-        int r = i / k;
-        int c = i - r * k;
-        out[(size_t)c * h + r] = __float2half_rn(in[i]);
-    }
-}
-
 namespace cuda {
-void matrix_multiply_wmma_col(const gpu::WorkSize& workSize,
-    const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c, unsigned int w, unsigned int h, unsigned int k)
+void matrix_multiply_wmma_col(const MatrixInputs& inputs, gpu::gpu_mem_32f& c)
 {
+    inputs.validateOutput(c, MatrixALayout::ColumnMajor, 64, 32);
     gpu::Context context;
-    rassert(context.type() == gpu::Context::TypeCUDA, 34523543124315, context.type());
     cudaStream_t stream = context.cudaStream();
-
-    const size_t na = (size_t)h * k;
-    const size_t nb = (size_t)k * w;
-    struct Cache {
-        const float* src;
-        size_t n;
-        half* data;
-        size_t cap;
-    };
-    static Cache cache_a{ nullptr, 0, nullptr, 0 };
-    static Cache cache_b{ nullptr, 0, nullptr, 0 };
-
-    if (cache_a.cap < na) {
-        if (cache_a.data) cudaFree(cache_a.data);
-        cudaMalloc(&cache_a.data, na * sizeof(half));
-        cache_a.cap = na;
-        cache_a.src = nullptr;
-    }
-    if (cache_b.cap < nb) {
-        if (cache_b.data) cudaFree(cache_b.data);
-        cudaMalloc(&cache_b.data, nb * sizeof(half));
-        cache_b.cap = nb;
-        cache_b.src = nullptr;
-    }
-
-    if (!(cache_a.src == a.cuptr() && cache_a.n == na)) {
-        int threads = 256;
-        int blocks = (int)((na + threads - 1) / threads);
-        f32_rows_to_f16_cols_for_wmma<<<blocks, threads, 0, stream>>>(a.cuptr(), cache_a.data, (int)h, (int)k);
-        cache_a.src = a.cuptr();
-        cache_a.n = na;
-    }
-    if (!(cache_b.src == b.cuptr() && cache_b.n == nb)) {
-        int threads = 256;
-        int blocks = (int)((nb / 4 + threads - 1) / threads);
-        f32_to_f16_rows_for_wmma_col<<<blocks, threads, 0, stream>>>(b.cuptr(), cache_b.data, (int)nb);
-        cache_b.src = b.cuptr();
-        cache_b.n = nb;
-    }
-
-    matrix_multiply_wmma_col_tile<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-        cache_a.data, cache_b.data, c.cuptr(), (int)w, (int)h, (int)k);
+    matrix_multiply_wmma_col_tile<<<dim3(inputs.w() / 64, inputs.h() / 64), dim3(32, 4), 0, stream>>>(
+        reinterpret_cast<const half*>(inputs.a().cuptr()),
+        reinterpret_cast<const half*>(inputs.b().cuptr()), c.cuptr(),
+        (int)inputs.w(), (int)inputs.h(), (int)inputs.k());
     CUDA_CHECK_KERNEL(stream);
+}
+
+void matrix_multiply_wmma_col(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
+    unsigned int w, unsigned int h, unsigned int k)
+{
+    // The legacy FP32 API always consumes fresh inputs. Use an explicit
+    // MatrixInputs snapshot when intentionally reusing prepared operands.
+    (void)workSize;
+    MatrixInputs inputs(a, b, w, h, k, MatrixALayout::ColumnMajor, true);
+    matrix_multiply_wmma_col(inputs, c);
 }
 } // namespace cuda

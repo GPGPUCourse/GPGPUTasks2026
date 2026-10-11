@@ -6,6 +6,11 @@
 
 #include "helpers/rassert.cu"
 #include "../defines.h"
+#include "matrix_validation.h"
+
+#include <climits>
+#include <cstdint>
+#include <stdexcept>
 
 template <int MODE>
 __device__ __forceinline__ float4 ld_f4(const float* p)
@@ -127,13 +132,27 @@ __global__ void matrix_multiply_tiled(
 }
 
 namespace cuda {
+void matrix_multiply_naive(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
+    unsigned int w, unsigned int h, unsigned int k);
+
 void matrix_multiply_via_local_memory(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c, unsigned int w, unsigned int h, unsigned int k)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
+    (void)workSize;
+    validate_matrix_buffers(a, b, c, w, h, k);
+    // Retain the tuned kernel for full, aligned tiles. Edge shapes use the
+    // bounds-checked implementation instead of silently accessing past buffers.
+    if (w % 128 || h % 128 || k % 16 || h / 128 > 65535 ||
+        reinterpret_cast<std::uintptr_t>(a.cuptr()) % 16u ||
+        reinterpret_cast<std::uintptr_t>(b.cuptr()) % 16u) {
+        matrix_multiply_naive(gpu::WorkSize(16, 16, w, h), a, b, c, w, h, k);
+        return;
+    }
     cudaStream_t stream = context.cudaStream();
-    matrix_multiply_tiled<128, 128, 16, 8, 8, true><<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+    matrix_multiply_tiled<128, 128, 16, 8, 8, true><<<dim3(w / 128, h / 128), dim3(16, 16), 0, stream>>>(
         a.cuptr(), b.cuptr(), c.cuptr(), (int)w, (int)h, (int)k);
     CUDA_CHECK_KERNEL(stream);
 }

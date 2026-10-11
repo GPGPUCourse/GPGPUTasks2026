@@ -1,6 +1,9 @@
 #pragma once
 
 #include <libgpu/vulkan/engine.h>
+#ifdef CUDA_SUPPORT
+#include "matrix_inputs.h"
+#endif
 
 namespace cpu {
 void multiply(

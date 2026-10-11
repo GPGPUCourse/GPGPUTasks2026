@@ -1,3 +1,4 @@
+#include "../matrix_inputs.h"
 #include <libgpu/context.h>
 #include <libgpu/work_size.h>
 #include <libgpu/shared_device_buffer.h>
@@ -173,59 +174,27 @@ __global__ void matrix_multiply_mma_tile(const half* __restrict__ A, const half*
     }
 }
 
-__global__ void f32_to_f16_for_mma(const float* __restrict__ in, half* __restrict__ out, size_t n)
+namespace cuda {
+void matrix_multiply_mma(const MatrixInputs& inputs, gpu::gpu_mem_32f& c)
 {
-    size_t i = ((size_t)blockIdx.x * blockDim.x + threadIdx.x) * 4;
-    if (i + 3 < n) {
-        float4 v = *reinterpret_cast<const float4*>(in + i);
-        reinterpret_cast<half2*>(out + i)[0] = __floats2half2_rn(v.x, v.y);
-        reinterpret_cast<half2*>(out + i)[1] = __floats2half2_rn(v.z, v.w);
-    }
+    inputs.validateOutput(c, MatrixALayout::RowMajor, 128, 16);
+    gpu::Context context;
+    cudaStream_t stream = context.cudaStream();
+    matrix_multiply_mma_tile<128, 128, 16, 64, 64><<<dim3(inputs.w() / 128, inputs.h() / 128), dim3(128, 1), 0, stream>>>(
+        reinterpret_cast<const half*>(inputs.a().cuptr()),
+        reinterpret_cast<const half*>(inputs.b().cuptr()), c.cuptr(),
+        (int)inputs.w(), (int)inputs.h(), (int)inputs.k());
+    CUDA_CHECK_KERNEL(stream);
 }
 
-namespace cuda {
 void matrix_multiply_mma(const gpu::WorkSize& workSize,
-    const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c, unsigned int w, unsigned int h, unsigned int k)
+    const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
+    unsigned int w, unsigned int h, unsigned int k)
 {
-    gpu::Context context;
-    rassert(context.type() == gpu::Context::TypeCUDA, 34523543124313, context.type());
-    cudaStream_t stream = context.cudaStream();
-
-    const size_t na = (size_t)h * k;
-    const size_t nb = (size_t)k * w;
-    struct Cache {
-        const float* src;
-        size_t n;
-        half* data;
-        size_t cap;
-    };
-    static Cache cache_a{ nullptr, 0, nullptr, 0 };
-    static Cache cache_b{ nullptr, 0, nullptr, 0 };
-    Cache* caches[2] = { &cache_a, &cache_b };
-    const float* srcs[2] = { a.cuptr(), b.cuptr() };
-    const size_t counts[2] = { na, nb };
-    for (int which = 0; which < 2; ++which) {
-        Cache& cache = *caches[which];
-        const float* src = srcs[which];
-        size_t n = counts[which];
-        if (cache.cap < n) {
-            if (cache.data)
-                cudaFree(cache.data);
-            cudaMalloc(&cache.data, n * sizeof(half));
-            cache.cap = n;
-            cache.src = nullptr;
-        }
-        if (cache.src == src && cache.n == n)
-            continue;
-        int threads = 256;
-        int blocks = (int)((n / 4 + threads - 1) / threads);
-        f32_to_f16_for_mma<<<blocks, threads, 0, stream>>>(src, cache.data, n);
-        cache.src = src;
-        cache.n = n;
-    }
-
-    matrix_multiply_mma_tile<128, 128, 16, 64, 64><<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-        cache_a.data, cache_b.data, c.cuptr(), (int)w, (int)h, (int)k);
-    CUDA_CHECK_KERNEL(stream);
+    // The legacy FP32 API always consumes fresh inputs. Use an explicit
+    // MatrixInputs snapshot when intentionally reusing prepared operands.
+    (void)workSize;
+    MatrixInputs inputs(a, b, w, h, k, MatrixALayout::RowMajor, true);
+    matrix_multiply_mma(inputs, c);
 }
 } // namespace cuda

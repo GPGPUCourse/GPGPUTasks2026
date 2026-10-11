@@ -157,10 +157,10 @@ void run(int argc, char** argv)
                         // 128 threads. One CTA covers a 128x128 tile.
                         cuda::matrix_multiply_mma(gpu::WorkSize(128, 1, w, h / 128), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else if (algorithm == "05 using mma.sync column A") {
-                        // 128 threads. One CTA covers a 128x128 tile. A is cached column-major.
+                        // 128 threads. One CTA covers a 128x128 tile. Every call converts the current FP32 inputs.
                         cuda::matrix_multiply_mma_col(gpu::WorkSize(128, 1, w, h / 128), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else if (algorithm == "06 using WMMA column A") {
-                        // 32x4 threads (128). One CTA covers a 64x64 tile. A is cached column-major.
+                        // 32x4 threads (128). One CTA covers a 64x64 tile. Every call converts the current FP32 inputs.
                         cuda::matrix_multiply_wmma_col(gpu::WorkSize(32, 4, w / 2, h / 16), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
@@ -204,6 +204,7 @@ void run(int argc, char** argv)
             for (size_t j = 0; j < h; ++j) {
                 for (size_t i = 0; i < w; ++i) {
                     float gpu_value = results[j * w + i];
+                    rassert(std::isfinite(gpu_value), 15321452412432, j, i, gpu_value);
                     float cpu_value = output_c_cpu[j * w + i];
                     float error = std::abs(gpu_value - cpu_value);
                     float relative_error = error / std::abs(cpu_value);
