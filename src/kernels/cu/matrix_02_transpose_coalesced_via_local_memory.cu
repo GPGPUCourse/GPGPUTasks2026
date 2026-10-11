@@ -13,6 +13,28 @@ __global__ void matrix_transpose_coalesced_via_local_memory(
                              unsigned int w,
                              unsigned int h)
 {
+    constexpr int TILE = 16;
+
+    __shared__ float tile[TILE][TILE + 1];
+
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    int x = blockIdx.x * TILE + tx;
+    int y = blockIdx.y * TILE + ty;
+
+    if (x < w && y < h) {
+        tile[ty][tx] = matrix[y * w + x];
+    }
+
+    __syncthreads();
+
+    int outX = blockIdx.y * TILE + tx;
+    int outY = blockIdx.x * TILE + ty;
+
+    if (outX < h && outY < w) {
+        transposed_matrix[outY * h + outX] = tile[tx][ty];
+    }
     // TODO
 }
 
