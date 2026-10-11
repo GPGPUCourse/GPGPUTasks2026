@@ -29,7 +29,7 @@ void matrix_multiply_wmma(const gpu::WorkSize &workSize,
             const gpu::WorkSize &packingWorkSize,
             const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c,
             gpu::gpu_mem_16u &a_packed, gpu::gpu_mem_16u &b_packed,
-            unsigned int w, unsigned int h, unsigned int k);
+            unsigned int w, unsigned int h, unsigned int k, bool print_timings = false);
 void matrix_multiply_wmma_print_device_info();
 }
 
