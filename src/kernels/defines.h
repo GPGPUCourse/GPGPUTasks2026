@@ -50,6 +50,8 @@
 #error TRANSPOSE_TILE_SIZE must be divisible by TRANSPOSE_LOCAL_Y
 #endif
 
+#define MULTIPLY_TILE_SIZE 32
+
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
 
 #endif // pragma once
