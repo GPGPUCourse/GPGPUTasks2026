@@ -13,8 +13,8 @@ __kernel void matrix_04_multiply_via_local_memory(
                                 unsigned int h,
                                 unsigned int k)
 {
-    __local float a_local[(BLOCK_SIZE + 1) * BLOCK_SIZE];
-    __local float b_local[(BLOCK_SIZE + 1) * BLOCK_SIZE];
+    __local float a_local[BLOCK_SIZE * BLOCK_SIZE];
+    __local float b_local[BLOCK_SIZE * BLOCK_SIZE];
 
     const unsigned int x = get_global_id(0);
     const unsigned int y = get_global_id(1);
@@ -26,6 +26,9 @@ __kernel void matrix_04_multiply_via_local_memory(
         if (x < w && y < h) {
             a_local[ly * BLOCK_SIZE + lx] = a[y * k + (offset + lx)];
             b_local[ly * BLOCK_SIZE + lx] = b[(offset + ly) * w + x];
+        } else {
+            a_local[ly * BLOCK_SIZE + lx] = 0.0f;
+            b_local[ly * BLOCK_SIZE + lx] = 0.0f;
         }
 
         barrier(CLK_LOCAL_MEM_FENCE);
@@ -38,5 +41,5 @@ __kernel void matrix_04_multiply_via_local_memory(
 
         barrier(CLK_LOCAL_MEM_FENCE);
     }
-    c[y * w + x] = sum;
+    if (x < w && y < h) c[y * w + x] = sum;
 }
