@@ -16,13 +16,12 @@ __global__ void prefix_sum_02_prefix_accumulation(
     // in and out is power of 2
     // out have 1 extra element at the end
 
-    const unsigned int index = 1 + blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
 
-    if (index % 2 == 0) {
-        out[index] += in[(index >> 1) - 1];
-    } else {
-        out[index] = in[index >> 1];
+    if(index != 0) {
+        out[index << 1] += in[index - 1];
     }
+    out[(index << 1) + 1] = in[index];
 }
 
 namespace cuda {

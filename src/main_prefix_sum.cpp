@@ -107,7 +107,7 @@ void run(int argc, char** argv)
 
         for(unsigned int in_size = SMALL_ARRAY_SiZE; in_size < n; in_size <<= 1) {
             const unsigned int out_size = in_size << 1;
-            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, out_size), buffer, buffer, in_size, offset, offset - out_size);
+            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, in_size), buffer, buffer, in_size, offset, offset - out_size);
             offset -= out_size;
         }
 
