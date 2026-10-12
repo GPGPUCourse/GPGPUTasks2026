@@ -187,7 +187,7 @@ __device__ __forceinline__ void volta_mma_colrow(
         : "r"(a0), "r"(a1), "r"(b0), "r"(b1));
 }
 
-template <unsigned int SPATIAL, unsigned int WARPS>
+template <unsigned int SPATIAL, unsigned int WARPS, unsigned int PIPELINE = 0>
 __device__ __forceinline__ void volta_gemm_colrow(
     const half* __restrict__ a,
     const half* __restrict__ b,
@@ -288,73 +288,263 @@ __device__ __forceinline__ void volta_gemm_colrow(
         b_current[j] = volta_load_shared_vector(shared_vectors + b_shared_offset[j]);
     }
 
-    unsigned int stage = 0;
-    for (unsigned int k0 = 0; k0 < packed_k; k0 += BK) {
-        uint4 prefetched[COPY_VECTORS];
-        const bool has_next = k0 + BK < packed_k;
-        if (has_next) {
-            const size_t next_input = size_t(k0 + BK) * 16;
+    if (PIPELINE == 0) {
+        unsigned int stage = 0;
+        for (unsigned int k0 = 0; k0 < packed_k; k0 += BK) {
+            uint4 prefetched[COPY_VECTORS];
+            const bool has_next = k0 + BK < packed_k;
+            if (has_next) {
+                const size_t next_input = size_t(k0 + BK) * 16;
 #pragma unroll
-            for (unsigned int i = 0; i < COPY_VECTORS; ++i) {
-                prefetched[i] = input_vectors[next_input + i * COPY_INPUT_STRIDE];
+                for (unsigned int i = 0; i < COPY_VECTORS; ++i) {
+                    prefetched[i] = input_vectors[next_input + i * COPY_INPUT_STRIDE];
+                }
             }
-        }
 
 #pragma unroll
-        for (unsigned int group = 0; group < BK / 4; ++group) {
-            const bool last_group = group + 1 == BK / 4;
-            uint4 a_next[ROW_VECTORS];
-            uint4 b_next[COL_VECTORS];
-            if (last_group) {
-                if (has_next) {
-                    const unsigned int next_stage = (stage ^ 1) * STAGE_VECTORS;
+            for (unsigned int group = 0; group < BK / 4; ++group) {
+                const bool last_group = group + 1 == BK / 4;
+                uint4 a_next[ROW_VECTORS];
+                uint4 b_next[COL_VECTORS];
+                if (last_group) {
+                    if (has_next) {
+                        const unsigned int next_stage = (stage ^ 1) * STAGE_VECTORS;
 #pragma unroll
-                    for (unsigned int i = 0; i < COPY_VECTORS; ++i) {
-                        shared_vectors[next_stage + copy_shared_offset
-                            + i * COPY_THREADS] = prefetched[i];
+                        for (unsigned int i = 0; i < COPY_VECTORS; ++i) {
+                            shared_vectors[next_stage + copy_shared_offset
+                                + i * COPY_THREADS] = prefetched[i];
+                        }
+                    }
+                    __syncthreads();
+                }
+
+                const bool load_next_group = !last_group || has_next;
+                if (load_next_group) {
+                    const unsigned int next_stage = (last_group ? stage ^ 1 : stage) * STAGE_VECTORS;
+                    const unsigned int next_k_offset = (last_group ? 0 : 4 * (group + 1)) * (SPATIAL / 8);
+#pragma unroll
+                    for (unsigned int i = 0; i < ROW_VECTORS; ++i) {
+                        a_next[i] = volta_load_shared_vector(shared_vectors + next_stage + next_k_offset + a_shared_offset[i]);
+                    }
+#pragma unroll
+                    for (unsigned int j = 0; j < COL_VECTORS; ++j) {
+                        b_next[j] = volta_load_shared_vector(shared_vectors + next_stage + next_k_offset + b_shared_offset[j]);
                     }
                 }
-                __syncthreads();
-            }
-
-            const bool load_next_group = !last_group || has_next;
-            if (load_next_group) {
-                const unsigned int next_stage = (last_group ? stage ^ 1 : stage) * STAGE_VECTORS;
-                const unsigned int next_k_offset = (last_group ? 0 : 4 * (group + 1)) * (SPATIAL / 8);
-#pragma unroll
-                for (unsigned int i = 0; i < ROW_VECTORS; ++i) {
-                    a_next[i] = volta_load_shared_vector(shared_vectors + next_stage + next_k_offset + a_shared_offset[i]);
-                }
-#pragma unroll
-                for (unsigned int j = 0; j < COL_VECTORS; ++j) {
-                    b_next[j] = volta_load_shared_vector(shared_vectors + next_stage + next_k_offset + b_shared_offset[j]);
-                }
-            }
 
 #pragma unroll
-            for (unsigned int i = 0; i < ROW_FRAGMENTS; ++i) {
+                for (unsigned int i = 0; i < ROW_FRAGMENTS; ++i) {
 #pragma unroll
-                for (unsigned int j = 0; j < COL_FRAGMENTS; ++j) {
-                    const uint4 a_value = a_current[i / 2];
-                    const uint4 b_value = b_current[j / 2];
-                    volta_mma_colrow(accumulators[i][j],
-                        (i & 1) == 0 ? a_value.x : a_value.z,
-                        (i & 1) == 0 ? a_value.y : a_value.w,
-                        (j & 1) == 0 ? b_value.x : b_value.z,
-                        (j & 1) == 0 ? b_value.y : b_value.w);
+                    for (unsigned int j = 0; j < COL_FRAGMENTS; ++j) {
+                        const uint4 a_value = a_current[i / 2];
+                        const uint4 b_value = b_current[j / 2];
+                        volta_mma_colrow(accumulators[i][j],
+                            (i & 1) == 0 ? a_value.x : a_value.z,
+                            (i & 1) == 0 ? a_value.y : a_value.w,
+                            (j & 1) == 0 ? b_value.x : b_value.z,
+                            (j & 1) == 0 ? b_value.y : b_value.w);
+                    }
+                }
+
+                if (load_next_group) {
+#pragma unroll
+                    for (unsigned int i = 0; i < ROW_VECTORS; ++i)
+                        a_current[i] = a_next[i];
+#pragma unroll
+                    for (unsigned int j = 0; j < COL_VECTORS; ++j)
+                        b_current[j] = b_next[j];
                 }
             }
+            stage ^= 1;
+        }
+    } else if (PIPELINE == 1) {
+        unsigned int stage = 0;
+        for (unsigned int k0 = 0; k0 < packed_k; k0 += BK) {
+            uint4 prefetched[COPY_VECTORS];
+            uint4 a_first_next[ROW_VECTORS];
+            uint4 b_first_next[COL_VECTORS];
+            const bool has_next = k0 + BK < packed_k;
+            const unsigned int next_stage = (stage ^ 1) * STAGE_VECTORS;
+            const size_t next_input = size_t(k0 + BK) * 16;
 
-            if (load_next_group) {
+            if (has_next) {
+#pragma unroll
+                for (unsigned int i = 0; i < COPY_VECTORS; ++i)
+                    prefetched[i] = input_vectors[next_input + i * COPY_INPUT_STRIDE];
+            }
+
+#pragma unroll
+            for (unsigned int group = 0; group < BK / 4; ++group) {
+                uint4 a_next[ROW_VECTORS];
+                uint4 b_next[COL_VECTORS];
+                if (group + 1 < BK / 4) {
+                    const unsigned int current_stage = stage * STAGE_VECTORS;
+                    const unsigned int next_k_offset = 4 * (group + 1) * (SPATIAL / 8);
+#pragma unroll
+                    for (unsigned int i = 0; i < ROW_VECTORS; ++i) {
+                        a_next[i] = volta_load_shared_vector(shared_vectors
+                            + current_stage + next_k_offset + a_shared_offset[i]);
+                    }
+#pragma unroll
+                    for (unsigned int j = 0; j < COL_VECTORS; ++j) {
+                        b_next[j] = volta_load_shared_vector(shared_vectors
+                            + current_stage + next_k_offset + b_shared_offset[j]);
+                    }
+                }
+
+                if (group + 2 == BK / 4) {
+                    if (has_next) {
+#pragma unroll
+                        for (unsigned int i = 0; i < COPY_VECTORS; ++i) {
+                            shared_vectors[next_stage + copy_shared_offset
+                                + i * COPY_THREADS] = prefetched[i];
+                        }
+                    }
+                    __syncthreads();
+                    if (has_next) {
+#pragma unroll
+                        for (unsigned int i = 0; i < ROW_VECTORS; ++i) {
+                            a_first_next[i] = volta_load_shared_vector(shared_vectors
+                                + next_stage + a_shared_offset[i]);
+                        }
+#pragma unroll
+                        for (unsigned int j = 0; j < COL_VECTORS; ++j) {
+                            b_first_next[j] = volta_load_shared_vector(shared_vectors
+                                + next_stage + b_shared_offset[j]);
+                        }
+                    }
+                }
+
+#pragma unroll
+                for (unsigned int i = 0; i < ROW_FRAGMENTS; ++i) {
+#pragma unroll
+                    for (unsigned int j = 0; j < COL_FRAGMENTS; ++j) {
+                        const uint4 a_value = a_current[i / 2];
+                        const uint4 b_value = b_current[j / 2];
+                        volta_mma_colrow(accumulators[i][j],
+                            (i & 1) == 0 ? a_value.x : a_value.z,
+                            (i & 1) == 0 ? a_value.y : a_value.w,
+                            (j & 1) == 0 ? b_value.x : b_value.z,
+                            (j & 1) == 0 ? b_value.y : b_value.w);
+                    }
+                }
+
+                if (group + 1 < BK / 4) {
+#pragma unroll
+                    for (unsigned int i = 0; i < ROW_VECTORS; ++i)
+                        a_current[i] = a_next[i];
+#pragma unroll
+                    for (unsigned int j = 0; j < COL_VECTORS; ++j)
+                        b_current[j] = b_next[j];
+                }
+            }
+            if (has_next) {
 #pragma unroll
                 for (unsigned int i = 0; i < ROW_VECTORS; ++i)
-                    a_current[i] = a_next[i];
+                    a_current[i] = a_first_next[i];
 #pragma unroll
                 for (unsigned int j = 0; j < COL_VECTORS; ++j)
-                    b_current[j] = b_next[j];
+                    b_current[j] = b_first_next[j];
             }
+            stage ^= 1;
         }
-        stage ^= 1;
+    } else {
+        unsigned int stage = 0;
+        for (unsigned int k0 = 0; k0 < packed_k; k0 += BK) {
+            uint4 prefetched[2][2];
+            uint4 a_first_next[ROW_VECTORS];
+            uint4 b_first_next[COL_VECTORS];
+            const bool has_next = k0 + BK < packed_k;
+            const unsigned int next_stage = (stage ^ 1) * STAGE_VECTORS;
+            const size_t next_input = size_t(k0 + BK) * 16;
+
+#pragma unroll
+            for (unsigned int group = 0; group < BK / 4; ++group) {
+                if (has_next) {
+                    if (group >= 2 && 2 * (group - 2) < COPY_VECTORS) {
+#pragma unroll
+                        for (unsigned int i = 0; i < 2; ++i) {
+                            const unsigned int copy = 2 * (group - 2) + i;
+                            shared_vectors[next_stage + copy_shared_offset + copy * COPY_THREADS]
+                                = prefetched[group & 1][i];
+                        }
+                    }
+                    if (2 * group < COPY_VECTORS) {
+#pragma unroll
+                        for (unsigned int i = 0; i < 2; ++i) {
+                            const unsigned int copy = 2 * group + i;
+                            prefetched[group & 1][i]
+                                = input_vectors[next_input + copy * COPY_INPUT_STRIDE];
+                        }
+                    }
+                }
+
+                uint4 a_next[ROW_VECTORS];
+                uint4 b_next[COL_VECTORS];
+                if (group + 1 < BK / 4) {
+                    const unsigned int current_stage = stage * STAGE_VECTORS;
+                    const unsigned int next_k_offset = 4 * (group + 1) * (SPATIAL / 8);
+#pragma unroll
+                    for (unsigned int i = 0; i < ROW_VECTORS; ++i) {
+                        a_next[i] = volta_load_shared_vector(shared_vectors
+                            + current_stage + next_k_offset + a_shared_offset[i]);
+                    }
+#pragma unroll
+                    for (unsigned int j = 0; j < COL_VECTORS; ++j) {
+                        b_next[j] = volta_load_shared_vector(shared_vectors
+                            + current_stage + next_k_offset + b_shared_offset[j]);
+                    }
+                }
+
+                if (group + 2 == BK / 4) {
+                    __syncthreads();
+                    if (has_next) {
+#pragma unroll
+                        for (unsigned int i = 0; i < ROW_VECTORS; ++i) {
+                            a_first_next[i] = volta_load_shared_vector(shared_vectors
+                                + next_stage + a_shared_offset[i]);
+                        }
+#pragma unroll
+                        for (unsigned int j = 0; j < COL_VECTORS; ++j) {
+                            b_first_next[j] = volta_load_shared_vector(shared_vectors
+                                + next_stage + b_shared_offset[j]);
+                        }
+                    }
+                }
+
+#pragma unroll
+                for (unsigned int i = 0; i < ROW_FRAGMENTS; ++i) {
+#pragma unroll
+                    for (unsigned int j = 0; j < COL_FRAGMENTS; ++j) {
+                        const uint4 a_value = a_current[i / 2];
+                        const uint4 b_value = b_current[j / 2];
+                        volta_mma_colrow(accumulators[i][j],
+                            (i & 1) == 0 ? a_value.x : a_value.z,
+                            (i & 1) == 0 ? a_value.y : a_value.w,
+                            (j & 1) == 0 ? b_value.x : b_value.z,
+                            (j & 1) == 0 ? b_value.y : b_value.w);
+                    }
+                }
+
+                if (group + 1 < BK / 4) {
+#pragma unroll
+                    for (unsigned int i = 0; i < ROW_VECTORS; ++i)
+                        a_current[i] = a_next[i];
+#pragma unroll
+                    for (unsigned int j = 0; j < COL_VECTORS; ++j)
+                        b_current[j] = b_next[j];
+                }
+            }
+            if (has_next) {
+#pragma unroll
+                for (unsigned int i = 0; i < ROW_VECTORS; ++i)
+                    a_current[i] = a_first_next[i];
+#pragma unroll
+                for (unsigned int j = 0; j < COL_VECTORS; ++j)
+                    b_current[j] = b_first_next[j];
+            }
+            stage ^= 1;
+        }
     }
 
     const bool full_tile = block_row + SPATIAL <= h && block_col + SPATIAL <= w && (w & 3) == 0;
@@ -420,7 +610,7 @@ __global__ __launch_bounds__(128, 2) void matrix_multiply_wmma(
 }
 
 #else
-__global__ __launch_bounds__(32 * MATRIX_WMMA_WARPS, 2) void matrix_multiply_wmma(
+__device__ __forceinline__ void matrix_multiply_wmma_fallback(
     const half* __restrict__ a,
     const half* __restrict__ b,
     float* __restrict__ c,
@@ -541,7 +731,37 @@ __global__ __launch_bounds__(32 * MATRIX_WMMA_WARPS, 2) void matrix_multiply_wmm
     }
 }
 
+__global__ __launch_bounds__(32 * MATRIX_WMMA_WARPS, 2) void matrix_multiply_wmma(
+    const half* __restrict__ a,
+    const half* __restrict__ b,
+    float* __restrict__ c,
+    unsigned int w,
+    unsigned int h,
+    unsigned int packed_k)
+{
+    matrix_multiply_wmma_fallback(a, b, c, w, h, packed_k);
+}
+
 #endif
+
+template <unsigned int PIPELINE>
+__global__ __launch_bounds__(128, 2) void matrix_multiply_wmma_pipeline(
+    const half* __restrict__ a,
+    const half* __restrict__ b,
+    float* __restrict__ c,
+    unsigned int w,
+    unsigned int h,
+    unsigned int packed_k)
+{
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ == 700
+    const unsigned int block_row = blockIdx.x * 128;
+    const unsigned int block_col = blockIdx.y * 128;
+    volta_gemm_colrow<128, 4, PIPELINE>(a, b, c, w, h, packed_k,
+        block_row, block_col, block_row, block_col);
+#else
+    matrix_multiply_wmma_fallback(a, b, c, w, h, packed_k);
+#endif
+}
 
 #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ == 700
 __global__ __launch_bounds__(128) void matrix_multiply_wmma_tail(
@@ -752,6 +972,16 @@ __global__ __launch_bounds__(128) void matrix_multiply_wmma_tail(
 
 namespace cuda {
 namespace {
+const void* wmma_kernel(unsigned int variant)
+{
+    rassert(variant <= 2, 1459342583, variant);
+    if (variant == 1)
+        return reinterpret_cast<const void*>(::matrix_multiply_wmma_pipeline<1>);
+    if (variant == 2)
+        return reinterpret_cast<const void*>(::matrix_multiply_wmma_pipeline<2>);
+    return reinterpret_cast<const void*>(::matrix_multiply_wmma);
+}
+
 template <typename Kernel>
 void print_wmma_kernel_info(const char* name, Kernel kernel, int threads, const cudaDeviceProp& device)
 {
@@ -768,14 +998,14 @@ void print_wmma_kernel_info(const char* name, Kernel kernel, int threads, const 
 }
 }
 
-unsigned int matrix_multiply_wmma_warps()
+unsigned int matrix_multiply_wmma_warps(unsigned int variant)
 {
     cudaFuncAttributes attributes;
-    CUDA_SAFE_CALL(cudaFuncGetAttributes(&attributes, ::matrix_multiply_wmma));
+    CUDA_SAFE_CALL(cudaFuncGetAttributes(&attributes, wmma_kernel(variant)));
     return attributes.maxThreadsPerBlock / 32;
 }
 
-unsigned int matrix_multiply_wmma_tail_tiles(unsigned int w, unsigned int h)
+unsigned int matrix_multiply_wmma_tail_tiles(unsigned int w, unsigned int h, unsigned int variant)
 {
     if (w == 0 || h == 0)
         return 0;
@@ -786,12 +1016,12 @@ unsigned int matrix_multiply_wmma_tail_tiles(unsigned int w, unsigned int h)
     if (device.major != 7 || device.minor != 0)
         return 0;
     cudaFuncAttributes attributes;
-    CUDA_SAFE_CALL(cudaFuncGetAttributes(&attributes, ::matrix_multiply_wmma));
+    CUDA_SAFE_CALL(cudaFuncGetAttributes(&attributes, wmma_kernel(variant)));
     if (attributes.binaryVersion != 70)
         return 0;
     int blocks = 0;
-    CUDA_SAFE_CALL(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, ::matrix_multiply_wmma,
-        32 * matrix_multiply_wmma_warps(), 0));
+    CUDA_SAFE_CALL(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, wmma_kernel(variant),
+        32 * matrix_multiply_wmma_warps(variant), 0));
     const size_t slots = size_t(blocks) * device.multiProcessorCount;
     const size_t row_tiles = (h + MATRIX_WMMA_BLOCK_M - 1) / MATRIX_WMMA_BLOCK_M;
     const size_t column_tiles = (w + MATRIX_WMMA_BLOCK_N - 1) / MATRIX_WMMA_BLOCK_N;
@@ -802,7 +1032,7 @@ unsigned int matrix_multiply_wmma_tail_tiles(unsigned int w, unsigned int h)
     return tail * 2 <= slots && tail % row_tiles == 0 ? static_cast<unsigned int>(tail) : 0;
 }
 
-void matrix_multiply_wmma_print_device_info()
+void matrix_multiply_wmma_print_device_info(unsigned int variant)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
@@ -820,7 +1050,7 @@ void matrix_multiply_wmma_print_device_info()
     std::printf("WMMA SM limits: registers=%d, shared=%zu B, max_threads=%d, warp=%d, L2=%d B\n",
         device.regsPerMultiprocessor, device.sharedMemPerMultiprocessor,
         device.maxThreadsPerMultiProcessor, device.warpSize, device.l2CacheSize);
-    print_wmma_kernel_info("GEMM", ::matrix_multiply_wmma, 32 * matrix_multiply_wmma_warps(), device);
+    print_wmma_kernel_info("GEMM", wmma_kernel(variant), 32 * matrix_multiply_wmma_warps(variant), device);
     if (device.major == 7 && device.minor == 0)
         print_wmma_kernel_info("tail GEMM", ::matrix_multiply_wmma_tail, 32 * MATRIX_WMMA_WARPS, device);
     print_wmma_kernel_info("packing", ::matrix_multiply_prepare_half, MATRIX_WMMA_PACK_THREADS, device);
@@ -832,7 +1062,7 @@ void matrix_multiply_wmma(const gpu::WorkSize& workSize,
     const gpu::WorkSize& packingWorkSize,
     const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
     gpu::gpu_mem_16u& a_packed, gpu::gpu_mem_16u& b_packed,
-    unsigned int w, unsigned int h, unsigned int k, unsigned int tail_tiles, bool print_timings)
+    unsigned int w, unsigned int h, unsigned int k, unsigned int tail_tiles, bool print_timings, unsigned int variant)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
@@ -859,8 +1089,17 @@ void matrix_multiply_wmma(const gpu::WorkSize& workSize,
     CUDA_CHECK_KERNEL_ASYNC(stream);
     if (print_timings)
         CUDA_SAFE_CALL(cudaEventRecord(after_packing, stream));
-    ::matrix_multiply_wmma<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-        a_half, b_half, c.cuptr(), w, h, packed_k);
+    rassert(variant <= 2, 1459342584, variant);
+    if (variant == 1) {
+        ::matrix_multiply_wmma_pipeline<1><<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+            a_half, b_half, c.cuptr(), w, h, packed_k);
+    } else if (variant == 2) {
+        ::matrix_multiply_wmma_pipeline<2><<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+            a_half, b_half, c.cuptr(), w, h, packed_k);
+    } else {
+        ::matrix_multiply_wmma<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+            a_half, b_half, c.cuptr(), w, h, packed_k);
+    }
     CUDA_CHECK_KERNEL_ASYNC(stream);
     if (tail_tiles > 0) {
         const unsigned int first_tile = (packed_h / MATRIX_WMMA_BLOCK_M) * (packed_w / MATRIX_WMMA_BLOCK_N) - tail_tiles;

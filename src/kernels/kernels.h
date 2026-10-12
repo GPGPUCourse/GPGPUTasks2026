@@ -30,10 +30,11 @@ void matrix_multiply_wmma(const gpu::WorkSize &workSize,
             const gpu::WorkSize &packingWorkSize,
             const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c,
             gpu::gpu_mem_16u &a_packed, gpu::gpu_mem_16u &b_packed,
-            unsigned int w, unsigned int h, unsigned int k, unsigned int tail_tiles, bool print_timings = false);
-unsigned int matrix_multiply_wmma_warps();
-unsigned int matrix_multiply_wmma_tail_tiles(unsigned int w, unsigned int h);
-void matrix_multiply_wmma_print_device_info();
+            unsigned int w, unsigned int h, unsigned int k, unsigned int tail_tiles,
+            bool print_timings = false, unsigned int variant = 0);
+unsigned int matrix_multiply_wmma_warps(unsigned int variant = 0);
+unsigned int matrix_multiply_wmma_tail_tiles(unsigned int w, unsigned int h, unsigned int variant = 0);
+void matrix_multiply_wmma_print_device_info(unsigned int variant = 0);
 }
 
 namespace ocl {

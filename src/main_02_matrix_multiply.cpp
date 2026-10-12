@@ -96,15 +96,6 @@ void run(int argc, char** argv)
         + size_t(packed_w / 32) * (packed_k / 32);
     const unsigned int wmma_row_tiles = packed_h / MATRIX_WMMA_BLOCK_M;
     const unsigned int wmma_column_tiles = packed_w / MATRIX_WMMA_BLOCK_N;
-    const unsigned int wmma_tail_tiles = context.type() == gpu::Context::TypeCUDA
-        ? cuda::matrix_multiply_wmma_tail_tiles(w, h) : 0;
-    const unsigned int wmma_warps = context.type() == gpu::Context::TypeCUDA
-        ? cuda::matrix_multiply_wmma_warps() : MATRIX_WMMA_WARPS;
-    const gpu::WorkSize wmma_work_size(32, wmma_warps,
-        wmma_row_tiles * 32,
-        (wmma_column_tiles - wmma_tail_tiles / wmma_row_tiles) * wmma_warps);
-    const gpu::WorkSize wmma_tail_work_size(32, MATRIX_WMMA_WARPS,
-        (wmma_tail_tiles > 0 ? wmma_tail_tiles : 1) * 4 * 32, MATRIX_WMMA_WARPS);
     const gpu::WorkSize packing_work_size(MATRIX_WMMA_PACK_THREADS, packing_blocks * MATRIX_WMMA_PACK_THREADS);
     gpu::gpu_mem_16u matrix_a_packed_gpu;
     gpu::gpu_mem_16u matrix_b_packed_gpu;
@@ -124,6 +115,8 @@ void run(int argc, char** argv)
     if (I_Want_Super_Puper_Prestige_Points) {
         if (context.type() == gpu::Context::TypeCUDA) {
             algorithm_names.push_back("03 using WMMA (Tensor Cores) [+Prestige Points]");
+            algorithm_names.push_back("04 using WMMA early operands");
+            algorithm_names.push_back("05 using WMMA staged copies");
         }
         if (context.type() == gpu::Context::TypeVulkan) {
             rassert(context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix"), 32452365324632);
@@ -135,24 +128,35 @@ void run(int argc, char** argv)
 
     for (size_t algorithm_index = 0; algorithm_index < algorithm_names.size(); ++algorithm_index) {
         const std::string& algorithm = algorithm_names[algorithm_index];
+        const bool is_wmma = context.type() == gpu::Context::TypeCUDA && algorithm_index >= 3;
+        const unsigned int wmma_variant = is_wmma ? static_cast<unsigned int>(algorithm_index - 3) : 0;
+        const unsigned int wmma_tail_tiles = is_wmma
+            ? cuda::matrix_multiply_wmma_tail_tiles(w, h, wmma_variant) : 0;
+        const unsigned int wmma_warps = is_wmma
+            ? cuda::matrix_multiply_wmma_warps(wmma_variant) : MATRIX_WMMA_WARPS;
+        const gpu::WorkSize wmma_work_size(32, wmma_warps,
+            wmma_row_tiles * 32,
+            (wmma_column_tiles - wmma_tail_tiles / wmma_row_tiles) * wmma_warps);
+        const gpu::WorkSize wmma_tail_work_size(32, MATRIX_WMMA_WARPS,
+            (wmma_tail_tiles > 0 ? wmma_tail_tiles : 1) * 4 * 32, MATRIX_WMMA_WARPS);
         std::cout << "______________________________________________________" << std::endl;
         std::cout << "Evaluating algorithm #" << (algorithm_index + 1) << "/" << algorithm_names.size() << ": " << algorithm << std::endl;
 
         // Обнуляем выходной буфер, чтобы результат предыдущего алгоритма не мог замаскировать ошибку текущего
         matrix_c_gpu.fill(0.0f);
 
-        if (context.type() == gpu::Context::TypeCUDA && algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
+        if (is_wmma) {
             matrix_a_packed_gpu.resizeN(size_t(packed_h) * packed_k);
             matrix_b_packed_gpu.resizeN(size_t(packed_w) * packed_k);
-            cuda::matrix_multiply_wmma_print_device_info();
+            cuda::matrix_multiply_wmma_print_device_info(wmma_variant);
             std::printf("WMMA tile split: main=%u, tail=%u x 4\n",
                 wmma_row_tiles * wmma_column_tiles - wmma_tail_tiles, wmma_tail_tiles);
             cuda::matrix_multiply_wmma(wmma_work_size, wmma_tail_work_size, packing_work_size,
                 matrix_a_gpu, matrix_b_gpu, matrix_c_gpu,
-                matrix_a_packed_gpu, matrix_b_packed_gpu, w, h, k, wmma_tail_tiles);
+                matrix_a_packed_gpu, matrix_b_packed_gpu, w, h, k, wmma_tail_tiles, false, wmma_variant);
             cuda::matrix_multiply_wmma(wmma_work_size, wmma_tail_work_size, packing_work_size,
                 matrix_a_gpu, matrix_b_gpu, matrix_c_gpu,
-                matrix_a_packed_gpu, matrix_b_packed_gpu, w, h, k, wmma_tail_tiles, true);
+                matrix_a_packed_gpu, matrix_b_packed_gpu, w, h, k, wmma_tail_tiles, true, wmma_variant);
             matrix_c_gpu.fill(0.0f);
         }
 
@@ -182,11 +186,11 @@ void run(int argc, char** argv)
                         cuda::matrix_multiply_naive(gpu::WorkSize(16, 16, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else if (algorithm == "02 using local memory") {
                         cuda::matrix_multiply_via_local_memory(gpu::WorkSize(16, 16, ((w + 63) / 64) * 16, ((h + 127) / 128) * 16), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
+                    } else if (is_wmma) {
                         cuda::matrix_multiply_wmma(
                             wmma_work_size, wmma_tail_work_size, packing_work_size,
                             matrix_a_gpu, matrix_b_gpu, matrix_c_gpu,
-                            matrix_a_packed_gpu, matrix_b_packed_gpu, w, h, k, wmma_tail_tiles);
+                            matrix_a_packed_gpu, matrix_b_packed_gpu, w, h, k, wmma_tail_tiles, false, wmma_variant);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
