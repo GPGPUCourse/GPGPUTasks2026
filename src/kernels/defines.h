@@ -26,4 +26,9 @@
 #define WMMA_PAD_C 4 // FP32 values in a row of the result
 #endif
 
+// Independent launch dimensions for the raw mma.sync implementation.
+#define RAW_MMA_BLOCK_M 128
+#define RAW_MMA_BLOCK_N 128
+#define RAW_MMA_THREADS 128
+
 #endif // pragma once
