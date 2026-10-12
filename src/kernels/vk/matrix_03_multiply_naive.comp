@@ -14,7 +14,7 @@ layout (push_constant) uniform PushConstants {
     uint k;
 } params;
 
-layout (local_size_x = 32, local_size_y = 1 ) in;
+layout (local_size_x = GROUP_SIZE_X, local_size_y = GROUP_SIZE_Y) in;
 void main()
 {
     const uint x = gl_GlobalInvocationID.x, y = gl_GlobalInvocationID.y;
