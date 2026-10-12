@@ -6,6 +6,7 @@
 
 #include "helpers/rassert.cu"
 #include "../defines.h"
+#include <stdio.h>
 
 __global__ void matrix_transpose_naive(
                        const float* matrix,            // w x h
@@ -13,7 +14,10 @@ __global__ void matrix_transpose_naive(
                              unsigned int w,
                              unsigned int h)
 {
-    // TODO
+    size_t i = threadIdx.y + blockIdx.y * blockDim.y;
+    size_t j = threadIdx.x + blockIdx.x * blockDim.x;
+    
+    transposed_matrix[j * h + i] = matrix[i * w + j];
 }
 
 namespace cuda {

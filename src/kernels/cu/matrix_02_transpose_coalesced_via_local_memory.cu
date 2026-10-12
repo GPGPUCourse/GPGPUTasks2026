@@ -13,7 +13,21 @@ __global__ void matrix_transpose_coalesced_via_local_memory(
                              unsigned int w,
                              unsigned int h)
 {
-    // TODO
+    //coordinates of thread
+    size_t i = threadIdx.y + blockIdx.y * blockDim.y;
+    size_t j = threadIdx.x + blockIdx.x * blockDim.x;
+    __shared__ float data[GROUP_SIZE_X * GROUP_SIZE_Y];
+
+    data[threadIdx.y * blockDim.x + (threadIdx.x + threadIdx.y) % GROUP_SIZE_X] = matrix[i * w + j];
+
+    //coordinates of thread in transposed block
+    //we want to write j row i col of transposed matrix 
+    i = threadIdx.x + blockIdx.y * blockDim.y;
+    j = threadIdx.y + blockIdx.x * blockDim.x;
+    __syncthreads();
+    
+                                   //get element written by thread (threadIdx.y, threadIdx.x)
+    transposed_matrix[j * h + i] = data[threadIdx.x * blockDim.x + (threadIdx.y + threadIdx.x) % GROUP_SIZE_X];
 }
 
 namespace cuda {
