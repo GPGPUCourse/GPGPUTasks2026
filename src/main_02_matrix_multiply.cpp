@@ -116,7 +116,7 @@ void run(int argc, char** argv)
         if (context.type() == gpu::Context::TypeCUDA) {
             algorithm_names.push_back("03 using WMMA (Tensor Cores) [+Prestige Points]");
             algorithm_names.push_back("04 using WMMA early operands");
-            algorithm_names.push_back("05 using WMMA staged copies");
+            algorithm_names.push_back("05 using WMMA vector packing");
         }
         if (context.type() == gpu::Context::TypeVulkan) {
             rassert(context.vk()->device().supportsExtension("VK_KHR_cooperative_matrix"), 32452365324632);

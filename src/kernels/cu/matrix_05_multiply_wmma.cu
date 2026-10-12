@@ -14,6 +14,16 @@ __device__ __forceinline__ unsigned int volta_spatial_permutation(unsigned int r
         | ((row & 8) << 1) | (row & ~31u);
 }
 
+__device__ __forceinline__ void volta_store_global_vector(uint2* pointer, uint2 value)
+{
+    asm volatile(
+        "st.global.v2.u32 [%0], {%1,%2};\n"
+        :
+        : "l"(pointer), "r"(value.x), "r"(value.y)
+        : "memory");
+}
+
+template <bool VECTORIZED = false>
 __global__ void matrix_multiply_prepare_half(
     const float* __restrict__ a,
     const float* __restrict__ b,
@@ -35,23 +45,58 @@ __global__ void matrix_multiply_prepare_half(
         const unsigned int row_tiles = ((h + 127) / 128) * 4;
         const unsigned int block_row = (blockIdx.x % row_tiles) * 32;
         const unsigned int block_k = (blockIdx.x / row_tiles) * 32;
-#pragma unroll
-        for (unsigned int j = 0; j < 32; j += 8) {
-            const unsigned int row = block_row + ty + j;
-            const unsigned int col = block_k + tx;
-            tile[ty + j][tx] = row < h && col < k ? a[size_t(row) * k + col] : 0.0f;
-        }
-        __syncthreads();
-        const unsigned int pair = tx & 15;
-        const unsigned int local_k = 2 * ty + (tx >> 4);
-        const unsigned int spatial = volta_spatial_permutation(block_row % 128 + 2 * pair);
-#pragma unroll
-        for (unsigned int j = 0; j < 32; j += 16) {
-            const half2 value = __floats2half2_rn(tile[2 * pair][local_k + j], tile[2 * pair + 1][local_k + j]);
-            half2* output = reinterpret_cast<half2*>(a_packed
+        if (VECTORIZED) {
+            const unsigned int local_row = thread / 8;
+            const unsigned int local_col = 4 * (thread % 8);
+            const unsigned int row = block_row + local_row;
+            const unsigned int col = block_k + local_col;
+            float4 value = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+            if (row < h) {
+                const float* input = a + size_t(row) * k;
+                if ((k & 3) == 0 && col + 3 < k) {
+                    value = *reinterpret_cast<const float4*>(input + col);
+                } else {
+                    value.x = col < k ? input[col] : 0.0f;
+                    value.y = col + 1 < k ? input[col + 1] : 0.0f;
+                    value.z = col + 2 < k ? input[col + 2] : 0.0f;
+                    value.w = col + 3 < k ? input[col + 3] : 0.0f;
+                }
+            }
+            tile[local_row][local_col] = value.x;
+            tile[local_row][local_col + 1] = value.y;
+            tile[local_row][local_col + 2] = value.z;
+            tile[local_row][local_col + 3] = value.w;
+            __syncthreads();
+            const unsigned int local_k = thread / 8;
+            const unsigned int local_spatial = 4 * (thread % 8);
+            const unsigned int spatial = volta_spatial_permutation(block_row % 128 + local_spatial);
+            const __half2_raw lower = __floats2half2_rn(tile[local_spatial][local_k], tile[local_spatial + 1][local_k]);
+            const __half2_raw upper = __floats2half2_rn(tile[local_spatial + 2][local_k], tile[local_spatial + 3][local_k]);
+            uint2* output = reinterpret_cast<uint2*>(a_packed
                 + size_t(block_row / 128) * 128 * packed_k
-                + size_t(block_k) * 128 + (local_k + j) * 128 + spatial);
-            *output = value;
+                + size_t(block_k) * 128 + local_k * 128 + spatial);
+            volta_store_global_vector(output,
+                make_uint2(static_cast<unsigned int>(lower.x) | (static_cast<unsigned int>(lower.y) << 16),
+                    static_cast<unsigned int>(upper.x) | (static_cast<unsigned int>(upper.y) << 16)));
+        } else {
+#pragma unroll
+            for (unsigned int j = 0; j < 32; j += 8) {
+                const unsigned int row = block_row + ty + j;
+                const unsigned int col = block_k + tx;
+                tile[ty + j][tx] = row < h && col < k ? a[size_t(row) * k + col] : 0.0f;
+            }
+            __syncthreads();
+            const unsigned int pair = tx & 15;
+            const unsigned int local_k = 2 * ty + (tx >> 4);
+            const unsigned int spatial = volta_spatial_permutation(block_row % 128 + 2 * pair);
+#pragma unroll
+            for (unsigned int j = 0; j < 32; j += 16) {
+                const half2 value = __floats2half2_rn(tile[2 * pair][local_k + j], tile[2 * pair + 1][local_k + j]);
+                half2* output = reinterpret_cast<half2*>(a_packed
+                    + size_t(block_row / 128) * 128 * packed_k
+                    + size_t(block_k) * 128 + (local_k + j) * 128 + spatial);
+                *output = value;
+            }
         }
     } else {
         const unsigned int block = blockIdx.x - a_blocks;
@@ -77,8 +122,16 @@ __global__ void matrix_multiply_prepare_half(
         half2* output = reinterpret_cast<half2*>(b_packed
             + size_t(block_col) * packed_k + size_t(block_k) * 128
             + local_k * 128 + volta_spatial_permutation(local_col));
-        output[0] = __floats2half2_rn(value.x, value.y);
-        output[1] = __floats2half2_rn(value.z, value.w);
+        if (VECTORIZED) {
+            const __half2_raw lower = __floats2half2_rn(value.x, value.y);
+            const __half2_raw upper = __floats2half2_rn(value.z, value.w);
+            volta_store_global_vector(reinterpret_cast<uint2*>(output),
+                make_uint2(static_cast<unsigned int>(lower.x) | (static_cast<unsigned int>(lower.y) << 16),
+                    static_cast<unsigned int>(upper.x) | (static_cast<unsigned int>(upper.y) << 16)));
+        } else {
+            output[0] = __floats2half2_rn(value.x, value.y);
+            output[1] = __floats2half2_rn(value.z, value.w);
+        }
     }
 #else
     if (blockIdx.x < a_blocks) {
@@ -400,103 +453,6 @@ __device__ __forceinline__ void volta_gemm_colrow(
                                 + i * COPY_THREADS] = prefetched[i];
                         }
                     }
-                    __syncthreads();
-                    if (has_next) {
-#pragma unroll
-                        for (unsigned int i = 0; i < ROW_VECTORS; ++i) {
-                            a_first_next[i] = volta_load_shared_vector(shared_vectors
-                                + next_stage + a_shared_offset[i]);
-                        }
-#pragma unroll
-                        for (unsigned int j = 0; j < COL_VECTORS; ++j) {
-                            b_first_next[j] = volta_load_shared_vector(shared_vectors
-                                + next_stage + b_shared_offset[j]);
-                        }
-                    }
-                }
-
-#pragma unroll
-                for (unsigned int i = 0; i < ROW_FRAGMENTS; ++i) {
-#pragma unroll
-                    for (unsigned int j = 0; j < COL_FRAGMENTS; ++j) {
-                        const uint4 a_value = a_current[i / 2];
-                        const uint4 b_value = b_current[j / 2];
-                        volta_mma_colrow(accumulators[i][j],
-                            (i & 1) == 0 ? a_value.x : a_value.z,
-                            (i & 1) == 0 ? a_value.y : a_value.w,
-                            (j & 1) == 0 ? b_value.x : b_value.z,
-                            (j & 1) == 0 ? b_value.y : b_value.w);
-                    }
-                }
-
-                if (group + 1 < BK / 4) {
-#pragma unroll
-                    for (unsigned int i = 0; i < ROW_VECTORS; ++i)
-                        a_current[i] = a_next[i];
-#pragma unroll
-                    for (unsigned int j = 0; j < COL_VECTORS; ++j)
-                        b_current[j] = b_next[j];
-                }
-            }
-            if (has_next) {
-#pragma unroll
-                for (unsigned int i = 0; i < ROW_VECTORS; ++i)
-                    a_current[i] = a_first_next[i];
-#pragma unroll
-                for (unsigned int j = 0; j < COL_VECTORS; ++j)
-                    b_current[j] = b_first_next[j];
-            }
-            stage ^= 1;
-        }
-    } else {
-        unsigned int stage = 0;
-        for (unsigned int k0 = 0; k0 < packed_k; k0 += BK) {
-            uint4 prefetched[2][2];
-            uint4 a_first_next[ROW_VECTORS];
-            uint4 b_first_next[COL_VECTORS];
-            const bool has_next = k0 + BK < packed_k;
-            const unsigned int next_stage = (stage ^ 1) * STAGE_VECTORS;
-            const size_t next_input = size_t(k0 + BK) * 16;
-
-#pragma unroll
-            for (unsigned int group = 0; group < BK / 4; ++group) {
-                if (has_next) {
-                    if (group >= 2 && 2 * (group - 2) < COPY_VECTORS) {
-#pragma unroll
-                        for (unsigned int i = 0; i < 2; ++i) {
-                            const unsigned int copy = 2 * (group - 2) + i;
-                            shared_vectors[next_stage + copy_shared_offset + copy * COPY_THREADS]
-                                = prefetched[group & 1][i];
-                        }
-                    }
-                    if (2 * group < COPY_VECTORS) {
-#pragma unroll
-                        for (unsigned int i = 0; i < 2; ++i) {
-                            const unsigned int copy = 2 * group + i;
-                            prefetched[group & 1][i]
-                                = input_vectors[next_input + copy * COPY_INPUT_STRIDE];
-                        }
-                    }
-                }
-
-                uint4 a_next[ROW_VECTORS];
-                uint4 b_next[COL_VECTORS];
-                if (group + 1 < BK / 4) {
-                    const unsigned int current_stage = stage * STAGE_VECTORS;
-                    const unsigned int next_k_offset = 4 * (group + 1) * (SPATIAL / 8);
-#pragma unroll
-                    for (unsigned int i = 0; i < ROW_VECTORS; ++i) {
-                        a_next[i] = volta_load_shared_vector(shared_vectors
-                            + current_stage + next_k_offset + a_shared_offset[i]);
-                    }
-#pragma unroll
-                    for (unsigned int j = 0; j < COL_VECTORS; ++j) {
-                        b_next[j] = volta_load_shared_vector(shared_vectors
-                            + current_stage + next_k_offset + b_shared_offset[j]);
-                    }
-                }
-
-                if (group + 2 == BK / 4) {
                     __syncthreads();
                     if (has_next) {
 #pragma unroll
@@ -975,11 +931,16 @@ namespace {
 const void* wmma_kernel(unsigned int variant)
 {
     rassert(variant <= 2, 1459342583, variant);
-    if (variant == 1)
+    if (variant >= 1)
         return reinterpret_cast<const void*>(::matrix_multiply_wmma_pipeline<1>);
-    if (variant == 2)
-        return reinterpret_cast<const void*>(::matrix_multiply_wmma_pipeline<2>);
     return reinterpret_cast<const void*>(::matrix_multiply_wmma);
+}
+
+const void* wmma_packing_kernel(unsigned int variant)
+{
+    return variant == 2
+        ? reinterpret_cast<const void*>(::matrix_multiply_prepare_half<true>)
+        : reinterpret_cast<const void*>(::matrix_multiply_prepare_half<false>);
 }
 
 template <typename Kernel>
@@ -1053,7 +1014,7 @@ void matrix_multiply_wmma_print_device_info(unsigned int variant)
     print_wmma_kernel_info("GEMM", wmma_kernel(variant), 32 * matrix_multiply_wmma_warps(variant), device);
     if (device.major == 7 && device.minor == 0)
         print_wmma_kernel_info("tail GEMM", ::matrix_multiply_wmma_tail, 32 * MATRIX_WMMA_WARPS, device);
-    print_wmma_kernel_info("packing", ::matrix_multiply_prepare_half, MATRIX_WMMA_PACK_THREADS, device);
+    print_wmma_kernel_info("packing", wmma_packing_kernel(variant), MATRIX_WMMA_PACK_THREADS, device);
     std::fflush(stdout);
 }
 
@@ -1084,17 +1045,19 @@ void matrix_multiply_wmma(const gpu::WorkSize& workSize,
         CUDA_SAFE_CALL(cudaEventCreate(&after_gemm));
         CUDA_SAFE_CALL(cudaEventRecord(start, stream));
     }
-    ::matrix_multiply_prepare_half<<<packingWorkSize.cuGridSize(), packingWorkSize.cuBlockSize(), 0, stream>>>(
-        a.cuptr(), b.cuptr(), a_half, b_half, w, h, k, packed_k, a_blocks, packed_w / 32);
+    if (variant == 2) {
+        ::matrix_multiply_prepare_half<true><<<packingWorkSize.cuGridSize(), packingWorkSize.cuBlockSize(), 0, stream>>>(
+            a.cuptr(), b.cuptr(), a_half, b_half, w, h, k, packed_k, a_blocks, packed_w / 32);
+    } else {
+        ::matrix_multiply_prepare_half<false><<<packingWorkSize.cuGridSize(), packingWorkSize.cuBlockSize(), 0, stream>>>(
+            a.cuptr(), b.cuptr(), a_half, b_half, w, h, k, packed_k, a_blocks, packed_w / 32);
+    }
     CUDA_CHECK_KERNEL_ASYNC(stream);
     if (print_timings)
         CUDA_SAFE_CALL(cudaEventRecord(after_packing, stream));
     rassert(variant <= 2, 1459342584, variant);
-    if (variant == 1) {
+    if (variant >= 1) {
         ::matrix_multiply_wmma_pipeline<1><<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-            a_half, b_half, c.cuptr(), w, h, packed_k);
-    } else if (variant == 2) {
-        ::matrix_multiply_wmma_pipeline<2><<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
             a_half, b_half, c.cuptr(), w, h, packed_k);
     } else {
         ::matrix_multiply_wmma<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
