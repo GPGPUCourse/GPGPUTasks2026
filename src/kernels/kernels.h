@@ -25,10 +25,14 @@ void matrix_multiply_naive(const gpu::WorkSize &workSize,
             const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k);
 void matrix_multiply_via_local_memory(const gpu::WorkSize &workSize,
             const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k);
+// Set reuse_inputs only when A and B are unchanged since the previous call to that implementation.
+// The default refreshes FP16 copies, including after writes into the same input buffers.
 void matrix_multiply_wmma(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k);
+            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k,
+            bool reuse_inputs = false);
 void matrix_multiply_raw_mma(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k);
+            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k,
+            bool reuse_inputs = false);
 }
 
 namespace ocl {

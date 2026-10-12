@@ -12,6 +12,7 @@
 
 #include "../defines.h"
 #include "helpers/rassert.cu"
+#include "helpers/fp16_input_cache.h"
 
 #include <cuda_fp16.h>
 
@@ -27,7 +28,7 @@
 // A call is up to three kernels:
 //   1. mma_prepare, the conversion pass: FP32 -> FP16 copies of both inputs, A transposed (a16[kk * h + m]) and B as it is
 //      (b16[kk * w + n]), so that the multiplication reads both as rows of K. Its last blocks write zeros over the tiles
-//      of C that the split-K kernel adds into.
+//      of C that the split-K kernel adds into. With reuse_inputs, a cache hit launches only these zeroing blocks.
 //   2. matrix_multiply_mma_kernel, the main kernel: a block of 4 warps (2x2, 64x64 of C each) computes a 128x128 tile of C
 //      in K steps of 32, one block per tile, the tiles numbered down the columns of C.
 //   3. matrix_multiply_mma_splitk, the split-K kernel: the tiles of the last, partly filled wave of blocks are cut along
@@ -55,7 +56,8 @@
 // masked; the sizes are constants checked at the launch instead of predicates in the loop; the copy-out of the result in
 // whole rows; and the handling of the last wave: split K for the tiles of that wave only, the parts added into C with
 // atomic additions over zeros that the conversion pass writes, the second stream, the unequal ranges.
-// The numbers quoted in the comments were measured with the original four-pass epilogue on a Tesla V100-PCIE
+// The numbers quoted in the comments were measured with the original four-pass epilogue and conversion on every call,
+// on a Tesla V100-PCIE
 // (80 SMs, 1230 MHz) with C of 2048x4096 and K of
 // 1024 (512 tiles, 32 K steps): percentages of a call in interleaved rounds against the version without the change,
 // unless said otherwise; times of single kernels under the profiler (one profiled launch each); the cost of a conversion
@@ -824,7 +826,7 @@ bool matrix_multiply_mma_second_stream()
 }
 
 void matrix_multiply_raw_mma(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k)
+            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k, bool reuse_inputs)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124315, context.type());
@@ -837,12 +839,16 @@ void matrix_multiply_raw_mma(const gpu::WorkSize &workSize,
     // A, B and C are accessed 128 bits at a time
     rassert((size_t) a.cuptr() % 16 == 0 && (size_t) b.cuptr() % 16 == 0 && (size_t) c.cuptr() % 16 == 0, 7234523462344);
     cudaStream_t stream = context.cudaStream();
-    // FP16 copies of the inputs. The memory stays allocated between calls, its contents are written again by every call.
+    // Each implementation keeps its own FP16 copies. The caller explicitly promises unchanged inputs when reusing them.
     gpu::gpu_mem_16u a16 = context.memoryPool().allocateN<uint16_t>("matrix_multiply_raw_mma: FP16 copy of A by columns", (size_t) h * k);
     gpu::gpu_mem_16u b16 = context.memoryPool().allocateN<uint16_t>("matrix_multiply_raw_mma: FP16 copy of B", (size_t) k * w);
     rassert((size_t) a16.cuptr() % 16 == 0 && (size_t) b16.cuptr() % 16 == 0, 7234523462345);
     const __half* a16p = reinterpret_cast<const __half*>(a16.cuptr());
     const __half* b16p = reinterpret_cast<const __half*>(b16.cuptr());
+    static thread_local detail::Fp16InputCache input_cache;
+    const detail::Fp16InputKey input_key{a.cuptr(), b.cuptr(), a16.cuptr(), b16.cuptr(), &context.memoryPool(), stream, w, h, k};
+    const bool convert_inputs = input_cache.needsConversion(reuse_inputs, input_key);
+    input_cache.invalidate(); // publish the copies again only after this call completes successfully
 
     // The kernels number their blocks along one dimension, whatever the grid of the caller: the main kernel takes the tiles
     // [0; main_tiles), the split-K kernel the rest, which the conversion pass zeroes first
@@ -860,12 +866,15 @@ void matrix_multiply_raw_mma(const gpu::WorkSize &workSize,
     const size_t b_chunks = (size_t) k * w / 8;
     const unsigned int zero_blocks = zero_tiles * MMA_ZERO_BLOCKS_PER_TILE;
     rassert(a_chunks + b_chunks + (2 + (size_t) zero_blocks) * MMA_PREPARE_THREADS < (1ull << 32), 7234523462346, w, h, k);
-    const unsigned int a_blocks = (unsigned int) ((a_chunks + MMA_PREPARE_THREADS - 1) / MMA_PREPARE_THREADS);
-    const unsigned int b_blocks = (unsigned int) ((b_chunks + MMA_PREPARE_THREADS - 1) / MMA_PREPARE_THREADS);
-    ::mma_prepare<<<dim3(a_blocks + b_blocks + zero_blocks), dim3(MMA_PREPARE_THREADS), 0, stream>>>(a.cuptr(), b.cuptr(), reinterpret_cast<__half*>(a16.cuptr()), reinterpret_cast<__half*>(b16.cuptr()),
+    const unsigned int a_blocks = convert_inputs ? (unsigned int) ((a_chunks + MMA_PREPARE_THREADS - 1) / MMA_PREPARE_THREADS) : 0;
+    const unsigned int b_blocks = convert_inputs ? (unsigned int) ((b_chunks + MMA_PREPARE_THREADS - 1) / MMA_PREPARE_THREADS) : 0;
+    if (a_blocks + b_blocks + zero_blocks > 0) {
+        ::mma_prepare<<<dim3(a_blocks + b_blocks + zero_blocks), dim3(MMA_PREPARE_THREADS), 0, stream>>>(a.cuptr(), b.cuptr(), reinterpret_cast<__half*>(a16.cuptr()), reinterpret_cast<__half*>(b16.cuptr()),
                                                                                                      c.cuptr(), w, h, k, a_blocks, main_tiles, zero_tiles);
+    }
 
     // The multiplication launches follow the conversion pass, so that they start when the copies and the zeros are ready.
+    // On a cache hit, the pass only zeros the tail (or is omitted when there is no tail); event ordering is unchanged.
     // The path of a call with a tail on two streams (MMA_TAIL_STREAM 1, and the stream and its events exist), in the order
     // the host makes the calls:
     //   1. the conversion pass on the library's stream (above); events[0] is recorded on the library's stream after it, and
@@ -925,5 +934,6 @@ void matrix_multiply_raw_mma(const gpu::WorkSize &workSize,
     CUDA_CHECK_KERNEL(stream);
     // a failed host wait (step 3), after the check: every launch of the call is over by now
     rassert(host_wait_error == cudaSuccess, 7234523462349, cudaGetErrorString(host_wait_error));
+    input_cache.remember(input_key);
 }
 } // namespace cuda

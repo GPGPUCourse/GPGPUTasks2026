@@ -12,6 +12,7 @@
 #include <iostream>
 
 #include "helpers/rassert.cu"
+#include "helpers/fp16_input_cache.h"
 #include "../defines.h"
 
 // Include WMMA header with nvcuda::wmma namespace
@@ -20,9 +21,10 @@
 using namespace nvcuda;
 
 // C = A x B on the tensor cores through nvcuda::wmma, in FP16 with FP32 sums. A call is three kernels:
-// The measurements below describe the imported baseline, before the local cache-policy changes.
+// The measurements below describe the imported baseline, before local cache-policy changes and FP16 input reuse.
 //
-// 1. wmma_prepare, the conversion pass, converts A and B to FP16 copies once per call: the copy of A transposed,
+// 1. wmma_prepare converts A and B when their FP16 copies need refreshing, and zeros the split-K tail on every call:
+//    with reuse_inputs, a cache hit launches only the blocks that zero the tail. The copy of A is transposed,
 //    a16[kk * h + m], the copy of B as B is, b16[kk * w + n]. Both copies are then rows of K with consecutive values, and a
 //    tile of either is copied to shared memory 128 bits at a time as it is. Converting while the tiles are copied instead
 //    would convert every value of A once per column of tiles and every value of B once per row of tiles, and read B with
@@ -800,8 +802,9 @@ bool matrix_multiply_wmma_second_stream_idle()
 //   8. CUDA_CHECK_KERNEL(S) synchronizes S, which by 7 is after everything.
 // Without a tail: steps 2, 6 and 8. With WMMA_TAIL_STREAM 0, or when S2 or its events cannot be created, everything is on S
 // in the order pass, main kernel, split-K kernel, with no event and no host wait (steps 2, 6, 4 on S, 8).
+// On a cache hit, step 2 only zeros the tail (or is omitted when there is no tail); event ordering is unchanged.
 void matrix_multiply_wmma(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k)
+            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k, bool reuse_inputs)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
@@ -826,14 +829,17 @@ void matrix_multiply_wmma(const gpu::WorkSize &workSize,
     const WmmaStreams* streams = tail.tiles > 0 ? matrix_multiply_wmma_streams() : nullptr;
 #endif
 
-    // The FP16 copies that the multiplication reads its tiles from, which the conversion pass writes first. Their memory
-    // stays allocated between calls, their contents are written again by every call.
+    // Each implementation keeps its own FP16 copies. The caller explicitly promises unchanged inputs when reusing them.
     gpu::gpu_mem_16u a16 = context.memoryPool().allocateN<uint16_t>("matrix_multiply_wmma: FP16 copy of A by columns", (size_t) h * k);
     gpu::gpu_mem_16u b16 = context.memoryPool().allocateN<uint16_t>("matrix_multiply_wmma: FP16 copy of B", (size_t) k * w);
     // the copies are written and read 128 bits at a time as well
     rassert((size_t) a16.cuptr() % 16 == 0 && (size_t) b16.cuptr() % 16 == 0, 6234523462345);
     __half* a16_ptr = reinterpret_cast<__half*>(a16.cuptr());
     __half* b16_ptr = reinterpret_cast<__half*>(b16.cuptr());
+    static thread_local detail::Fp16InputCache input_cache;
+    const detail::Fp16InputKey input_key{a.cuptr(), b.cuptr(), a16.cuptr(), b16.cuptr(), &context.memoryPool(), stream, w, h, k};
+    const bool convert_inputs = input_cache.needsConversion(reuse_inputs, input_key);
+    input_cache.invalidate(); // publish the copies again only after this call completes successfully
     const unsigned int prepare_threads = WMMA_PREPARE_THREADS;
     const size_t a_chunks = (size_t) k * (h / 8);
     const size_t b_chunks = (size_t) k * w / 8;
@@ -841,9 +847,9 @@ void matrix_multiply_wmma(const gpu::WorkSize &workSize,
     const unsigned int zero_tiles = tail.tiles;
     const unsigned int zero_blocks = zero_tiles * WMMA_ZERO_BLOCKS_PER_TILE;
     rassert(a_chunks + b_chunks + (2 + (size_t) zero_blocks) * prepare_threads < (1ull << 32), 6234523462346, w, h, k);
-    const unsigned int a_blocks = (unsigned int) ((a_chunks + prepare_threads - 1) / prepare_threads);
-    const unsigned int b_blocks = (unsigned int) ((b_chunks + prepare_threads - 1) / prepare_threads);
-    if (a_blocks + b_blocks > 0) { // nothing to convert when h = w = 0 (there are no tiles then either)
+    const unsigned int a_blocks = convert_inputs ? (unsigned int) ((a_chunks + prepare_threads - 1) / prepare_threads) : 0;
+    const unsigned int b_blocks = convert_inputs ? (unsigned int) ((b_chunks + prepare_threads - 1) / prepare_threads) : 0;
+    if (a_blocks + b_blocks + zero_blocks > 0) {
         ::wmma_prepare<<<dim3(a_blocks + b_blocks + zero_blocks), dim3(prepare_threads), 0, stream>>>(a.cuptr(), b.cuptr(), a16_ptr, b16_ptr, w, h, k, a_blocks,
                                                                                                       c.cuptr(), tiles - tail.tiles, zero_tiles);
     }
@@ -906,5 +912,6 @@ void matrix_multiply_wmma(const gpu::WorkSize &workSize,
     // that failed on either stream is reported by it; the error of a kernel that failed while it ran is sticky and comes out
     // of any later call, the synchronization included.
     CUDA_CHECK_KERNEL(stream);
+    input_cache.remember(input_key);
 }
 } // namespace cuda
