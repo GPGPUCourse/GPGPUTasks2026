@@ -11,8 +11,11 @@
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
 
+#include <exception>
 #include <fstream>
 #include <iomanip>
+#include <omp.h>
+#include <utility>
 
 namespace cpu {
 void multiply(
@@ -39,9 +42,120 @@ void multiply(
 }
 }
 
+void multiplyMultiGPU(
+    const std::vector<gpu::Device>& devices,
+    const std::vector<float>& a,
+    const std::vector<float>& b,
+          std::vector<float>& c,
+                 unsigned int w,
+                 unsigned int h,
+                 unsigned int k,
+                          int iters_count,
+          std::vector<double>& times)
+{
+    const int num_gpus = static_cast<int>(devices.size());
+    std::vector<std::exception_ptr> failures(num_gpus);
+    times.resize(iters_count);
+    timer t_iter(true);
+    bool ready = false;
+    int active_gpus = 0;
+    const int dynamic = omp_get_dynamic();
+    omp_set_dynamic(0);
+
+    #pragma omp parallel num_threads(num_gpus) if (num_gpus > 1)
+    {
+        const int g = omp_get_thread_num();
+        const unsigned int h_offset = (h / 128) * g / num_gpus * 128;
+        const unsigned int h_gpu = (h / 128) * (g + 1) / num_gpus * 128 - h_offset;
+        gpu::Context context;
+        gpu::gpu_mem_32f a_gpu;
+        gpu::gpu_mem_32f b_gpu;
+        gpu::gpu_mem_32f c_gpu;
+        timer profiling(true);
+
+        try {
+            if (g != 0) {
+                context.init(devices[g].device_id_cuda);
+                context.activate();
+            }
+            a_gpu.resizeN(h_gpu * k);
+            b_gpu.resizeN(k * w);
+            c_gpu.resizeN(h_gpu * w);
+            a_gpu.writeN(a.data() + h_offset * k, h_gpu * k);
+            b_gpu.writeN(b.data(), k * w);
+            c_gpu.fill(0.0f);
+        } catch (...) {
+            failures[g] = std::current_exception();
+        }
+
+        #pragma omp barrier
+        #pragma omp single
+        {
+            active_gpus = omp_get_num_threads();
+            ready = active_gpus == num_gpus && std::none_of(failures.begin(), failures.end(),
+                [](const std::exception_ptr& failure) { return static_cast<bool>(failure); });
+        }
+
+        if (ready) {
+            for (int iter = 0; iter < iters_count; ++iter) {
+                if (g != 0) {
+                    profiling.start();
+                }
+                #pragma omp master
+                t_iter.restart();
+                #pragma omp barrier
+
+                if (!failures[g]) {
+                    try {
+                        cuda::matrix_multiply_wmma(gpu::WorkSize(16, 2, w, h_gpu * 2 / 16), a_gpu, b_gpu, c_gpu, w, h_gpu, k);
+                    } catch (...) {
+                        failures[g] = std::current_exception();
+                    }
+                }
+
+                #pragma omp barrier
+                #pragma omp master
+                {
+                    times[iter] = t_iter.elapsed();
+                    t_iter.stop();
+                }
+                if (g != 0) {
+                    profiling.stop();
+                }
+            }
+        }
+
+        if (ready && !failures[g]) {
+            try {
+                c_gpu.readN(c.data() + h_offset * w, h_gpu * w);
+            } catch (...) {
+                failures[g] = std::current_exception();
+            }
+        }
+    }
+
+    omp_set_dynamic(dynamic);
+    for (const auto& failure : failures) {
+        if (failure) {
+            std::rethrow_exception(failure);
+        }
+    }
+    rassert(active_gpus == num_gpus, "OpenMP could not start one worker per CUDA device", active_gpus, num_gpus);
+}
+
 void run(int argc, char** argv)
 {
-    gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
+    const std::vector<gpu::Device> all_devices = gpu::selectAllDevices(ALL_GPUS, true);
+    const auto first_cuda = std::find_if(all_devices.begin(), all_devices.end(),
+        [](const gpu::Device& device) { return device.supports_cuda; });
+    rassert(first_cuda != all_devices.end(), "No CUDA devices found!");
+    gpu::Device device = argc > 1 ? gpu::chooseGPUDevice(all_devices, argc, argv) : *first_cuda;
+    std::vector<gpu::Device> cuda_devices = {device};
+    for (const auto& candidate : all_devices) {
+        if (candidate.supports_cuda && candidate.device_id_cuda != device.device_id_cuda && cuda_devices.size() < 4) {
+            cuda_devices.push_back(candidate);
+        }
+    }
 
     // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
     // TODO 000 после этого изучите этот код, запустите его, изучите соответствующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
@@ -116,14 +230,19 @@ void run(int argc, char** argv)
         const std::string& algorithm = algorithm_names[algorithm_index];
         std::cout << "______________________________________________________" << std::endl;
         std::cout << "Evaluating algorithm #" << (algorithm_index + 1) << "/" << algorithm_names.size() << ": " << algorithm << std::endl;
+        const bool multi_gpu_wmma = context.type() == gpu::Context::TypeCUDA && algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]";
 
         // Обнуляем выходной буфер, чтобы результат предыдущего алгоритма не мог замаскировать ошибку текущего
-        matrix_c_gpu.fill(0.0f);
+        if (!multi_gpu_wmma) {
+            matrix_c_gpu.fill(0.0f);
+        }
 
         // Запускаем алгоритм (несколько раз и с замером времени выполнения)
         std::vector<double> times;
         int iters_count = (algorithm == "CPU with OpenMP") ? 1 : 10; // CPU is too slow
-        for (int iter = 0; iter < iters_count; ++iter) {
+        if (multi_gpu_wmma) {
+            multiplyMultiGPU(cuda_devices, input_a_cpu, input_b_cpu, output_c_gpu, w, h, k, iters_count, times);
+        } else for (int iter = 0; iter < iters_count; ++iter) {
             timer t;
 
             if (algorithm == "CPU with OpenMP") {
@@ -146,8 +265,6 @@ void run(int argc, char** argv)
                         cuda::matrix_multiply_naive(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else if (algorithm == "02 using local memory") {
                         cuda::matrix_multiply_via_local_memory(gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
-                    } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
-                        cuda::matrix_multiply_wmma(gpu::WorkSize(16, 2, w, h * 2 / 16), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }
@@ -185,7 +302,7 @@ void run(int argc, char** argv)
 
         // Сверяем результат
         if (algorithm != "CPU with OpenMP") {
-            std::vector<float> results = matrix_c_gpu.readVector();
+            std::vector<float> results = multi_gpu_wmma ? std::move(output_c_gpu) : matrix_c_gpu.readVector();
             std::vector<float> relative_errors;
             for (size_t j = 0; j < h; ++j) {
                 for (size_t i = 0; i < w; ++i) {
