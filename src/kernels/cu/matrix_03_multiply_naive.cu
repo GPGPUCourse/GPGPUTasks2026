@@ -15,7 +15,16 @@ __global__ void matrix_multiply_naive(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO
+    unsigned int col = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int row = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (row < h && col < w) {
+        float sum = 0.0f;
+        for (unsigned int ki = 0; ki < k; ++ki) {
+            sum += a[row * k + ki] * b[ki * w + col];
+        }
+        c[row * w + col] = sum;
+    }
 }
 
 namespace cuda {
