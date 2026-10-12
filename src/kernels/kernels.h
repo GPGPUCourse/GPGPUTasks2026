@@ -26,10 +26,12 @@ void matrix_multiply_naive(const gpu::WorkSize &workSize,
 void matrix_multiply_via_local_memory(const gpu::WorkSize &workSize,
             const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k);
 void matrix_multiply_wmma(const gpu::WorkSize &workSize,
+            const gpu::WorkSize &tailWorkSize,
             const gpu::WorkSize &packingWorkSize,
             const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c,
             gpu::gpu_mem_16u &a_packed, gpu::gpu_mem_16u &b_packed,
-            unsigned int w, unsigned int h, unsigned int k, bool print_timings = false);
+            unsigned int w, unsigned int h, unsigned int k, unsigned int tail_tiles, bool print_timings = false);
+unsigned int matrix_multiply_wmma_tail_tiles(unsigned int w, unsigned int h);
 void matrix_multiply_wmma_print_device_info();
 }
 

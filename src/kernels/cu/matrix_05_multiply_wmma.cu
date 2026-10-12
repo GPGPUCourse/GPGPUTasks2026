@@ -71,7 +71,6 @@ __global__ void matrix_multiply_prepare_half(
     }
 }
 
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ == 700
 __device__ __forceinline__ void volta_mma_884(
     float (&d)[8],
     unsigned int a0,
@@ -109,6 +108,7 @@ __device__ __forceinline__ uint4 volta_load_shared_vector(const uint4* pointer)
     return value;
 }
 
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ == 700
 __global__ __launch_bounds__(32 * MATRIX_WMMA_WARPS, 2) void matrix_multiply_wmma(
     const half* __restrict__ a,
     const half* __restrict__ b,
@@ -416,6 +416,191 @@ __global__ __launch_bounds__(32 * MATRIX_WMMA_WARPS, 2) void matrix_multiply_wmm
 
 #endif
 
+__global__ __launch_bounds__(128) void matrix_multiply_wmma_tail(
+    const half* __restrict__ a,
+    const half* __restrict__ b,
+    float* __restrict__ c,
+    unsigned int w,
+    unsigned int h,
+    unsigned int packed_k,
+    unsigned int first_tile)
+{
+    constexpr unsigned int BM = 64;
+    constexpr unsigned int BN = 64;
+    constexpr unsigned int BK = 32;
+    constexpr unsigned int WARPS = 4;
+    constexpr unsigned int OPERAND_VECTORS = BM * BK / 8;
+    constexpr unsigned int STAGE_VECTORS = 2 * OPERAND_VECTORS;
+    const unsigned int lane = threadIdx.x;
+    const unsigned int warp = threadIdx.y;
+    const unsigned int thread = warp * 32 + lane;
+    const unsigned int warp_row = warp / 2;
+    const unsigned int warp_col = warp % 2;
+    const unsigned int row_tiles = (h + 127) / 128;
+    const unsigned int parent_tile = first_tile + blockIdx.x / 4;
+    const unsigned int parent_row = (parent_tile % row_tiles) * 128;
+    const unsigned int parent_col = (parent_tile / row_tiles) * 128;
+    const unsigned int quarter = blockIdx.x % 4;
+    const unsigned int quarter_row = (quarter / 2) * BM;
+    const unsigned int quarter_col = (quarter % 2) * BN;
+    const unsigned int block_row = parent_row + quarter_row;
+    const unsigned int block_col = parent_col + quarter_col;
+    const unsigned int qp = (lane >> 2) & 3;
+    const unsigned int qp_row = qp & 1;
+    const unsigned int qp_col = qp >> 1;
+    const unsigned int high = lane >> 4;
+    const unsigned int native_row = (lane & 3) + 4 * high;
+
+    __shared__ __align__(32) unsigned char shared_bytes[2 * STAGE_VECTORS * sizeof(uint4)];
+    uint4* shared_vectors = reinterpret_cast<uint4*>(shared_bytes);
+    float* output_tile = reinterpret_cast<float*>(shared_bytes);
+    const unsigned int copy_row = (warp % 2) * 32 + lane / 4;
+    const unsigned int copy_vector = lane % 4;
+    const unsigned int copy_operand = warp < 2 ? 0 : OPERAND_VECTORS;
+    const unsigned int copy_origin = warp < 2 ? parent_row : parent_col;
+    const unsigned int copy_quarter = warp < 2 ? quarter_row : quarter_col;
+    const half* copy_matrix = warp < 2 ? a : b;
+    const uint4* input_vectors = reinterpret_cast<const uint4*>(copy_matrix)
+        + size_t(copy_origin) * (packed_k / 8) + (copy_quarter + copy_row) * 4 + copy_vector;
+
+#pragma unroll
+    for (unsigned int i = 0; i < 4; ++i) {
+        shared_vectors[copy_operand + volta_shared_vector_offset(copy_row + 8 * i, copy_vector)]
+            = input_vectors[i * 32];
+    }
+    __syncthreads();
+
+    float accumulators[2][2][8];
+#pragma unroll
+    for (unsigned int i = 0; i < 2; ++i) {
+#pragma unroll
+        for (unsigned int j = 0; j < 2; ++j) {
+#pragma unroll
+            for (unsigned int t = 0; t < 8; ++t)
+                accumulators[i][j][t] = 0.0f;
+        }
+    }
+
+    const unsigned int a_row = warp_row * 32 + 8 * qp_row + native_row;
+    const unsigned int b_row = warp_col * 32 + 8 * qp_col + native_row;
+    uint4 a_current[2];
+    uint4 b_current[2];
+#pragma unroll
+    for (unsigned int i = 0; i < 2; ++i) {
+        a_current[i] = volta_load_shared_vector(shared_vectors + volta_shared_vector_offset(a_row + 16 * i, 0));
+        b_current[i] = volta_load_shared_vector(shared_vectors + OPERAND_VECTORS
+            + volta_shared_vector_offset(b_row + 16 * i, 0));
+    }
+
+    unsigned int stage = 0;
+    for (unsigned int k0 = 0; k0 < packed_k; k0 += BK) {
+        uint4 prefetched[4];
+        const bool has_next = k0 + BK < packed_k;
+        if (has_next) {
+            const size_t next_input = size_t(k0 + BK) * 128 / 8;
+#pragma unroll
+            for (unsigned int i = 0; i < 4; ++i)
+                prefetched[i] = input_vectors[next_input + i * 32];
+        }
+
+#pragma unroll
+        for (unsigned int group = 0; group < BK / 8; ++group) {
+            const bool last_group = group + 1 == BK / 8;
+            if (last_group) {
+                if (has_next) {
+                    const unsigned int next_stage = (stage ^ 1) * STAGE_VECTORS;
+#pragma unroll
+                    for (unsigned int i = 0; i < 4; ++i) {
+                        shared_vectors[next_stage + copy_operand
+                            + volta_shared_vector_offset(copy_row + 8 * i, copy_vector)] = prefetched[i];
+                    }
+                }
+                __syncthreads();
+            }
+
+#pragma unroll
+            for (unsigned int i = 0; i < 2; ++i) {
+#pragma unroll
+                for (unsigned int j = 0; j < 2; ++j) {
+                    volta_mma_884(accumulators[i][j],
+                        a_current[i].x, a_current[i].y, b_current[j].x, b_current[j].y);
+                }
+            }
+
+            uint4 a_next[2];
+            uint4 b_next[2];
+            const bool load_next_group = !last_group || has_next;
+            if (load_next_group) {
+                const unsigned int next_stage = (last_group ? stage ^ 1 : stage) * STAGE_VECTORS;
+                const unsigned int next_group = last_group ? 0 : group + 1;
+#pragma unroll
+                for (unsigned int i = 0; i < 2; ++i) {
+                    a_next[i] = volta_load_shared_vector(shared_vectors + next_stage
+                        + volta_shared_vector_offset(a_row + 16 * i, next_group));
+                    b_next[i] = volta_load_shared_vector(shared_vectors + next_stage + OPERAND_VECTORS
+                        + volta_shared_vector_offset(b_row + 16 * i, next_group));
+                }
+            }
+
+#pragma unroll
+            for (unsigned int i = 0; i < 2; ++i) {
+#pragma unroll
+                for (unsigned int j = 0; j < 2; ++j) {
+                    volta_mma_884(accumulators[i][j],
+                        a_current[i].z, a_current[i].w, b_current[j].z, b_current[j].w);
+                }
+            }
+
+            if (load_next_group) {
+#pragma unroll
+                for (unsigned int i = 0; i < 2; ++i) {
+                    a_current[i] = a_next[i];
+                    b_current[i] = b_next[i];
+                }
+            }
+        }
+        stage ^= 1;
+    }
+
+    const bool full_tile = block_row + BM <= h && block_col + BN <= w && (w & 3) == 0;
+#pragma unroll
+    for (unsigned int i = 0; i < 2; ++i) {
+#pragma unroll
+        for (unsigned int j = 0; j < 2; ++j) {
+#pragma unroll
+            for (unsigned int t = 0; t < 8; t += 2) {
+                const unsigned int row = warp_row * 32 + 16 * i + 8 * qp_row + (lane & 1) + (t & 2) + 4 * high;
+                const unsigned int col = warp_col * 32 + 16 * j + 8 * qp_col + (t & 4) + (lane & 2);
+                const unsigned int swizzle = ((row & 1) << 2) | ((row & 8) << 1);
+                *reinterpret_cast<float2*>(output_tile + row * BN + (col ^ swizzle))
+                    = make_float2(accumulators[i][j][t], accumulators[i][j][t + 1]);
+            }
+        }
+    }
+    __syncthreads();
+#pragma unroll 1
+    for (unsigned int index = thread; index < BM * BN / 4; index += 32 * WARPS) {
+        const unsigned int tile_row = index / (BN / 4);
+        const unsigned int tile_col = 4 * (index % (BN / 4));
+        const unsigned int swizzle = ((tile_row & 1) << 2) | ((tile_row & 8) << 1);
+        const float4 value = *reinterpret_cast<const float4*>(output_tile + tile_row * BN + (tile_col ^ swizzle));
+        const unsigned int row = block_row + tile_row;
+        const unsigned int col = block_col + tile_col;
+        if (full_tile) {
+            *reinterpret_cast<float4*>(c + size_t(row) * w + col) = value;
+        } else if (row < h) {
+            if (col < w)
+                c[size_t(row) * w + col] = value.x;
+            if (col + 1 < w)
+                c[size_t(row) * w + col + 1] = value.y;
+            if (col + 2 < w)
+                c[size_t(row) * w + col + 2] = value.z;
+            if (col + 3 < w)
+                c[size_t(row) * w + col + 3] = value.w;
+        }
+    }
+}
+
 namespace cuda {
 namespace {
 template <typename Kernel>
@@ -432,6 +617,33 @@ void print_wmma_kernel_info(const char* name, Kernel kernel, int threads, const 
         name, blocks, blocks * threads / device.warpSize,
         100.0 * blocks * threads / device.maxThreadsPerMultiProcessor, attributes.preferredShmemCarveout);
 }
+}
+
+unsigned int matrix_multiply_wmma_tail_tiles(unsigned int w, unsigned int h)
+{
+    if (w == 0 || h == 0)
+        return 0;
+    int device_index = 0;
+    cudaDeviceProp device;
+    CUDA_SAFE_CALL(cudaGetDevice(&device_index));
+    CUDA_SAFE_CALL(cudaGetDeviceProperties(&device, device_index));
+    if (device.major != 7 || device.minor != 0)
+        return 0;
+    cudaFuncAttributes attributes;
+    CUDA_SAFE_CALL(cudaFuncGetAttributes(&attributes, ::matrix_multiply_wmma));
+    if (attributes.binaryVersion != 70)
+        return 0;
+    int blocks = 0;
+    CUDA_SAFE_CALL(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&blocks, ::matrix_multiply_wmma,
+        32 * MATRIX_WMMA_WARPS, 0));
+    const size_t slots = size_t(blocks) * device.multiProcessorCount;
+    const size_t row_tiles = (h + MATRIX_WMMA_BLOCK_M - 1) / MATRIX_WMMA_BLOCK_M;
+    const size_t column_tiles = (w + MATRIX_WMMA_BLOCK_N - 1) / MATRIX_WMMA_BLOCK_N;
+    const size_t tiles = row_tiles * column_tiles;
+    if (slots == 0 || tiles < slots)
+        return 0;
+    const size_t tail = tiles % slots;
+    return tail * 2 <= slots && tail % row_tiles == 0 ? static_cast<unsigned int>(tail) : 0;
 }
 
 void matrix_multiply_wmma_print_device_info()
@@ -453,15 +665,18 @@ void matrix_multiply_wmma_print_device_info()
         device.regsPerMultiprocessor, device.sharedMemPerMultiprocessor,
         device.maxThreadsPerMultiProcessor, device.warpSize, device.l2CacheSize);
     print_wmma_kernel_info("GEMM", ::matrix_multiply_wmma, 32 * MATRIX_WMMA_WARPS, device);
+    if (device.major == 7 && device.minor == 0)
+        print_wmma_kernel_info("tail GEMM", ::matrix_multiply_wmma_tail, 32 * MATRIX_WMMA_WARPS, device);
     print_wmma_kernel_info("packing", ::matrix_multiply_prepare_half, MATRIX_WMMA_PACK_THREADS, device);
     std::fflush(stdout);
 }
 
 void matrix_multiply_wmma(const gpu::WorkSize& workSize,
+    const gpu::WorkSize& tailWorkSize,
     const gpu::WorkSize& packingWorkSize,
     const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
     gpu::gpu_mem_16u& a_packed, gpu::gpu_mem_16u& b_packed,
-    unsigned int w, unsigned int h, unsigned int k, bool print_timings)
+    unsigned int w, unsigned int h, unsigned int k, unsigned int tail_tiles, bool print_timings)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
@@ -490,6 +705,12 @@ void matrix_multiply_wmma(const gpu::WorkSize& workSize,
         CUDA_SAFE_CALL(cudaEventRecord(after_packing, stream));
     ::matrix_multiply_wmma<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
         a_half, b_half, c.cuptr(), w, h, packed_k);
+    CUDA_CHECK_KERNEL_ASYNC(stream);
+    if (tail_tiles > 0) {
+        const unsigned int first_tile = (packed_h / MATRIX_WMMA_BLOCK_M) * (packed_w / MATRIX_WMMA_BLOCK_N) - tail_tiles;
+        ::matrix_multiply_wmma_tail<<<tailWorkSize.cuGridSize(), tailWorkSize.cuBlockSize(), 0, stream>>>(
+            a_half, b_half, c.cuptr(), w, h, packed_k, first_tile);
+    }
     if (print_timings) {
         CUDA_SAFE_CALL(cudaEventRecord(after_gemm, stream));
         CUDA_SAFE_CALL(cudaEventSynchronize(after_gemm));
