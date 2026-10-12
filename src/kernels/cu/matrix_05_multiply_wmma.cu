@@ -32,6 +32,7 @@ __global__ void matrix_multiply_wmma(
         return;
     }
 
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 800
     wmma::fragment<wmma::matrix_a,    WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major>  a_frag;
     wmma::fragment<wmma::matrix_b,    WMMA_M, WMMA_N, WMMA_K, wmma::precision::tf32, wmma::row_major>   b_frag;
     wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;
@@ -45,7 +46,6 @@ __global__ void matrix_multiply_wmma(
         wmma::load_matrix_sync(a_frag, a_ptr, k);
         wmma::load_matrix_sync(b_frag, b_ptr, w);
 
-        // Округление float -> tf32
         for (int i = 0; i < a_frag.num_elements; i++) a_frag.x[i] = wmma::__float_to_tf32(a_frag.x[i]);
         for (int i = 0; i < b_frag.num_elements; i++) b_frag.x[i] = wmma::__float_to_tf32(b_frag.x[i]);
 
@@ -54,6 +54,18 @@ __global__ void matrix_multiply_wmma(
 
     float* c_ptr = c + (size_t)tileRow * w + tileCol;
     wmma::store_matrix_sync(c_ptr, acc_frag, w, wmma::mem_row_major);
+#else
+    unsigned int lane = threadIdx.x % warpSize;
+    for (unsigned int idx = lane; idx < WMMA_M * WMMA_N; idx += warpSize) {
+        unsigned int r = idx / WMMA_N;
+        unsigned int col = idx % WMMA_N;
+        float sum = 0.0f;
+        for (unsigned int i = 0; i < k; i++) {
+            sum += a[(size_t)(tileRow + r) * k + i] * b[(size_t)i * w + tileCol + col];
+        }
+        c[(size_t)(tileRow + r) * w + tileCol + col] = sum;
+    }
+#endif
 }
 
 
