@@ -15,7 +15,45 @@ __global__ void matrix_multiply_via_local_memory(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO
+    __shared__ float local_a[TILE_SIZE][TILE_SIZE];
+    __shared__ float local_b[TILE_SIZE][TILE_SIZE];
+
+    const unsigned int i = blockIdx.x * TILE_SIZE + threadIdx.x;
+    const unsigned int j = blockIdx.y * TILE_SIZE + threadIdx.y;
+
+    const unsigned int tile_count = (k + TILE_SIZE - 1) / TILE_SIZE;
+    float res = 0.f;
+
+    for(int r = 0; r < tile_count; ++r) {
+        const unsigned int col_a = r * TILE_SIZE + threadIdx.x;
+        if(col_a < k && j < h) {
+            local_a[threadIdx.y][threadIdx.x] = a[j * k + col_a];
+        }
+        else {
+            local_a[threadIdx.y][threadIdx.x] = 0.f;
+        }
+
+        const unsigned int row_b = r * TILE_SIZE + threadIdx.y;
+        if(row_b < k && i < w) {
+            local_b[threadIdx.y][threadIdx.x] = b[row_b * w + i];
+        }
+        else {
+            local_b[threadIdx.y][threadIdx.x] = 0.f;
+        }
+
+        __syncthreads();
+
+        for(int d = 0; d < TILE_SIZE; ++d) {
+            res += local_a[threadIdx.y][d] * local_b[d][threadIdx.x];
+        }
+
+        __syncthreads();
+    }
+
+    if (j < h && i < w) {
+        c[j * w + i] = res;
+    }
+
 }
 
 namespace cuda {
