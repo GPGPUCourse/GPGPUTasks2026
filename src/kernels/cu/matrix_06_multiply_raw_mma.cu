@@ -576,7 +576,7 @@ __device__ __forceinline__ void mma_multiply_tile(MmaShared* smem, const __half*
             // A loop of its own, in which the four floats are never named one by one: sharing the loop with the atomic
             // additions above made the compiler store them one by one here too (128 stores of 4 bytes per thread instead
             // of 32 of 16 bytes, a quarter of every sector used), and the main kernel took 299 us instead of 213. The
-            // machine code of the main kernel should have 32 STG.E.128 per thread.
+            // machine code of the main kernel should have 32 vector stores of 16 bytes per thread.
             #pragma unroll
             for (int q = 0; q < MMA_C_CHUNKS; ++q) {
                 const unsigned int chunk = q * MMA_THREADS + threadIdx.x;
@@ -584,7 +584,7 @@ __device__ __forceinline__ void mma_multiply_tile(MmaShared* smem, const __half*
                 const unsigned int col = 4 * (chunk % (MMA_BLOCK_N / 4));
                 const float4 values = *reinterpret_cast<const float4*>(out + r * MMA_LDC + col);
                 const unsigned int row = m0 + MMA_WARP_M * (r >> 5) + 32 * it + 4 * ((r >> 4) & 1) + 16 * ((r >> 3) & 1) + 8 * ((r >> 2) & 1) + (r & 3);
-                *reinterpret_cast<float4*>(c + (size_t) row * w + n0 + col) = values;
+                __stcs(reinterpret_cast<float4*>(c + (size_t) row * w + n0 + col), values);
             }
         }
     }
