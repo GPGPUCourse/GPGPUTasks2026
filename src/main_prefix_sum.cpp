@@ -91,6 +91,7 @@ void run(int argc, char** argv)
 
         const unsigned int SMALL_ARRAY_SiZE = GROUP_SIZE;
 
+        // SMALL_ARRAY_SiZE >= GROUP_SIZE
         // SMALL_ARRAY_SiZE is power of 2
         // n >= SMALL_ARRAY_SiZE
 
