@@ -9,9 +9,17 @@
 
 __global__ void small_array_prefix(unsigned int* arr, unsigned int n)
 {
-    // only one thread
-    for(unsigned int i = 1; i < n; i++) {
-        arr[i] += arr[i - 1];
+    __shared__ unsigned int local_arr[256];
+
+    const unsigned int index = threadIdx.x;
+    local_arr[index] = arr[index];
+
+    __syncthreads();
+
+    if(index == 0) {
+        for(unsigned int i = 1; i < n; i++) {
+            arr[i] += arr[i - 1];
+        }
     }
 }
 

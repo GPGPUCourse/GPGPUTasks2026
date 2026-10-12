@@ -26,7 +26,7 @@ unsigned int bit_ceil(unsigned int num) {
 
 const unsigned int EXPECTED_MULTYPROCCESSORS_COUNT = 16;
 unsigned int optimal_group_size(int grid_size) {
-    return std::min((unsigned int)GROUP_SIZE, grid_size / EXPECTED_MULTYPROCCESSORS_COUNT);
+    return GROUP_SIZE;
 }
 
 void run(int argc, char** argv)
@@ -95,23 +95,23 @@ void run(int argc, char** argv)
     for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
-        const unsigned int SMALL_ARRAY_SiZE = GROUP_SIZE;
+        const unsigned int SMALL_ARRAY_SIZE = GROUP_SIZE;
 
-        // SMALL_ARRAY_SiZE >= GROUP_SIZE
-        // SMALL_ARRAY_SiZE is power of 2
-        // n >= SMALL_ARRAY_SiZE
+        // SMALL_ARRAY_SIZE >= GROUP_SIZE
+        // SMALL_ARRAY_SIZE is power of 2
+        // n >= SMALL_ARRAY_SIZE
 
         cuda::copy_mem(gpu::WorkSize(GROUP_SIZE, rounded_n), input_gpu, buffer, n, rounded_n);
 
         unsigned int offset = 0;
-        for(unsigned int in_size = rounded_n; in_size > SMALL_ARRAY_SiZE; in_size >>= 1) {
+        for(unsigned int in_size = rounded_n; in_size > SMALL_ARRAY_SIZE; in_size >>= 1) {
             cuda::prefix_sum_01_reduction(gpu::WorkSize(optimal_group_size(in_size >> 1), in_size >> 1), buffer, buffer, in_size, offset, offset + in_size);
             offset += in_size;
         }
 
-        cuda::small_array_prefix(gpu::WorkSize(1, 1), buffer, SMALL_ARRAY_SiZE, offset);
+        cuda::small_array_prefix(gpu::WorkSize(SMALL_ARRAY_SIZE, SMALL_ARRAY_SIZE), buffer, SMALL_ARRAY_SIZE, offset);
 
-        for(unsigned int in_size = SMALL_ARRAY_SiZE; in_size < n; in_size <<= 1) {
+        for(unsigned int in_size = SMALL_ARRAY_SIZE; in_size < n; in_size <<= 1) {
             const unsigned int out_size = in_size << 1;
             cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(optimal_group_size(in_size), in_size), buffer, buffer, in_size, offset, offset - out_size);
             offset -= out_size;
