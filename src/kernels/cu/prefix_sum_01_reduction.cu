@@ -16,9 +16,7 @@ __global__ void prefix_sum_01_reduction(
     const unsigned int out_index = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int in_index = out_index << 1;
 
-    if(in_index + 1<  n) {
-        out[out_index] = in[in_index] + in[in_index + 1];
-    }
+    out[out_index] = in[in_index] + in[in_index + 1];
 }
 
 namespace cuda {
