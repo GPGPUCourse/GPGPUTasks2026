@@ -1,6 +1,7 @@
 #include "../matrix_inputs.h"
 #include <libgpu/device_memory_pool.h>
 #include <libgpu/cuda/cu/common.cu>
+#include "helpers/mma_col_layout.cuh"
 #include <cuda_fp16.h>
 #include <climits>
 #include <cstdint>
@@ -115,6 +116,76 @@ __global__ void __launch_bounds__(256) prepare_both(const float* __restrict__ a,
     }
 }
 
+// The Panels layout for mma_col (see matrix_inputs.h): the same work as prepare_both for column-major A
+// (a 64x32 tile through shared memory) and for B (8 elements per thread), only the destination of each
+// 16-byte vector changes - its place in the stage of its panel, in the kernel's shared-memory order.
+// Blocks in reverse order as in prepare_both. Requirements, checked by the caller: h % 128 == 0,
+// w % 128 == 0, k % 32 == 0; VEC: 16-byte aligned inputs (float4 reads), otherwise scalar reads.
+template <bool VEC>
+__global__ void __launch_bounds__(256) prepare_panels(const float* __restrict__ a, half* __restrict__ a16,
+                                                      const float* __restrict__ b, half* __restrict__ b16,
+                                                      unsigned h, unsigned k, unsigned w, unsigned a_blocks,
+                                                      unsigned a_tiles_k)
+{
+    __shared__ float tile[64][33];
+    const unsigned t = threadIdx.x;
+    const unsigned block = gridDim.x - 1 - blockIdx.x;
+    if (block < a_blocks) {
+        const unsigned m0 = (block / a_tiles_k) * 64;
+        const unsigned k0 = (block % a_tiles_k) * 32;
+#pragma unroll
+        for (unsigned r = 0; r < 2; ++r) {
+            const unsigned idx = t + r * 256;
+            const unsigned row = idx >> 3;
+            const unsigned c4 = (idx & 7) * 4;
+            const float* src = a + (size_t(m0) + row) * k + k0 + c4;
+            float4 v;
+            if (VEC) {
+                v = *reinterpret_cast<const float4*>(src);
+            } else {
+                v.x = src[0];
+                v.y = src[1];
+                v.z = src[2];
+                v.w = src[3];
+            }
+            tile[row][c4 + 0] = v.x;
+            tile[row][c4 + 1] = v.y;
+            tile[row][c4 + 2] = v.z;
+            tile[row][c4 + 3] = v.w;
+        }
+        __syncthreads();
+        const unsigned kk = t >> 3;
+        const unsigned m = (t & 7) * 8;
+        uint4 o;
+        o.x = pack_half2(tile[m + 0][kk], tile[m + 1][kk]);
+        o.y = pack_half2(tile[m + 2][kk], tile[m + 3][kk]);
+        o.z = pack_half2(tile[m + 4][kk], tile[m + 5][kk]);
+        o.w = pack_half2(tile[m + 6][kk], tile[m + 7][kk]);
+        half* stage = a16 + mma_col_stage_offset(int(m0), int(k0), int(k));
+        *reinterpret_cast<uint4*>(stage + offset_a_colmma(int((m0 + m) % 128), int(kk))) = o;
+        return;
+    }
+    // B: 256 threads x 8 consecutive elements of a row (w % 128 == 0 keeps them in one row and panel)
+    const size_t i = (size_t(block - a_blocks) * 256 + t) * 8;
+    const unsigned kk = unsigned(i / w), n = unsigned(i % w);
+    const float* src = b + i;
+    float4 v0, v1;
+    if (VEC) {
+        v0 = *reinterpret_cast<const float4*>(src);
+        v1 = *reinterpret_cast<const float4*>(src + 4);
+    } else {
+        v0.x = src[0]; v0.y = src[1]; v0.z = src[2]; v0.w = src[3];
+        v1.x = src[4]; v1.y = src[5]; v1.z = src[6]; v1.w = src[7];
+    }
+    uint4 o;
+    o.x = pack_half2(v0.x, v0.y);
+    o.y = pack_half2(v0.z, v0.w);
+    o.z = pack_half2(v1.x, v1.y);
+    o.w = pack_half2(v1.z, v1.w);
+    half* stage = b16 + mma_col_stage_offset(int(n), int(kk), int(k));
+    *reinterpret_cast<uint4*>(stage + offset_b_colmma(int(kk % 32), int(n % 128))) = o;
+}
+
 bool aligned16(const void* p)
 {
     return reinterpret_cast<std::uintptr_t>(p) % 16u == 0;
@@ -171,7 +242,29 @@ void MatrixInputs::prepare(const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b,
     validate_sizes(a, b, w_, h_, k_);
     const auto stream = owner_.cudaStream();
     const size_t na = size_t(h_) * k_, nb = size_t(k_) * w_;
-    const bool columns = layout_ == MatrixALayout::ColumnMajor;
+    if (layout_ == MatrixALayout::Panels && h_ % 128 == 0 && w_ % 128 == 0 && k_ % 32 == 0
+        && aligned16(a_.cuptr()) && aligned16(b_.cuptr())) {
+        const size_t a_blocks = size_t(h_ / 64) * (k_ / 32);
+        const size_t blocks = a_blocks + nb / 2048;
+        if (blocks > INT_MAX)
+            throw std::invalid_argument("too many conversion blocks for one launch");
+        if (aligned16(a.cuptr()) && aligned16(b.cuptr()))
+            prepare_panels<true><<<unsigned(blocks), 256, 0, stream>>>(
+                a.cuptr(), reinterpret_cast<half*>(a_.cuptr()), b.cuptr(), reinterpret_cast<half*>(b_.cuptr()),
+                h_, k_, w_, unsigned(a_blocks), k_ / 32);
+        else
+            prepare_panels<false><<<unsigned(blocks), 256, 0, stream>>>(
+                a.cuptr(), reinterpret_cast<half*>(a_.cuptr()), b.cuptr(), reinterpret_cast<half*>(b_.cuptr()),
+                h_, k_, w_, unsigned(a_blocks), k_ / 32);
+        if (synchronize) {
+            CUDA_CHECK_KERNEL(stream);
+        } else {
+            CUDA_SAFE_CALL(cudaGetLastError());
+        }
+        return;
+    }
+    // Panels with another shape: the kernel rejects it in validateOutput; keep the ColumnMajor copies.
+    const bool columns = layout_ != MatrixALayout::RowMajor;
     const bool a_fits = columns ? (h_ % 64 == 0 && k_ % 32 == 0) : (na % 8 == 0);
     const size_t a_blocks = columns ? size_t(h_ / 64) * (k_ / 32) : na / 2048 + (na % 2048 != 0);
     const size_t blocks = a_blocks + nb / 2048 + (nb % 2048 != 0);

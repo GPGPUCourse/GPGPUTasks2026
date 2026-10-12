@@ -6,7 +6,11 @@
 
 namespace cuda {
 
-enum class MatrixALayout { RowMajor, ColumnMajor };
+// RowMajor / ColumnMajor: plain FP16 copies (A as given / A transposed), B row-major.
+// Panels: the mma_col layout - A in panels of 128 rows and B in panels of 128 columns, each panel
+// a sequence of 32-k stages of 4096 halfs in the kernel's shared-memory order (helpers/mma_col_layout.cuh).
+// Requires w, h multiples of 128 and k a multiple of 32; other shapes keep the ColumnMajor copies.
+enum class MatrixALayout { RowMajor, ColumnMajor, Panels };
 
 // An explicitly prepared snapshot, never a cache keyed by a source pointer.
 // refresh() always reads the supplied matrices, even when their addresses repeat.

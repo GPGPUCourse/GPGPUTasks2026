@@ -6,41 +6,18 @@
 #include <libgpu/cuda/cu/common.cu>
 
 #include "helpers/rassert.cu"
+#include "helpers/mma_col_layout.cuh"
 #include "../defines.h"
 
 #include <cuda_fp16.h>
 #include <climits>
 #include <stdexcept>
 
-// 128x128 CTA, K-tile 32. A is column-major fp16, B is row-major fp16.
-// A smem: ColumnMajorVoltaTensorOpMultiplicandCongruous, stride 128.
-// B smem: RowMajorVoltaTensorOpMultiplicandBCongruous.
+// 128x128 CTA, K-tile 32. A and B are FP16 in the Panels layout (matrix_inputs.h): every 32-k stage
+// of a 128-row panel of A / 128-column panel of B is one contiguous 4096-half block already in the
+// shared-memory order (helpers/mma_col_layout.cuh), so a stage is copied straight into shared memory.
 
 constexpr int kTileGroup = 8; // row-blocks per launch-order group, see matrix_multiply_mma_col_tile
-
-__host__ __device__ int offset_b_colmma(int row_k, int col_n)
-{
-    int vec_contiguous_idx = col_n >> 3;
-    int tile_contiguous_residual = vec_contiguous_idx & 7;
-    int tile_strided_residual = row_k & 3;
-    int permuted_strided = tile_contiguous_residual & 3;
-    int permuted_contiguous = (tile_strided_residual ^ permuted_strided) | (tile_contiguous_residual & 4);
-    int element_contiguous = ((vec_contiguous_idx >> 3) * 8 + permuted_contiguous) * 8 + (col_n & 7);
-    int element_strided = (row_k >> 2) * 4 + permuted_strided;
-    return element_contiguous + element_strided * 128;
-}
-
-__host__ __device__ int offset_a_colmma(int row, int k)
-{
-    int vec_c = row >> 3;
-    int res_c = vec_c & 7;
-    int res_s = k & 3;
-    int perm_s = res_c >> 1;
-    int perm_c = (res_s ^ perm_s) | ((res_c & 1) << 2);
-    int element_c = ((vec_c >> 3) * 8 + perm_c) * 8 + (row & 7);
-    int element_s = (k >> 2) * 4 + perm_s;
-    return element_c + element_s * 128;
-}
 
 __device__ __forceinline__ void mma_colrow(float (&d)[8], unsigned a0, unsigned a1, unsigned b0, unsigned b1)
 {
@@ -102,29 +79,26 @@ __device__ __forceinline__ void read_b_colmma(const uint4* bp, int b_byte, unsig
     }
 }
 
-__device__ __forceinline__ void load_tile_colmma(const half* A, const half* B, int block_m, int block_n, int k0, int w,
-                                                 int h, int tid, uint4 preA[4], uint4 preB[4])
+// One 32-k stage of the CTA's A and B panels: contiguous 8 KB each, 16-byte vector i -> vector i.
+__device__ __forceinline__ void load_tile_panels(const half* A, const half* B, int block_m, int block_n, int k0, int k,
+                                                 int tid, uint4 preA[4], uint4 preB[4])
 {
+    const uint4* a = reinterpret_cast<const uint4*>(A + mma_col_stage_offset(block_m, k0, k));
+    const uint4* b = reinterpret_cast<const uint4*>(B + mma_col_stage_offset(block_n, k0, k));
 #pragma unroll
     for (int rep = 0; rep < 4; ++rep) {
-        int vec = tid + rep * 128;
-        int k_local = vec >> 4;
-        int along = (vec & 15) << 3;
-        preA[rep] = *reinterpret_cast<const uint4*>(A + ((size_t)(k0 + k_local) * h + (block_m + along)));
-        preB[rep] = *reinterpret_cast<const uint4*>(B + ((size_t)(k0 + k_local) * w + (block_n + along)));
+        preA[rep] = a[tid + rep * 128];
+        preB[rep] = b[tid + rep * 128];
     }
 }
 
-__device__ __forceinline__ void store_tile_colmma(half (*As)[4096], half (*Bs)[4096], int stage, int tid,
+__device__ __forceinline__ void store_tile_panels(half (*As)[4096], half (*Bs)[4096], int stage, int tid,
                                                   const uint4 preA[4], const uint4 preB[4])
 {
 #pragma unroll
     for (int rep = 0; rep < 4; ++rep) {
-        int vec = tid + rep * 128;
-        int k_local = vec >> 4;
-        int along = (vec & 15) << 3;
-        *reinterpret_cast<uint4*>(&As[stage][offset_a_colmma(along, k_local)]) = preA[rep];
-        *reinterpret_cast<uint4*>(&Bs[stage][offset_b_colmma(k_local, along)]) = preB[rep];
+        reinterpret_cast<uint4*>(As[stage])[tid + rep * 128] = preA[rep];
+        reinterpret_cast<uint4*>(Bs[stage])[tid + rep * 128] = preB[rep];
     }
 }
 
@@ -174,8 +148,8 @@ __global__ void matrix_multiply_mma_col_tile(const half* __restrict__ A, const h
     int lane_m = (((quad & 4) >> 1) + (quad & 1)) * 8 + (lane_in_quad & 1);
     int lane_n = ((quad >> 1) & 1) * 8 + (lane_in_quad & 2);
 
-    load_tile_colmma(A, B, block_m, block_n, 0, w, h, tid, preA, preB);
-    store_tile_colmma(As, Bs, 0, tid, preA, preB);
+    load_tile_panels(A, B, block_m, block_n, 0, k, tid, preA, preB);
+    store_tile_panels(As, Bs, 0, tid, preA, preB);
     __syncthreads();
 
     const int a_byte0 = warp_m * 128;
@@ -195,7 +169,7 @@ __global__ void matrix_multiply_mma_col_tile(const half* __restrict__ A, const h
     for (int k0 = 0; k0 < k; k0 += 32) {
         const bool has_next = k0 + 32 < k;
         if (has_next)
-            load_tile_colmma(A, B, block_m, block_n, k0 + 32, w, h, tid, preA, preB);
+            load_tile_panels(A, B, block_m, block_n, k0 + 32, k, tid, preA, preB);
 
         const uint4* base_a = reinterpret_cast<const uint4*>(As[stage]);
         const uint4* ap0 = base_a + a_c0 + a_s0 * 16;
@@ -212,7 +186,7 @@ __global__ void matrix_multiply_mma_col_tile(const half* __restrict__ A, const h
                 // Every warp has issued its last read of this stage above. The barrier
                 // publishes the other stage and keeps this one intact until the next step.
                 if (has_next)
-                    store_tile_colmma(As, Bs, stage ^ 1, tid, preA, preB);
+                    store_tile_panels(As, Bs, stage ^ 1, tid, preA, preB);
                 __syncthreads();
                 if (has_next) {
                     const uint4* next_a = reinterpret_cast<const uint4*>(As[stage ^ 1]);
@@ -285,16 +259,18 @@ __global__ void matrix_multiply_mma_col_tile(const half* __restrict__ A, const h
 // warp fragments (same shared-memory layouts, fragments and per-element mma order along K), so
 // the result is bit-identical to computing the tile in the main kernel.
 
+// A 64x64 quadrant takes element columns [64 * q, 64 * q + 64) of each of the 32 strided rows of its
+// panel stage (8 vectors per row), copied to columns [0, 64), where the fragment reads below expect it.
 __device__ __forceinline__ void mma_col_load_quarter(const half* A, const half* B, int block_m, int block_n, int k0,
-                                                     int w, int h, int tid, uint4 preA[2], uint4 preB[2])
+                                                     int k, int tid, uint4 preA[2], uint4 preB[2])
 {
+    const uint4* a = reinterpret_cast<const uint4*>(A + mma_col_stage_offset(block_m, k0, k)) + 8 * ((block_m / 64) & 1);
+    const uint4* b = reinterpret_cast<const uint4*>(B + mma_col_stage_offset(block_n, k0, k)) + 8 * ((block_n / 64) & 1);
 #pragma unroll
     for (int rep = 0; rep < 2; ++rep) {
-        const int vec = tid + rep * 128;
-        const int k_local = vec >> 3;
-        const int along = (vec & 7) << 3;
-        preA[rep] = *reinterpret_cast<const uint4*>(A + (size_t)(k0 + k_local) * h + block_m + along);
-        preB[rep] = *reinterpret_cast<const uint4*>(B + (size_t)(k0 + k_local) * w + block_n + along);
+        const int v = tid + rep * 128;  // strided row v >> 3, vector v & 7
+        preA[rep] = a[(v >> 3) * 16 + (v & 7)];
+        preB[rep] = b[(v >> 3) * 16 + (v & 7)];
     }
 }
 
@@ -303,11 +279,9 @@ __device__ __forceinline__ void mma_col_store_quarter(half (*As)[4096], half (*B
 {
 #pragma unroll
     for (int rep = 0; rep < 2; ++rep) {
-        const int vec = tid + rep * 128;
-        const int k_local = vec >> 3;
-        const int along = (vec & 7) << 3;
-        *reinterpret_cast<uint4*>(&As[stage][offset_a_colmma(along, k_local)]) = preA[rep];
-        *reinterpret_cast<uint4*>(&Bs[stage][offset_b_colmma(k_local, along)]) = preB[rep];
+        const int v = tid + rep * 128;
+        reinterpret_cast<uint4*>(As[stage])[(v >> 3) * 16 + (v & 7)] = preA[rep];
+        reinterpret_cast<uint4*>(Bs[stage])[(v >> 3) * 16 + (v & 7)] = preB[rep];
     }
 }
 
@@ -362,7 +336,7 @@ __global__ void __launch_bounds__(128) matrix_multiply_mma_col_remainder(const h
     const int lane_m = (((quad & 4) >> 1) + (quad & 1)) * 8 + (lane_in_quad & 1);
     const int lane_n = ((quad >> 1) & 1) * 8 + (lane_in_quad & 2);
 
-    mma_col_load_quarter(A, B, block_m, block_n, 0, w, h, tid, preA, preB);
+    mma_col_load_quarter(A, B, block_m, block_n, 0, k, tid, preA, preB);
     mma_col_store_quarter(As, Bs, 0, tid, preA, preB);
     __syncthreads();
     unsigned a0[2][2], a1[2][2], b0[2][2], b1[2][2];
@@ -372,7 +346,7 @@ __global__ void __launch_bounds__(128) matrix_multiply_mma_col_remainder(const h
     for (int k0 = 0; k0 < k; k0 += 32) {
         const bool has_next = k0 + 32 < k;
         if (has_next)
-            mma_col_load_quarter(A, B, block_m, block_n, k0 + 32, w, h, tid, preA, preB);
+            mma_col_load_quarter(A, B, block_m, block_n, k0 + 32, k, tid, preA, preB);
         const uint4* ap = reinterpret_cast<const uint4*>(As[stage]) + a_offset;
         const uint4* bp = reinterpret_cast<const uint4*>(Bs[stage]) + b_offset;
 #pragma unroll
@@ -442,7 +416,7 @@ int matrix_multiply_mma_col_remainder_tiles(unsigned int w, unsigned int h)
 
 void matrix_multiply_mma_col(const MatrixInputs& inputs, gpu::gpu_mem_32f& c)
 {
-    inputs.validateOutput(c, MatrixALayout::ColumnMajor, 128, 32);
+    inputs.validateOutput(c, MatrixALayout::Panels, 128, 32);
     gpu::Context context;
     cudaStream_t stream = context.cudaStream();
     const size_t tiles = size_t(inputs.w() / 128) * (inputs.h() / 128);
@@ -468,7 +442,7 @@ void matrix_multiply_mma_col(const gpu::WorkSize& workSize,
     // The legacy FP32 API always consumes fresh inputs. Use an explicit
     // MatrixInputs snapshot when intentionally reusing prepared operands.
     (void)workSize;
-    MatrixInputs inputs(a, b, w, h, k, MatrixALayout::ColumnMajor, true);
+    MatrixInputs inputs(a, b, w, h, k, MatrixALayout::Panels, true);
     matrix_multiply_mma_col(inputs, c);
 }
 } // namespace cuda
