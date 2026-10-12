@@ -42,8 +42,7 @@ __kernel void matrix_04_multiply_via_local_memory(
         }
 
         barrier(CLK_LOCAL_MEM_FENCE);
-        
-        #pragma unroll 8
+
         for (size_t i = 0; i < MUL_GROUP_SIZE_X; ++i) {
             for (size_t ry = 0; ry < THREAD_TILE_SIZE; ++ry) {
                 float a_value = tile_a[y + ry * MUL_GROUP_SIZE_Y][i];
