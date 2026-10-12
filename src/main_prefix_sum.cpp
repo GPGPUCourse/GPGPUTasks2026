@@ -24,7 +24,6 @@ unsigned int bit_ceil(unsigned int num) {
     return out;
 }
 
-const unsigned int EXPECTED_MULTYPROCCESSORS_COUNT = 16;
 unsigned int optimal_group_size(int grid_size) {
     return GROUP_SIZE;
 }
@@ -94,8 +93,6 @@ void run(int argc, char** argv)
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) {
         timer t;
-
-        const unsigned int SMALL_ARRAY_SIZE = GROUP_SIZE;
 
         // SMALL_ARRAY_SIZE >= GROUP_SIZE
         // SMALL_ARRAY_SIZE is power of 2

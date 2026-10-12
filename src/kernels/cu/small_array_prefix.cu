@@ -17,10 +17,15 @@ __global__ void small_array_prefix(unsigned int* arr, unsigned int n)
     __syncthreads();
 
     if(index == 0) {
-        for(unsigned int i = 1; i < n; i++) {
-            arr[i] += arr[i - 1];
+        for(unsigned int i = 1; i < 256; i++) {
+            local_arr[i] += local_arr[i - 1];
         }
     }
+
+    __syncthreads();
+
+    arr[index] = local_arr[index];
+
 }
 
 namespace cuda {
