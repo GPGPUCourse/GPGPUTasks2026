@@ -1,6 +1,7 @@
 #pragma once
 
 #include <libgpu/context.h>
+#include <libgpu/work_size.h>
 #include <libgpu/vulkan/engine.h>
 
 struct CUevent_st;
@@ -18,9 +19,9 @@ void multiply(
 
 namespace cuda {
 struct WmmaExecution {
-    cudaStream_t tail_stream = nullptr;
+    cudaStream_t auxiliary_stream = nullptr;
     CUevent_st* packing_ready = nullptr;
-    CUevent_st* tail_done = nullptr;
+    CUevent_st* packing_done = nullptr;
 
     WmmaExecution();
     ~WmmaExecution() noexcept;
@@ -48,8 +49,22 @@ void matrix_multiply_wmma(const gpu::WorkSize &workSize,
             const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c,
             gpu::gpu_mem_16u &a_packed, gpu::gpu_mem_16u &b_packed,
             unsigned int w, unsigned int h, unsigned int k, unsigned int tail_tiles,
-            bool print_timings = false, unsigned int variant = 0,
-            const WmmaExecution* execution = nullptr);
+            bool print_timings = false, unsigned int variant = 0);
+struct WmmaPanelWorkSizes {
+    gpu::WorkSize first_packing;
+    gpu::WorkSize remaining_packing;
+    gpu::WorkSize first_gemm;
+    gpu::WorkSize remaining_gemm;
+    unsigned int first_columns;
+};
+
+void matrix_multiply_wmma_panel_pipeline(const WmmaPanelWorkSizes& workSizes,
+            const gpu::WorkSize& tailWorkSize,
+            const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
+            gpu::gpu_mem_16u& a_packed, gpu::gpu_mem_16u& b_packed,
+            unsigned int w, unsigned int h, unsigned int k, unsigned int tail_tiles,
+            const WmmaExecution& execution, bool print_timings = false);
+unsigned int matrix_multiply_wmma_panel_columns(unsigned int w, unsigned int h, unsigned int k, unsigned int tail_tiles);
 unsigned int matrix_multiply_wmma_warps(unsigned int variant = 0);
 unsigned int matrix_multiply_wmma_tail_tiles(unsigned int w, unsigned int h, unsigned int variant = 0);
 void matrix_multiply_wmma_print_device_info(unsigned int variant = 0);
