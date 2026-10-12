@@ -14,8 +14,17 @@ layout (push_constant) uniform PushConstants {
     uint k;
 } params;
 
-layout (local_size_x = 1, local_size_y = 1) in;
+layout (local_size_x = GROUP_SIZE_X, local_size_y = GROUP_SIZE_Y) in;
 void main()
 {
-    // TODO
+    if (gl_GlobalInvocationID.y >= params.h || gl_GlobalInvocationID.x >= params.w) {
+        return;
+    }
+    float acc = 0.0;
+    for (int i = 0; i < params.k; i++) {
+        acc += a[gl_GlobalInvocationID.y*params.k + i] * b[i*params.w + gl_GlobalInvocationID.x];
+    }
+
+    const uint index = gl_GlobalInvocationID.y * params.w + gl_GlobalInvocationID.x;
+    c[index] = acc;
 }

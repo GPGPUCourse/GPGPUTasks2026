@@ -14,8 +14,43 @@ layout (push_constant) uniform PushConstants {
     uint k;
 } params;
 
-layout (local_size_x = 1, local_size_y = 1) in;
+shared float a_tile[TILE * TILE];
+shared float b_tile[TILE * TILE];
+
+layout (local_size_x = TILE, local_size_y = TILE) in;
 void main()
 {
-    // TODO
+    const uint lx = gl_LocalInvocationID.x;
+    const uint ly = gl_LocalInvocationID.y;
+    const uint gx = gl_GlobalInvocationID.x;
+    const uint gy = gl_GlobalInvocationID.y;
+
+    float acc = 0.0;
+    for (uint t = 0; t < (params.k + TILE - 1) / TILE; t++) {
+        const uint ax = t*TILE + lx;
+        if (ax < params.k && gy < params.h) {
+            a_tile[ly*TILE + lx] = a[gy*params.k + ax];
+        } else {
+            a_tile[ly*TILE + lx] = 0.0;
+        }
+        const uint by = t*TILE + ly;
+        if (gx < params.w && by < params.k) {
+            b_tile[ly*TILE + lx] = b[by*params.w + gx];
+        } else {
+            b_tile[ly*TILE + lx] = 0.0;
+        }
+        memoryBarrierShared();
+        barrier();
+
+        for (int i = 0; i < TILE; i++) {
+            acc += a_tile[ly*TILE + i] * b_tile[i*TILE + lx];
+        }
+        memoryBarrierShared();
+        barrier();
+    }
+
+    if (gx < params.w && gy < params.h) {
+        c[gy*params.w + gx] = acc;
+    }
+
 }
