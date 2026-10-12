@@ -47,7 +47,7 @@
 // 287 us with it against 263 with 128x128x32, multiplication alone), the thread map of the tile copies, one barrier per K
 // step inside the last k-group, the operand fragments loaded one k-group ahead into two buffers, the loads of the next
 // tile written in the first k-group, one instruction per accumulator block per k-group in serpentine order, the result
-// through shared memory in four passes.
+// through shared memory (two passes in this version).
 // Cutting the K range of a tile between blocks is CUTLASS's split K as well (media/docs/cpp/efficient_gemm.md,
 // gemm/kernel/gemm_splitk_parallel.h, where the parts go to a workspace and a second kernel adds them up). What is not
 // from CUTLASS: the inputs are FP32 and a pass of its own converts them; the tiles in shared memory are plain rows with
@@ -55,7 +55,8 @@
 // masked; the sizes are constants checked at the launch instead of predicates in the loop; the copy-out of the result in
 // whole rows; and the handling of the last wave: split K for the tiles of that wave only, the parts added into C with
 // atomic additions over zeros that the conversion pass writes, the second stream, the unequal ranges.
-// The numbers quoted in the comments were measured on a Tesla V100-PCIE (80 SMs, 1230 MHz) with C of 2048x4096 and K of
+// The numbers quoted in the comments were measured with the original four-pass epilogue on a Tesla V100-PCIE
+// (80 SMs, 1230 MHz) with C of 2048x4096 and K of
 // 1024 (512 tiles, 32 K steps): percentages of a call in interleaved rounds against the version without the change,
 // unless said otherwise; times of single kernels under the profiler (one profiled launch each); the cost of a conversion
 // inside the multiplication kernel in single series. The accuracy on those inputs: median relative error 2.65e-4, 99th
@@ -180,22 +181,24 @@ constexpr int MMA_CB = MMA_WARP_N / 16; // and along N
 // costs 40% of a call, 8 or 24 cost 5%, 16 and 48 are equal).
 constexpr int MMA_LD = MMA_BLOCK_M + MMA_PAD;
 constexpr int MMA_STAGE = MMA_BLOCK_K * 2 * MMA_LD; // FP16 values in the two tiles of one K step
-// The result buffer: a pass of the epilogue compacts the 16 rows that a warp stores into MMA_OUT_ROWS consecutive rows, and
+// The result buffer: a pass of the epilogue compacts the 32 rows that a warp stores into MMA_OUT_ROWS consecutive rows, and
 // the buffer is copied to C in 16-byte chunks, row by row, MMA_C_CHUNKS per thread. Any multiple of 4 as its padding keeps
 // the rows 16-byte aligned for the chunks; 0 to 20 floats measured the same (within the noise), 4 is the measured value.
 constexpr int MMA_LDC = MMA_BLOCK_N + MMA_PAD_C;
-constexpr int MMA_OUT_ROWS = 16 * MMA_WARPS_M;
+constexpr int MMA_OUT_ROWS = 32 * MMA_WARPS_M;
 constexpr int MMA_C_CHUNKS = MMA_OUT_ROWS * MMA_BLOCK_N / 4 / MMA_THREADS;
 constexpr size_t MMA_TILES_BYTES = 2 * MMA_STAGE * sizeof(__half);
 constexpr size_t MMA_OUT_BYTES = (size_t) MMA_OUT_ROWS * MMA_LDC * sizeof(float);
 constexpr size_t MMA_SHARED_BYTES = MMA_TILES_BYTES > MMA_OUT_BYTES ? MMA_TILES_BYTES : MMA_OUT_BYTES;
 
 static_assert(MMA_BLOCK_M == MMA_BLOCK_N, "the tiles of A and of B are the same width: one row stride, one thread map");
+static_assert(MMA_RA % 2 == 0, "the epilogue stores two accumulator row groups per pass");
+static_assert(MMA_OUT_BYTES <= MMA_TILES_BYTES, "the two-pass epilogue must fit in the existing tile buffer");
 static_assert(MMA_OUT_ROWS * MMA_BLOCK_N / 4 % MMA_THREADS == 0, "the result buffer should split evenly between threads");
 static_assert(MMA_PAD % 8 == 0 && MMA_PAD_C % 4 == 0, "rows in shared memory should stay 128-bit aligned");
 
 // The shared memory of a block of the multiplication kernels: the two stages of tiles (36 KB) during the K loop, the result
-// buffer (17 KB) after it, under the tiles. 36 KB and 230 registers per thread give two blocks per SM.
+// buffer (33 KiB) after it, under the tiles. The epilogue reuses the allocation of the K loop.
 struct MmaShared {
     alignas(16) uint4 data[(MMA_SHARED_BYTES + sizeof(uint4) - 1) / sizeof(uint4)];
 };
@@ -527,28 +530,30 @@ __device__ __forceinline__ void mma_multiply_tile(MmaShared* smem, const __half*
         stage ^= 1;
     }
 
-    // The result leaves through shared memory, which the tiles do not need any more, in MMA_RA passes: pass it stores the
-    // accumulators acc[it][*][*] of every warp, 8 MMA_CB floats per thread as pairs of adjacent columns, the 16 rows
-    // 16 L4 + 8 L2 + (i&2) + (L&1) of a warp compacted into rows 16 wm + 8 L4 + 4 L2 + (i&2) + (L&1) of the buffer; then
-    // all threads copy the buffer to C in whole rows, 128 bits at a time (or add it to C, a float at a time, with ATOMIC).
+    // Two accumulator row groups per pass, so MMA_RA / 2 passes and two barriers per pass. Within each group the lane
+    // layout stays the same as in the four-pass epilogue; the groups occupy adjacent 16-row slices of the warp's buffer.
+    // All threads then copy the buffer to C in whole rows, 128 bits at a time (or add one float at a time with ATOMIC).
     // The first barrier waits for the slower warps, which may still read the tiles under the buffer.
     float* out = reinterpret_cast<float*>(smem->data);
-    const unsigned int out_row = 16 * wm + 8 * l4 + 4 * l2 + (lane & 1);
+    const unsigned int out_row = 32 * wm + 8 * l4 + 4 * l2 + (lane & 1);
     const unsigned int out_col = MMA_WARP_N * wn + 8 * l3 + (lane & 2);
     #pragma unroll
-    for (int it = 0; it < MMA_RA; ++it) {
+    for (int it = 0; it < MMA_RA / 2; ++it) {
         __syncthreads();
         #pragma unroll
-        for (int cb = 0; cb < MMA_CB; ++cb) {
+        for (int ra = 0; ra < 2; ++ra) {
             #pragma unroll
-            for (int i = 0; i < 8; i += 2) {
-                const MmaPair pair = {acc[it][cb][i], acc[it][cb][i + 1]};
-                *reinterpret_cast<MmaPair*>(out + (out_row + (i & 2)) * MMA_LDC + out_col + 32 * (cb >> 1) + 4 * (cb & 1) + 16 * ((i >> 2) & 1)) = pair;
+            for (int cb = 0; cb < MMA_CB; ++cb) {
+                #pragma unroll
+                for (int i = 0; i < 8; i += 2) {
+                    const MmaPair pair = {acc[2 * it + ra][cb][i], acc[2 * it + ra][cb][i + 1]};
+                    *reinterpret_cast<MmaPair*>(out + (out_row + 16 * ra + (i & 2)) * MMA_LDC + out_col + 32 * (cb >> 1) + 4 * (cb & 1) + 16 * ((i >> 2) & 1)) = pair;
+                }
             }
         }
         __syncthreads();
-        // row r of the buffer is row 16 (r>>3 & 1) + 8 (r>>2 & 1) + (r & 3) of the rows 32 (it>>1) + 4 (it&1) + {0..3, 8..11, 16..19, 24..27}
-        // of the warp row r >> 4
+        // r >> 5 is the warp row; bit 4 selects the accumulator row group. Bits 3, 2, 1:0 recover L4, L2 and the row
+        // within a group of four. Pass it covers rows 32 * it through 32 * it + 31 of each warp tile.
         if (ATOMIC) {
             // The same rows per thread as below, but a float per thread at a time with consecutive threads on consecutive
             // columns, so that one instruction of a warp adds into 32 consecutive floats of a row, one 128-byte line of the
@@ -560,7 +565,7 @@ __device__ __forceinline__ void mma_multiply_tile(MmaShared* smem, const __half*
                 const unsigned int chunk = q * MMA_THREADS + threadIdx.x;
                 const unsigned int r = chunk / (MMA_BLOCK_N / 4);
                 const unsigned int col = chunk % (MMA_BLOCK_N / 4);
-                const unsigned int row = m0 + MMA_WARP_M * (r >> 4) + 32 * (it >> 1) + 4 * (it & 1) + 16 * ((r >> 3) & 1) + 8 * ((r >> 2) & 1) + (r & 3);
+                const unsigned int row = m0 + MMA_WARP_M * (r >> 5) + 32 * it + 4 * ((r >> 4) & 1) + 16 * ((r >> 3) & 1) + 8 * ((r >> 2) & 1) + (r & 3);
                 float* dst = c + (size_t) row * w + n0 + col;
                 #pragma unroll
                 for (int i = 0; i < 4; ++i) {
@@ -578,7 +583,7 @@ __device__ __forceinline__ void mma_multiply_tile(MmaShared* smem, const __half*
                 const unsigned int r = chunk / (MMA_BLOCK_N / 4);
                 const unsigned int col = 4 * (chunk % (MMA_BLOCK_N / 4));
                 const float4 values = *reinterpret_cast<const float4*>(out + r * MMA_LDC + col);
-                const unsigned int row = m0 + MMA_WARP_M * (r >> 4) + 32 * (it >> 1) + 4 * (it & 1) + 16 * ((r >> 3) & 1) + 8 * ((r >> 2) & 1) + (r & 3);
+                const unsigned int row = m0 + MMA_WARP_M * (r >> 5) + 32 * it + 4 * ((r >> 4) & 1) + 16 * ((r >> 3) & 1) + 8 * ((r >> 2) & 1) + (r & 3);
                 *reinterpret_cast<float4*>(c + (size_t) row * w + n0 + col) = values;
             }
         }
