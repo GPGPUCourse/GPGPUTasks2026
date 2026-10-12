@@ -11,5 +11,10 @@ __kernel void matrix_01_transpose_naive(
                                 unsigned int w,
                                 unsigned int h)
 {
-    // TODO
+    size_t col = get_global_id(0);
+    size_t row = get_global_id(1);
+
+    if (col >= w || row >= h) return;
+    
+    transposed_matrix[col * h + row] = matrix[row * w + col];
 }
