@@ -104,10 +104,17 @@ if (GPU_CUDA_SUPPORT)
             src/kernels/cu/matrix_02_transpose_coalesced_via_local_memory.cu
             src/kernels/cu/matrix_03_multiply_naive.cu
             src/kernels/cu/matrix_04_multiply_via_local_memory.cu
-            src/kernels/cu/matrix_05_multiply_wmma.cu)
+            src/kernels/cu/matrix_05_multiply_wmma.cu
+            src/kernels/cu/matrix_06_strassen_prepare.cu
+            src/kernels/cu/matrix_07_strassen_fused_512_bk32.cu
+            src/kernels/cu/matrix_08_strassen_fused_512_bk64.cu
+            src/kernels/cu/matrix_09_strassen_fused_256_bk32.cu
+            src/kernels/cu/matrix_10_strassen_four_256_bk32.cu
+            src/kernels/cu/matrix_11_strassen_four_256_bk64.cu)
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
+    set_target_properties(${PROJECT_NAME}_core PROPERTIES CUDA_STANDARD 17 CUDA_STANDARD_REQUIRED ON)
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
     target_include_directories(${PROJECT_NAME}_core PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 else ()
