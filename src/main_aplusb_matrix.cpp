@@ -8,141 +8,213 @@
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
 
-#include <fstream>
+#include <iostream>
+#include <vector>
 
 void run(int argc, char** argv)
 {
-    // chooseGPUVkDevices:
-    // - Если не доступо ни одного устройства - кинет ошибку
-    // - Если доступно ровно одно устройство - вернет это устройство
-    // - Если доступно N>1 устройства:
-    //   - Если аргументов запуска нет или переданное число не находится в диапазоне от 0 до N-1 - кинет ошибку
-    //   - Если аргумент запуска есть и он от 0 до N-1 - вернет устройство под указанным номером
-    gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
+    gpu::Device device =
+        gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
-    // TODO 100 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
-    // TODO 100 после этого реализуйте два кернела - максимально эффективный и максимально неэффктивный вариант сложения матриц - src/kernels/<ваш выбор>/aplusb_matrix_<bad/good>.<ваш выбор>
-    // TODO 100 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
-    // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU
-    // CUDA   - рекомендуется если у вас NVIDIA видеокарта, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
-    // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
-    //          если же вас это не останавливает - профилировщик (nsight-systems) при запуске на NVIDIA тоже работает (хоть и менее мощный чем nsight-compute)
-    //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
-    //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
+    // В этом задании используем OpenCL.
+    gpu::Context context =
+        activateContext(device, gpu::Context::TypeOpenCL);
 
-    ocl::KernelSource ocl_aplusb_matrix_bad(ocl::getAplusBMatrixBad());
-    ocl::KernelSource ocl_aplusb_matrix_good(ocl::getAplusBMatrixGood());
+    ocl::KernelSource badKernel(ocl::getAplusBMatrixBad());
+    ocl::KernelSource goodKernel(ocl::getAplusBMatrixGood());
 
-    avk2::KernelSource vk_aplusb_matrix_bad(avk2::getAplusBMatrixBad());
-    avk2::KernelSource vk_aplusb_matrix_good(avk2::getAplusBMatrixGood());
+    const unsigned int taskSize = 64;
+    const unsigned int width = taskSize * 256;
+    const unsigned int height = taskSize * 128;
+    const size_t elementCount =
+        static_cast<size_t>(width) * static_cast<size_t>(height);
 
-    unsigned int task_size = 64;
-    unsigned int width = task_size * 256;
-    unsigned int height = task_size * 128;
-    std::cout << "matrices size: " << width << "x" << height << " = 3 * " << (sizeof(unsigned int) * width * height / 1024 / 1024) << " MB" << std::endl;
+    std::cout
+        << "matrices size: "
+        << width << "x" << height
+        << " = 3 * "
+        << (sizeof(unsigned int) * elementCount / 1024 / 1024)
+        << " MB"
+        << std::endl;
 
-    // TODO Удалите эту строку, она для того чтобы моя заготовка (не работающий код) не пыталась запуститься на CI
-    throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+    std::vector<unsigned int> as(elementCount, 0);
+    std::vector<unsigned int> bs(elementCount, 0);
 
-    std::vector<unsigned int> as(width * height, 0);
-    std::vector<unsigned int> bs(width * height, 0);
-    for (size_t i = 0; i < width * height; ++i) {
+    for (size_t i = 0; i < elementCount; ++i) {
         as[i] = 3 * (i + 5) + 7;
         bs[i] = 11 * (i + 13) + 17;
     }
 
-    // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u a_gpu(width * height), b_gpu(width * height), c_gpu(width * height);
+    // Аллоцируем память устройства.
+    gpu::gpu_mem_32u a_gpu(elementCount);
+    gpu::gpu_mem_32u b_gpu(elementCount);
+    gpu::gpu_mem_32u c_gpu(elementCount);
 
-    // TODO Удалите этот rassert - прогрузите входные данные по PCI-E шине: CPU RAM -> GPU VRAM
-    rassert(false, 5462345134123);
+    // CPU RAM -> device memory.
+    a_gpu.writeN(as.data(), elementCount);
+    b_gpu.writeN(bs.data(), elementCount);
 
+    // На каждый элемент:
+    // read A + read B + write C = 3 * sizeof(unsigned int).
+    //
+    // Используем тот же способ вычисления объема, что и в примере
+    // main_aplusb.cpp курса.
+    const double memorySizeGB =
+        sizeof(unsigned int) * 3.0 * elementCount
+        / 1024.0 / 1024.0 / 1024.0;
+
+    auto benchmark =
+        [&](const char* name,
+            ocl::KernelSource& kernel,
+            const gpu::WorkSize& workSize,
+            long long assertId)
     {
-        std::cout << "Running BAD matrix kernel..." << std::endl;
+        std::cout << "Running " << name << " matrix kernel..." << std::endl;
 
-        // Запускаем кернел (несколько раз и с замером времени выполнения)
+        // Warm-up:
+        // первый exec также заставляет OpenCL скомпилировать kernel.
+        // Его не включаем в измерения производительности.
+        kernel.exec(
+            workSize,
+            a_gpu,
+            b_gpu,
+            c_gpu,
+            width,
+            height
+        );
+
+        c_gpu.fill(0);
+
         std::vector<double> times;
+
         for (int iter = 0; iter < 10; ++iter) {
             timer t;
 
-            // Настраиваем размер рабочего пространства (n) и размер рабочих групп в этом рабочем пространстве (GROUP_SIZE=256)
-            // Обратите внимание что сейчас указана рабочая группа размера 1х1 в рабочем пространстве width x height, это не то что вы хотите
-            // TODO И в плохом и в хорошем кернеле рабочая группа обязана состоять из 256 work-items
-            gpu::WorkSize workSize(1, 1, width, height);
-
-            // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-            // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-            // TODO раскомментируйте вызов вашего API и поправьте его
-            if (context.type() == gpu::Context::TypeOpenCL) {
-                // ocl_aplusb_matrix_bad.exec(workSize, a_gpu, ...);
-            } else if (context.type() == gpu::Context::TypeCUDA) {
-                // cuda::aplusb_matrix_bad(workSize, a_gpu, ...);
-            } else if (context.type() == gpu::Context::TypeVulkan) {
-                struct {
-                    unsigned int width;
-                    unsigned int height;
-                } params = { width, height };
-                // vk_aplusb_matrix_bad.exec(params, workSize, a_gpu, ...);
-            } else {
-                rassert(false, 4531412341, context.type());
-            }
+            kernel.exec(
+                workSize,
+                a_gpu,
+                b_gpu,
+                c_gpu,
+                width,
+                height
+            );
 
             times.push_back(t.elapsed());
         }
-        std::cout << "a + b matrix kernel times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 
-        // TODO Удалите этот rassert - вычислите достигнутую эффективную пропускную способность видеопамяти
-        rassert(false, 54623414231);
+        std::cout
+            << "a + b matrix kernel times (in seconds) - "
+            << stats::valuesStatsLine(times)
+            << std::endl;
 
-        // TODO Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-        std::vector<unsigned int> cs(width * height, 0);
+        const double medianTime = stats::median(times);
 
-        // Сверяем результат
-        for (size_t i = 0; i < width * height; ++i) {
-            rassert(cs[i] == as[i] + bs[i], 321418230421312512, cs[i], as[i] + bs[i], i);
+        std::cout
+            << name
+            << " matrix kernel median VRAM bandwidth: "
+            << memorySizeGB / medianTime
+            << " GB/s"
+            << std::endl;
+
+        // Device memory -> CPU RAM.
+        std::vector<unsigned int> cs(elementCount, 0);
+        c_gpu.readN(cs.data(), elementCount);
+
+        // Проверяем ВСЕ элементы.
+        for (size_t i = 0; i < elementCount; ++i) {
+            rassert(
+                cs[i] == as[i] + bs[i],
+                assertId,
+                cs[i],
+                as[i] + bs[i],
+                i
+            );
         }
-    }
 
-    // Обнуляем выходной буфер, чтобы результат предыдущего кернела не мог замаскировать ошибку следующего
+        std::cout
+            << name
+            << " result verified: "
+            << elementCount
+            << " elements"
+            << std::endl;
+
+        return medianTime;
+    };
+
+    // BAD:
+    //
+    // local group: 256 x 1
+    //
+    // dimension 0 имеет размер height, потому что bad kernel
+    // интерпретирует get_global_id(0) как y.
+    //
+    // Поэтому соседние work-items идут по разным строкам.
+    const gpu::WorkSize badWorkSize(
+        GROUP_SIZE,
+        1,
+        height,
+        width
+    );
+
+    const double badTime = benchmark(
+        "BAD",
+        badKernel,
+        badWorkSize,
+        321418230421312512LL
+    );
+
+    // Не позволяем результату BAD скрыть ошибку GOOD.
     c_gpu.fill(0);
 
-    {
-        std::cout << "Running GOOD matrix kernel..." << std::endl;
+    // GOOD:
+    //
+    // local group: 256 x 1
+    //
+    // dimension 0 = x, поэтому соседние work-items идут
+    // по соседним элементам одной строки.
+    const gpu::WorkSize goodWorkSize(
+        GROUP_SIZE,
+        1,
+        width,
+        height
+    );
 
-        // TODO Почти тот же код что с плохим кернелом, но теперь с хорошим, рекомендуется копи-паста
+    const double goodTime = benchmark(
+        "GOOD",
+        goodKernel,
+        goodWorkSize,
+        321418230365731436LL
+    );
 
-        // TODO Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-        std::vector<unsigned int> cs(width * height, 0);
-
-        // Сверяем результат
-        for (size_t i = 0; i < width * height; ++i) {
-            rassert(cs[i] == as[i] + bs[i], 321418230365731436, cs[i], as[i] + bs[i], i);
-        }
-    }
+    std::cout
+        << "GOOD/BAD speedup: "
+        << badTime / goodTime
+        << "x"
+        << std::endl;
 }
 
 int main(int argc, char** argv)
 {
-    int exit_code = 0;
+    int exitCode = 0;
+
     try {
         run(argc, argv);
-    } catch (std::exception& e) {
+    }
+    catch (std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
+
         if (e.what() == DEVICE_NOT_SUPPORT_API) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за выбора CUDA API (его нет на процессоре - т.е. в случае CI на GitHub Actions)
-            exit_code = 0;
-        } else if (e.what() == CODE_IS_NOT_IMPLEMENTED) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за того что задание еще не выполнено
-            exit_code = 0;
-        } else {
-            // Выставляем ненулевой exit code, чтобы сообщить, что случилась ошибка
-            exit_code = 1;
+            exitCode = 0;
+        }
+        else if (e.what() == CODE_IS_NOT_IMPLEMENTED) {
+            exitCode = 0;
+        }
+        else {
+            exitCode = 1;
         }
     }
 
-    // we need to gracefully clear Vulkan context before it is too late (otherwise we encounter segfault on some systems)
     avk2::InstanceContext::clearGlobalInstanceContext();
 
-    return exit_code;
+    return exitCode;
 }
