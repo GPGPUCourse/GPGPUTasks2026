@@ -19,20 +19,21 @@ __global__ void matrix_multiply_via_local_memory(
     size_t j = threadIdx.x + blockIdx.x * blockDim.x;
 
     __shared__ float shared_a[GROUP_SIZE_X * GROUP_SIZE_Y];
-    __shared__ float shared_b[GROUP_SIZE_X * GROUP_SIZE_Y];
+    __shared__ float shared_b[2 * GROUP_SIZE_X * GROUP_SIZE_Y];
 
     float res = 0;
     for (uint step = 0; step < k / GROUP_SIZE_X; ++step) {
         uint shift = step * GROUP_SIZE_X;
 
         shared_a[threadIdx.y * blockDim.x + threadIdx.x] = a[i * k + threadIdx.x + shift];
-        shared_b[threadIdx.y * blockDim.x + threadIdx.x] = b[(threadIdx.y + shift) * w + j];
+        uint b_shift = GROUP_SIZE_X * GROUP_SIZE_Y * (step % 2);
+        shared_b[threadIdx.y * blockDim.x + threadIdx.x + b_shift] = b[(threadIdx.y + shift) * w + j];
 
         __syncthreads();
         for (uint l = 0; l < GROUP_SIZE_X; ++l) {
-            res += shared_a[threadIdx.y * blockDim.x + l] * shared_b[l * blockDim.x + threadIdx.x];
+            res += shared_a[threadIdx.y * blockDim.x + l] * shared_b[l * blockDim.x + threadIdx.x + b_shift];
         }
-        __syncthreads();
+        
     }
     c[i * w + j] = res;
 }
