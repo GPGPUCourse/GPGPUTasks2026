@@ -213,6 +213,7 @@ __device__ __forceinline__ void volta_gemm_colrow(
     constexpr unsigned int STAGE_VECTORS = 2 * OPERAND_VECTORS;
     constexpr unsigned int COPY_THREADS = 16 * WARPS;
     constexpr unsigned int COPY_VECTORS = OPERAND_VECTORS / COPY_THREADS;
+    constexpr unsigned int COPY_INPUT_STRIDE = COPY_THREADS / (SPATIAL / 8) * 16;
     constexpr unsigned int STRIP_ROWS = 64;
     const unsigned int lane = threadIdx.x;
     const unsigned int warp = threadIdx.y;
@@ -232,18 +233,20 @@ __device__ __forceinline__ void volta_gemm_colrow(
     const unsigned int copy_quarter = thread < COPY_THREADS
         ? block_row - parent_row : block_col - parent_col;
     const half* copy_matrix = thread < COPY_THREADS ? a : b;
+    const unsigned int copy_k = copy_index / (SPATIAL / 8);
+    const unsigned int copy_vector = copy_index % (SPATIAL / 8);
+    const unsigned int copy_swizzle = (copy_k & 1) | ((copy_k & 2) << 1);
+    const unsigned int copy_shared_offset = copy_operand + copy_k * (SPATIAL / 8)
+        + (copy_vector ^ copy_swizzle);
     const uint4* input_vectors = reinterpret_cast<const uint4*>(copy_matrix)
         + size_t(copy_parent) * (packed_k / 8)
-        + volta_spatial_permutation(copy_quarter) / 8;
+        + volta_spatial_permutation(copy_quarter) / 8
+        + copy_k * 16 + copy_vector;
 
 #pragma unroll
     for (unsigned int i = 0; i < COPY_VECTORS; ++i) {
-        const unsigned int index = copy_index + i * COPY_THREADS;
-        const unsigned int row_k = index / (SPATIAL / 8);
-        const unsigned int vector = index % (SPATIAL / 8);
-        const unsigned int swizzle = (row_k & 1) | ((row_k & 2) << 1);
-        shared_vectors[copy_operand + row_k * (SPATIAL / 8) + (vector ^ swizzle)]
-            = input_vectors[row_k * 16 + vector];
+        shared_vectors[copy_shared_offset + i * COPY_THREADS]
+            = input_vectors[i * COPY_INPUT_STRIDE];
     }
     __syncthreads();
 
@@ -262,19 +265,27 @@ __device__ __forceinline__ void volta_gemm_colrow(
     const unsigned int b_col = warp_col * WARP_COLS + 8 * qp_col + 4 * high;
     const unsigned int lane_k = lane & 3;
     const unsigned int initial_swizzle = (lane_k & 1) | ((lane_k & 2) << 1);
+    unsigned int a_shared_offset[ROW_VECTORS];
+    unsigned int b_shared_offset[COL_VECTORS];
+#pragma unroll
+    for (unsigned int i = 0; i < ROW_VECTORS; ++i) {
+        a_shared_offset[i] = lane_k * (SPATIAL / 8)
+            + ((volta_spatial_permutation(a_row + 32 * i) / 8) ^ initial_swizzle);
+    }
+#pragma unroll
+    for (unsigned int j = 0; j < COL_VECTORS; ++j) {
+        b_shared_offset[j] = OPERAND_VECTORS + lane_k * (SPATIAL / 8)
+            + ((volta_spatial_permutation(b_col + 32 * j) / 8) ^ initial_swizzle);
+    }
     uint4 a_current[ROW_VECTORS];
     uint4 b_current[COL_VECTORS];
 #pragma unroll
     for (unsigned int i = 0; i < ROW_VECTORS; ++i) {
-        a_current[i] = volta_load_shared_vector(shared_vectors
-            + lane_k * (SPATIAL / 8)
-            + ((volta_spatial_permutation(a_row + 32 * i) / 8) ^ initial_swizzle));
+        a_current[i] = volta_load_shared_vector(shared_vectors + a_shared_offset[i]);
     }
 #pragma unroll
     for (unsigned int j = 0; j < COL_VECTORS; ++j) {
-        b_current[j] = volta_load_shared_vector(shared_vectors + OPERAND_VECTORS
-            + lane_k * (SPATIAL / 8)
-            + ((volta_spatial_permutation(b_col + 32 * j) / 8) ^ initial_swizzle));
+        b_current[j] = volta_load_shared_vector(shared_vectors + b_shared_offset[j]);
     }
 
     unsigned int stage = 0;
@@ -285,10 +296,7 @@ __device__ __forceinline__ void volta_gemm_colrow(
             const size_t next_input = size_t(k0 + BK) * 16;
 #pragma unroll
             for (unsigned int i = 0; i < COPY_VECTORS; ++i) {
-                const unsigned int index = copy_index + i * COPY_THREADS;
-                const unsigned int row_k = index / (SPATIAL / 8);
-                const unsigned int vector = index % (SPATIAL / 8);
-                prefetched[i] = input_vectors[next_input + row_k * 16 + vector];
+                prefetched[i] = input_vectors[next_input + i * COPY_INPUT_STRIDE];
             }
         }
 
@@ -302,12 +310,8 @@ __device__ __forceinline__ void volta_gemm_colrow(
                     const unsigned int next_stage = (stage ^ 1) * STAGE_VECTORS;
 #pragma unroll
                     for (unsigned int i = 0; i < COPY_VECTORS; ++i) {
-                        const unsigned int index = copy_index + i * COPY_THREADS;
-                        const unsigned int row_k = index / (SPATIAL / 8);
-                        const unsigned int vector = index % (SPATIAL / 8);
-                        const unsigned int swizzle = (row_k & 1) | ((row_k & 2) << 1);
-                        shared_vectors[next_stage + copy_operand
-                            + row_k * (SPATIAL / 8) + (vector ^ swizzle)] = prefetched[i];
+                        shared_vectors[next_stage + copy_shared_offset
+                            + i * COPY_THREADS] = prefetched[i];
                     }
                 }
                 __syncthreads();
@@ -316,19 +320,14 @@ __device__ __forceinline__ void volta_gemm_colrow(
             const bool load_next_group = !last_group || has_next;
             if (load_next_group) {
                 const unsigned int next_stage = (last_group ? stage ^ 1 : stage) * STAGE_VECTORS;
-                const unsigned int next_k = (last_group ? 0 : 4 * (group + 1)) + lane_k;
-                const unsigned int swizzle = (next_k & 1) | ((next_k & 2) << 1);
+                const unsigned int next_k_offset = (last_group ? 0 : 4 * (group + 1)) * (SPATIAL / 8);
 #pragma unroll
                 for (unsigned int i = 0; i < ROW_VECTORS; ++i) {
-                    a_next[i] = volta_load_shared_vector(shared_vectors + next_stage
-                        + next_k * (SPATIAL / 8)
-                        + ((volta_spatial_permutation(a_row + 32 * i) / 8) ^ swizzle));
+                    a_next[i] = volta_load_shared_vector(shared_vectors + next_stage + next_k_offset + a_shared_offset[i]);
                 }
 #pragma unroll
                 for (unsigned int j = 0; j < COL_VECTORS; ++j) {
-                    b_next[j] = volta_load_shared_vector(shared_vectors + next_stage + OPERAND_VECTORS
-                        + next_k * (SPATIAL / 8)
-                        + ((volta_spatial_permutation(b_col + 32 * j) / 8) ^ swizzle));
+                    b_next[j] = volta_load_shared_vector(shared_vectors + next_stage + next_k_offset + b_shared_offset[j]);
                 }
             }
 
@@ -406,7 +405,7 @@ __device__ __forceinline__ void volta_gemm_colrow(
     }
 }
 
-__global__ __launch_bounds__(256, 2) void matrix_multiply_wmma(
+__global__ __launch_bounds__(128, 2) void matrix_multiply_wmma(
     const half* __restrict__ a,
     const half* __restrict__ b,
     float* __restrict__ c,
@@ -416,7 +415,7 @@ __global__ __launch_bounds__(256, 2) void matrix_multiply_wmma(
 {
     const unsigned int block_row = blockIdx.x * 128;
     const unsigned int block_col = blockIdx.y * 128;
-    volta_gemm_colrow<128, 8>(a, b, c, w, h, packed_k,
+    volta_gemm_colrow<128, 4>(a, b, c, w, h, packed_k,
         block_row, block_col, block_row, block_col);
 }
 
