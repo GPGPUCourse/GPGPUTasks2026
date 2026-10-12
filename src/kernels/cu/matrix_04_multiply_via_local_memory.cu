@@ -7,6 +7,8 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+#define BLOCK_SIZE 32
+
 __global__ void matrix_multiply_via_local_memory(
                        const float* a, // rows=h x cols=k
                        const float* b, // rows=k x cols=w
@@ -15,7 +17,45 @@ __global__ void matrix_multiply_via_local_memory(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO
+    __shared__ float ac[BLOCK_SIZE][BLOCK_SIZE];
+    __shared__ float bc[BLOCK_SIZE][BLOCK_SIZE];
+
+    const unsigned int tx = threadIdx.x;
+    const unsigned int ty = threadIdx.y;
+
+    unsigned int x = blockIdx.x * BLOCK_SIZE + tx;
+    unsigned int y = blockIdx.y * BLOCK_SIZE + ty;
+
+    float cv = 0;
+
+    for(int i = 0; i < (k + BLOCK_SIZE - 1)/BLOCK_SIZE; ++i)
+    {
+        unsigned int ax = i * BLOCK_SIZE + tx;
+        unsigned int ay = y;
+
+        ac[ty][tx] = (ax < k && ay < h) ? a[ay * k + ax] : 0.0f;
+
+        unsigned int bx = x;
+        unsigned int by = i * BLOCK_SIZE + ty;
+
+        bc[ty][tx] = (bx < w && by < k) ? b[by * w + bx] : 0.0f;
+
+        __syncthreads();
+
+        for(int j = 0; j < BLOCK_SIZE; ++j)
+        {
+            cv += ac[ty][j] * bc[j][tx];
+        }
+
+        __syncthreads();
+
+    }
+
+    if(x < w && y < h)
+    {
+        c[y * w + x] = cv;
+    }
+
 }
 
 namespace cuda {

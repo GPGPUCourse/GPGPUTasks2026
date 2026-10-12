@@ -7,13 +7,37 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+#define BLOCK_SIZE 32
+
 __global__ void matrix_transpose_coalesced_via_local_memory(
                        const float* matrix,            // w x h
                              float* transposed_matrix, // h x w
                              unsigned int w,
                              unsigned int h)
 {
-    // TODO
+    __shared__ float lm[BLOCK_SIZE][BLOCK_SIZE];
+
+    const unsigned int tx = threadIdx.x;
+    const unsigned int ty = threadIdx.y;
+
+    unsigned int x = blockIdx.x * BLOCK_SIZE + tx;
+    unsigned int y = blockIdx.y * BLOCK_SIZE + ty;
+
+    if(x < w && y < h)
+    {
+        lm[ty][(tx + ty) % BLOCK_SIZE] = matrix[y * w + x];
+    }
+
+    __syncthreads();
+
+    x = blockIdx.y * BLOCK_SIZE + tx;
+    y = blockIdx.x * BLOCK_SIZE + ty;
+
+    if(x < h && y < w)
+    {
+        transposed_matrix[y * h + x] = lm[tx][(tx + ty) % BLOCK_SIZE];
+    }
+
 }
 
 namespace cuda {
