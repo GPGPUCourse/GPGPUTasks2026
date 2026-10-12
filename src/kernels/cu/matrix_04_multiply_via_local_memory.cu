@@ -15,7 +15,39 @@ __global__ void matrix_multiply_via_local_memory(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO
+    int idx = blockIdx.x * GROUP_SIZE_X + threadIdx.x;
+    int idy = blockIdx.y * GROUP_SIZE_Y + threadIdx.y;
+
+
+    __shared__ float a_tile[GROUP_SIZE_Y][GROUP_SIZE_X + 1];
+    __shared__ float b_tile[GROUP_SIZE_Y][GROUP_SIZE_X + 1];
+
+    float sum = 0.0f;
+    for (int t = 0; t < k; t += GROUP_SIZE_X) {
+        for (int i = 0; i < GROUP_SIZE_Y; i += blockDim.y) {
+            if ((t + threadIdx.x) < k && idy < h)
+                a_tile[threadIdx.y + i][threadIdx.x] = a[(idy + i) * k + t + threadIdx.x];
+            else
+                a_tile[threadIdx.y + i][threadIdx.x] = 0.0f;
+        }
+        for (int i = 0; i < GROUP_SIZE_Y; i += blockDim.x) {
+            if ((t + threadIdx.y) < k && idx < w)
+                b_tile[threadIdx.y + i][threadIdx.x] = b[(t + threadIdx.y + i) * w + idx];
+            else
+                b_tile[threadIdx.y + i][threadIdx.x] = 0.0f;
+        }
+        __syncthreads();
+
+        for (int i = 0; i < GROUP_SIZE_X; ++i) {
+            sum += a_tile[threadIdx.y][i] * b_tile[i][threadIdx.x];
+        }
+        __syncthreads();
+    }
+
+    if (idx >= w || idy >= h) return;
+
+    c[idy * w + idx] = sum;
+
 }
 
 namespace cuda {
