@@ -13,7 +13,23 @@ __global__ void matrix_transpose_coalesced_via_local_memory(
                              unsigned int w,
                              unsigned int h)
 {
-    // TODO
+    const uint X = blockIdx.x * blockDim.x + threadIdx.x;
+    const uint Y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    const uint i = threadIdx.x;
+    const uint j = threadIdx.y;
+
+    __shared__ float local_data[16 * 17];
+
+    float val = 0.0f;
+    if (X < w && Y < h) {
+        val = matrix[Y * w + X];
+    }
+    local_data[j * 17 + i] = val;
+    __syncthreads();
+    if (X < w && Y < h) {
+        transposed_matrix[(blockIdx.x*blockDim.x + j) * h + (blockIdx.y*blockDim.y + i)] = local_data[i*17 + j];
+    }
 }
 
 namespace cuda {
