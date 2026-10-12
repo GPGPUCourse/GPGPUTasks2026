@@ -9,6 +9,19 @@
 #include "kernels/kernels.h"
 
 #include <fstream>
+#include <bit>
+
+unsigned int bit_ceil(unsigned int num) {
+    assert(num != 0);
+    unsigned int out = 1;
+
+    while(num != 0) {
+        out <<= 1;
+        num >>= 1;
+    }
+
+    return out;
+}
 
 void run(int argc, char** argv)
 {
@@ -36,7 +49,7 @@ void run(int argc, char** argv)
     avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
     avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
 
-    unsigned int n = 100 * 1000 * 1000;
+    unsigned int n = 10;//100 * 1000 * 1000;
     std::vector<unsigned int> as(n, 0);
     size_t total_sum = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -63,23 +76,29 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    unsigned int rounded_n = bit_ceil(n);
+    gpu::gpu_mem_32u input_gpu(n), buffer(2*rounded_n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
-    gpu::gpu_mem_32u* buf1 = &buffer1_pow2_sum_gpu;
-    gpu::gpu_mem_32u* buf2 = &buffer2_pow2_sum_gpu;
-
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
-        cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), input_gpu, *buf1, n, 1);
-        for (unsigned int i = 2; i < n; i <<= 1ULL) {
-            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), *buf1, *buf2, n, i);
-            std::swap(buf1, buf2);
+        cuda::copy_mem(gpu::WorkSize(GROUP_SIZE, rounded_n), input_gpu, buffer, n, rounded_n);
+
+        unsigned int offset = 0;
+        for(unsigned int in_size = rounded_n; in_size > 1; in_size >>= 1) {
+            cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, in_size >> 1), buffer, buffer, in_size, offset, offset + in_size);
+            offset += in_size;
+        }
+
+        for(unsigned int in_size = 1; in_size < n; in_size <<= 1) {
+            const unsigned int out_size = in_size << 1;
+            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, out_size), buffer, buffer, in_size, offset, offset - out_size);
+            offset -= out_size;
         }
 
         times.push_back(t.elapsed());
@@ -93,7 +112,7 @@ void run(int argc, char** argv)
               << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    std::vector<unsigned int> gpu_prefix_sum = buf1->readVector();
+    std::vector<unsigned int> gpu_prefix_sum = buffer.readVector();
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
