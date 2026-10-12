@@ -6,20 +6,29 @@
 
 #include "../defines.h"
 
-#define WARP_SIZE 32
-
 __global__ void sum_04_local_reduction(
     const unsigned int* a,
     unsigned int* b,
     unsigned int  n)
 {
-    // Подсказки:
-    // const uint index = blockIdx.x * blockDim.x + threadIdx.x;
-    // const uint local_index = threadIdx.x;
-    // __shared__ unsigned int local_data[GROUP_SIZE];
-    // __syncthreads();
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int local_index = threadIdx.x;
+    __shared__ unsigned int local_data[GROUP_SIZE];
 
-    // TODO
+    // Лишние потоки тоже участвуют в барьерах, но добавляют ноль.
+    local_data[local_index] = index < n ? a[index] : 0;
+    __syncthreads();
+
+    // GROUP_SIZE = 256: на каждом шаге число слагаемых уменьшается вдвое.
+    for (unsigned int step = GROUP_SIZE / 2; step > 0; step /= 2) {
+        if (local_index < step)
+            local_data[local_index] += local_data[local_index + step];
+        __syncthreads();
+    }
+
+    if (local_index == 0)
+        b[blockIdx.x] = local_data[0];
+
 }
 
 namespace cuda {
