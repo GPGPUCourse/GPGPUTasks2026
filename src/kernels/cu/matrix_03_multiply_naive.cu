@@ -8,14 +8,25 @@
 #include "../defines.h"
 
 __global__ void matrix_multiply_naive(
-                       const float* a, // rows=h x cols=k
-                       const float* b, // rows=k x cols=w
-                             float* c, // rows=h x cols=w
-                       unsigned int w,
-                       unsigned int h,
-                       unsigned int k)
+                       const float* a, // rows=H x cols=k
+                       const float* b, // rows=K x cols=W
+                             float* c, // rows=H x cols=W
+                       unsigned int W,
+                       unsigned int H,
+                       unsigned int K)
 {
-    // TODO
+    const unsigned int j = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int i = blockIdx.y * blockDim.y + threadIdx.y;
+
+    if (j >= W || i >= H)
+        return;
+
+    float acc = 0;
+
+    for (unsigned int k = 0; k < K; k++)
+        acc += a[k + i * K] * b[j + k * W];
+
+    c[j + i * W] = acc;
 }
 
 namespace cuda {
