@@ -13,8 +13,8 @@ __kernel void matrix_04_multiply_via_local_memory(
                                 unsigned int h,
                                 unsigned int k)
 {
-    __local float a_local[BLOCK_SIZE * BLOCK_SIZE];
-    __local float b_local[BLOCK_SIZE * BLOCK_SIZE];
+    __local float a_local[(BLOCK_SIZE + 1) * BLOCK_SIZE];
+    __local float b_local[(BLOCK_SIZE + 1) * BLOCK_SIZE];
 
     const unsigned int x = get_global_id(0);
     const unsigned int y = get_global_id(1);
