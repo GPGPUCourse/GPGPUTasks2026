@@ -98,9 +98,11 @@ void run(int argc, char** argv)
     const unsigned int wmma_column_tiles = packed_w / MATRIX_WMMA_BLOCK_N;
     const unsigned int wmma_tail_tiles = context.type() == gpu::Context::TypeCUDA
         ? cuda::matrix_multiply_wmma_tail_tiles(w, h) : 0;
-    const gpu::WorkSize wmma_work_size(32, MATRIX_WMMA_WARPS,
+    const unsigned int wmma_warps = context.type() == gpu::Context::TypeCUDA
+        ? cuda::matrix_multiply_wmma_warps() : MATRIX_WMMA_WARPS;
+    const gpu::WorkSize wmma_work_size(32, wmma_warps,
         wmma_row_tiles * 32,
-        (wmma_column_tiles - wmma_tail_tiles / wmma_row_tiles) * MATRIX_WMMA_WARPS);
+        (wmma_column_tiles - wmma_tail_tiles / wmma_row_tiles) * wmma_warps);
     const gpu::WorkSize wmma_tail_work_size(32, MATRIX_WMMA_WARPS,
         (wmma_tail_tiles > 0 ? wmma_tail_tiles : 1) * 4 * 32, MATRIX_WMMA_WARPS);
     const gpu::WorkSize packing_work_size(MATRIX_WMMA_PACK_THREADS, packing_blocks * MATRIX_WMMA_PACK_THREADS);
