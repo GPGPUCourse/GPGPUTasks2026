@@ -3,7 +3,6 @@
 #include <libgpu/work_size.h>
 
 #include <libgpu/cuda/cu/common.cu>
-#include <thread>
 
 #include "../defines.h"
 #include "helpers/rassert.cu"
