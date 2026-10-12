@@ -20,6 +20,7 @@
 using namespace nvcuda;
 
 // C = A x B on the tensor cores through nvcuda::wmma, in FP16 with FP32 sums. A call is three kernels:
+// The measurements below describe the imported baseline, before the local cache-policy changes.
 //
 // 1. wmma_prepare, the conversion pass, converts A and B to FP16 copies once per call: the copy of A transposed,
 //    a16[kk * h + m], the copy of B as B is, b16[kk * w + n]. Both copies are then rows of K with consecutive values, and a
@@ -519,7 +520,8 @@ __device__ __forceinline__ void wmma_tile(
                 const unsigned int row = chunk / (BN / 4);
                 const unsigned int col = 4 * (chunk % (BN / 4));
                 const float4 values = *reinterpret_cast<const float4*>(out + row * Shape::LDC + col);
-                *reinterpret_cast<float4*>(c + (size_t) (m0 + pass * Shape::WARP_M + row) * w + n0 + col) = values;
+                // Stream the final output to leave cache capacity for the inputs of other blocks.
+                __stcs(reinterpret_cast<float4*>(c + (size_t) (m0 + pass * Shape::WARP_M + row) * w + n0 + col), values);
             }
         }
         __syncthreads();
@@ -528,9 +530,9 @@ __device__ __forceinline__ void wmma_tile(
 
 // The main kernel: the grid has one dimension, the block number t computes the tile number t.
 __global__ void matrix_multiply_wmma_prepared(
-                       const __half* a, // FP16 copy of A by columns: a[kk * h + m]
-                       const __half* b, // FP16 copy of B by rows: b[kk * w + n]
-                             float* c,  // rows=h x cols=w
+                       const __half* __restrict__ a, // FP16 copy of A by columns: a[kk * h + m]
+                       const __half* __restrict__ b, // FP16 copy of B by rows: b[kk * w + n]
+                             float* __restrict__ c,  // rows=h x cols=w
                        unsigned int w,
                        unsigned int h,
                        unsigned int k)
@@ -582,9 +584,9 @@ __device__ __forceinline__ unsigned int wmma_range_first(unsigned int r, unsigne
 // 10 K steps later, so the main kernel's blocks start spread over that time instead of 160 at once; why that is faster
 // was not measured.
 __global__ void matrix_multiply_wmma_splitk(
-                       const __half* a, // as in the main kernel
-                       const __half* b,
-                             float* c,  // rows=h x cols=w, the tiles from first_tile on are zeros
+                       const __half* __restrict__ a, // as in the main kernel
+                       const __half* __restrict__ b,
+                             float* __restrict__ c,  // rows=h x cols=w, the tiles from first_tile on are zeros
                        unsigned int w,
                        unsigned int h,
                        unsigned int k,
