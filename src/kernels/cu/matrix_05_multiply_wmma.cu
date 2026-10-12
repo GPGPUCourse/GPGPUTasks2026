@@ -1,4 +1,5 @@
 #include "../defines.h"
+#include "../kernels.h"
 #include "helpers/rassert.cu"
 #include <cuda_fp16.h>
 #include <libgpu/context.h>
@@ -928,9 +929,54 @@ __global__ __launch_bounds__(128) void matrix_multiply_wmma_tail(
 
 namespace cuda {
 namespace {
+void destroy_wmma_event(cudaEvent_t event) noexcept
+{
+    if (event) {
+        const cudaError_t error = cudaEventDestroy(event);
+        if (error != cudaSuccess)
+            std::fprintf(stderr, "WMMA cudaEventDestroy failed: %s\n", cudaGetErrorString(error));
+    }
+}
+
+struct WmmaTimingEvents {
+    enum Index { Start, Packed, MainStart, MainEnd, TailStart, TailEnd, End, Count };
+    cudaEvent_t events[Count] = {};
+
+    explicit WmmaTimingEvents(bool enabled)
+    {
+        if (enabled) {
+            try {
+                for (cudaEvent_t& event : events)
+                    CUDA_SAFE_CALL(cudaEventCreate(&event));
+            } catch (...) {
+                release();
+                throw;
+            }
+        }
+    }
+
+    ~WmmaTimingEvents() noexcept
+    {
+        release();
+    }
+
+    void release() noexcept
+    {
+        for (cudaEvent_t& event : events) {
+            destroy_wmma_event(event);
+            event = nullptr;
+        }
+    }
+
+    cudaEvent_t operator[](Index index) const
+    {
+        return events[index];
+    }
+};
+
 const void* wmma_kernel(unsigned int variant)
 {
-    rassert(variant <= 2, 1459342583, variant);
+    rassert(variant <= 4, 1459342583, variant);
     if (variant >= 1)
         return reinterpret_cast<const void*>(::matrix_multiply_wmma_pipeline<1>);
     return reinterpret_cast<const void*>(::matrix_multiply_wmma);
@@ -938,7 +984,7 @@ const void* wmma_kernel(unsigned int variant)
 
 const void* wmma_packing_kernel(unsigned int variant)
 {
-    return variant == 2
+    return variant >= 2
         ? reinterpret_cast<const void*>(::matrix_multiply_prepare_half<true>)
         : reinterpret_cast<const void*>(::matrix_multiply_prepare_half<false>);
 }
@@ -957,6 +1003,37 @@ void print_wmma_kernel_info(const char* name, Kernel kernel, int threads, const 
         name, blocks, blocks * threads / device.warpSize,
         100.0 * blocks * threads / device.maxThreadsPerMultiProcessor, attributes.preferredShmemCarveout);
 }
+}
+
+WmmaExecution::WmmaExecution()
+{
+    try {
+        CUDA_SAFE_CALL(cudaStreamCreateWithFlags(&tail_stream, cudaStreamNonBlocking));
+        CUDA_SAFE_CALL(cudaEventCreateWithFlags(&packing_ready, cudaEventDisableTiming));
+        CUDA_SAFE_CALL(cudaEventCreateWithFlags(&tail_done, cudaEventDisableTiming));
+    } catch (...) {
+        release();
+        throw;
+    }
+}
+
+WmmaExecution::~WmmaExecution() noexcept
+{
+    release();
+}
+
+void WmmaExecution::release() noexcept
+{
+    destroy_wmma_event(tail_done);
+    destroy_wmma_event(packing_ready);
+    tail_done = nullptr;
+    packing_ready = nullptr;
+    if (tail_stream) {
+        const cudaError_t error = cudaStreamDestroy(tail_stream);
+        if (error != cudaSuccess)
+            std::fprintf(stderr, "WMMA cudaStreamDestroy failed: %s\n", cudaGetErrorString(error));
+        tail_stream = nullptr;
+    }
 }
 
 unsigned int matrix_multiply_wmma_warps(unsigned int variant)
@@ -1023,7 +1100,8 @@ void matrix_multiply_wmma(const gpu::WorkSize& workSize,
     const gpu::WorkSize& packingWorkSize,
     const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
     gpu::gpu_mem_16u& a_packed, gpu::gpu_mem_16u& b_packed,
-    unsigned int w, unsigned int h, unsigned int k, unsigned int tail_tiles, bool print_timings, unsigned int variant)
+    unsigned int w, unsigned int h, unsigned int k, unsigned int tail_tiles, bool print_timings, unsigned int variant,
+    const WmmaExecution* execution)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
@@ -1035,17 +1113,15 @@ void matrix_multiply_wmma(const gpu::WorkSize& workSize,
     rassert(b_packed.number() >= size_t(packed_w) * packed_k, 1459342582, b_packed.number());
     half* a_half = reinterpret_cast<half*>(a_packed.cuptr());
     half* b_half = reinterpret_cast<half*>(b_packed.cuptr());
+    float* c_ptr = c.cuptr();
     const unsigned int a_blocks = size_t(packed_h) * packed_k / (MATRIX_WMMA_PACK_THREADS * 4);
-    cudaEvent_t start = nullptr;
-    cudaEvent_t after_packing = nullptr;
-    cudaEvent_t after_gemm = nullptr;
-    if (print_timings) {
-        CUDA_SAFE_CALL(cudaEventCreate(&start));
-        CUDA_SAFE_CALL(cudaEventCreate(&after_packing));
-        CUDA_SAFE_CALL(cudaEventCreate(&after_gemm));
-        CUDA_SAFE_CALL(cudaEventRecord(start, stream));
-    }
-    if (variant == 2) {
+    rassert(variant <= 4, 1459342584, variant);
+    const bool concurrent = variant >= 3 && tail_tiles > 0 && execution;
+    const cudaStream_t tail_stream = concurrent ? execution->tail_stream : stream;
+    WmmaTimingEvents timing(print_timings);
+    if (print_timings)
+        CUDA_SAFE_CALL(cudaEventRecord(timing[WmmaTimingEvents::Start], stream));
+    if (variant >= 2) {
         ::matrix_multiply_prepare_half<true><<<packingWorkSize.cuGridSize(), packingWorkSize.cuBlockSize(), 0, stream>>>(
             a.cuptr(), b.cuptr(), a_half, b_half, w, h, k, packed_k, a_blocks, packed_w / 32);
     } else {
@@ -1054,34 +1130,65 @@ void matrix_multiply_wmma(const gpu::WorkSize& workSize,
     }
     CUDA_CHECK_KERNEL_ASYNC(stream);
     if (print_timings)
-        CUDA_SAFE_CALL(cudaEventRecord(after_packing, stream));
-    rassert(variant <= 2, 1459342584, variant);
-    if (variant >= 1) {
-        ::matrix_multiply_wmma_pipeline<1><<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-            a_half, b_half, c.cuptr(), w, h, packed_k);
-    } else {
-        ::matrix_multiply_wmma<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-            a_half, b_half, c.cuptr(), w, h, packed_k);
+        CUDA_SAFE_CALL(cudaEventRecord(timing[WmmaTimingEvents::Packed], stream));
+    if (concurrent) {
+        CUDA_SAFE_CALL(cudaEventRecord(execution->packing_ready, stream));
+        CUDA_SAFE_CALL(cudaStreamWaitEvent(tail_stream, execution->packing_ready, 0));
     }
-    CUDA_CHECK_KERNEL_ASYNC(stream);
-    if (tail_tiles > 0) {
+    const auto launch_main = [&]() {
+        if (print_timings)
+            CUDA_SAFE_CALL(cudaEventRecord(timing[WmmaTimingEvents::MainStart], stream));
+        if (variant >= 1) {
+            ::matrix_multiply_wmma_pipeline<1><<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+                a_half, b_half, c_ptr, w, h, packed_k);
+        } else {
+            ::matrix_multiply_wmma<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+                a_half, b_half, c_ptr, w, h, packed_k);
+        }
+        CUDA_CHECK_KERNEL_ASYNC(stream);
+        if (print_timings)
+            CUDA_SAFE_CALL(cudaEventRecord(timing[WmmaTimingEvents::MainEnd], stream));
+    };
+    const auto launch_tail = [&]() {
+        if (tail_tiles == 0)
+            return;
+        if (print_timings)
+            CUDA_SAFE_CALL(cudaEventRecord(timing[WmmaTimingEvents::TailStart], tail_stream));
         const unsigned int first_tile = (packed_h / MATRIX_WMMA_BLOCK_M) * (packed_w / MATRIX_WMMA_BLOCK_N) - tail_tiles;
-        ::matrix_multiply_wmma_tail<<<tailWorkSize.cuGridSize(), tailWorkSize.cuBlockSize(), 0, stream>>>(
-            a_half, b_half, c.cuptr(), w, h, packed_k, first_tile);
+        ::matrix_multiply_wmma_tail<<<tailWorkSize.cuGridSize(), tailWorkSize.cuBlockSize(), 0, tail_stream>>>(
+            a_half, b_half, c_ptr, w, h, packed_k, first_tile);
+        CUDA_CHECK_KERNEL_ASYNC(tail_stream);
+        if (print_timings)
+            CUDA_SAFE_CALL(cudaEventRecord(timing[WmmaTimingEvents::TailEnd], tail_stream));
+        if (concurrent)
+            CUDA_SAFE_CALL(cudaEventRecord(execution->tail_done, tail_stream));
+    };
+    if (concurrent && variant == 4) {
+        launch_tail();
+        launch_main();
+    } else {
+        launch_main();
+        launch_tail();
     }
+    if (concurrent)
+        CUDA_SAFE_CALL(cudaStreamWaitEvent(stream, execution->tail_done, 0));
     if (print_timings) {
-        CUDA_SAFE_CALL(cudaEventRecord(after_gemm, stream));
-        CUDA_SAFE_CALL(cudaEventSynchronize(after_gemm));
+        CUDA_SAFE_CALL(cudaEventRecord(timing[WmmaTimingEvents::End], stream));
+        CUDA_SAFE_CALL(cudaEventSynchronize(timing[WmmaTimingEvents::End]));
         float packing_ms = 0.0f;
+        float main_ms = 0.0f;
+        float tail_ms = 0.0f;
         float gemm_ms = 0.0f;
-        CUDA_SAFE_CALL(cudaEventElapsedTime(&packing_ms, start, after_packing));
-        CUDA_SAFE_CALL(cudaEventElapsedTime(&gemm_ms, after_packing, after_gemm));
-        std::printf("WMMA stage timing after warmup: packing=%.6f ms, GEMM=%.6f ms, total=%.6f ms\n",
-            packing_ms, gemm_ms, packing_ms + gemm_ms);
+        float total_ms = 0.0f;
+        CUDA_SAFE_CALL(cudaEventElapsedTime(&packing_ms, timing[WmmaTimingEvents::Start], timing[WmmaTimingEvents::Packed]));
+        CUDA_SAFE_CALL(cudaEventElapsedTime(&main_ms, timing[WmmaTimingEvents::MainStart], timing[WmmaTimingEvents::MainEnd]));
+        if (tail_tiles > 0)
+            CUDA_SAFE_CALL(cudaEventElapsedTime(&tail_ms, timing[WmmaTimingEvents::TailStart], timing[WmmaTimingEvents::TailEnd]));
+        CUDA_SAFE_CALL(cudaEventElapsedTime(&gemm_ms, timing[WmmaTimingEvents::Packed], timing[WmmaTimingEvents::End]));
+        CUDA_SAFE_CALL(cudaEventElapsedTime(&total_ms, timing[WmmaTimingEvents::Start], timing[WmmaTimingEvents::End]));
+        std::printf("WMMA stage timing after warmup: packing=%.6f ms, main=%.6f ms, tail=%.6f ms, GEMM=%.6f ms, total=%.6f ms, concurrent=%s\n",
+            packing_ms, main_ms, tail_ms, gemm_ms, total_ms, concurrent ? "yes" : "no");
         std::fflush(stdout);
-        CUDA_SAFE_CALL(cudaEventDestroy(start));
-        CUDA_SAFE_CALL(cudaEventDestroy(after_packing));
-        CUDA_SAFE_CALL(cudaEventDestroy(after_gemm));
     }
     CUDA_CHECK_KERNEL(stream);
 }

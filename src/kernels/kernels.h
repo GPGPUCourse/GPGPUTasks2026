@@ -1,6 +1,9 @@
 #pragma once
 
+#include <libgpu/context.h>
 #include <libgpu/vulkan/engine.h>
+
+struct CUevent_st;
 
 namespace cpu {
 void multiply(
@@ -14,6 +17,20 @@ void multiply(
 }
 
 namespace cuda {
+struct WmmaExecution {
+    cudaStream_t tail_stream = nullptr;
+    CUevent_st* packing_ready = nullptr;
+    CUevent_st* tail_done = nullptr;
+
+    WmmaExecution();
+    ~WmmaExecution() noexcept;
+    WmmaExecution(const WmmaExecution&) = delete;
+    WmmaExecution& operator=(const WmmaExecution&) = delete;
+
+private:
+    void release() noexcept;
+};
+
 void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n);
 
 void matrix_transpose_naive(const gpu::WorkSize &workSize,
@@ -31,7 +48,8 @@ void matrix_multiply_wmma(const gpu::WorkSize &workSize,
             const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c,
             gpu::gpu_mem_16u &a_packed, gpu::gpu_mem_16u &b_packed,
             unsigned int w, unsigned int h, unsigned int k, unsigned int tail_tiles,
-            bool print_timings = false, unsigned int variant = 0);
+            bool print_timings = false, unsigned int variant = 0,
+            const WmmaExecution* execution = nullptr);
 unsigned int matrix_multiply_wmma_warps(unsigned int variant = 0);
 unsigned int matrix_multiply_wmma_tail_tiles(unsigned int w, unsigned int h, unsigned int variant = 0);
 void matrix_multiply_wmma_print_device_info(unsigned int variant = 0);
