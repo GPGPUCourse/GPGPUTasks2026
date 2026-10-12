@@ -52,60 +52,57 @@ __global__ void __launch_bounds__(128, 4) matrix_multiply_wmma(
         for (int j = 0; j < 2; ++j)
             wmma::fill_fragment(c_frag[i][j], 0.0f);
 
-    wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> af;
+    wmma::fragment<wmma::matrix_a, 16, 16, 16, half, wmma::row_major> af[2];
     wmma::fragment<wmma::matrix_b, 16, 16, 16, half, wmma::row_major> bf[2];
+
+    int smem_ar[2], smem_ac[2];
+    int smem_br[2], smem_bc[2];
+
+    #pragma unroll
+    for (int rep = 0; rep < 2; ++rep) {
+        int chunk = tid + rep * 128;
+        smem_ar[rep] = chunk / 4;
+        smem_ac[rep] = (chunk % 4) * 8;
+
+        smem_br[rep] = chunk / 8;
+        smem_bc[rep] = (chunk % 8) * 8;
+    }
+
+
+    const half* ptr_a0 = a + (size_t)(block_row + smem_ar[0]) * k + smem_ac[0];
+    const half* ptr_a1 = a + (size_t)(block_row + smem_ar[1]) * k + smem_ac[1];
+    const half* ptr_b0 = b + (size_t)(smem_br[0]) * w + (block_col + smem_bc[0]);
+    const half* ptr_b1 = b + (size_t)(smem_br[1]) * w + (block_col + smem_bc[1]);
 
     uint4 pre_a[2], pre_b[2];
 
-    auto load_global = [&](int k_curr) {
-        #pragma unroll
-        for (int rep = 0; rep < 2; ++rep) {
-            int chunk = tid + rep * 128;
 
-            int r_a = chunk / 4;
-            int c_a = (chunk % 4) * 8;
-            int g_row_a = block_row + r_a;
-            int g_col_a = k_curr + c_a;
-            pre_a[rep] = (g_row_a < h && g_col_a + 7 < k)
-                ? *reinterpret_cast<const uint4*>(&a[(size_t)g_row_a * k + g_col_a])
-                : make_uint4(0, 0, 0, 0);
+    pre_a[0] = *reinterpret_cast<const uint4*>(ptr_a0);
+    pre_a[1] = *reinterpret_cast<const uint4*>(ptr_a1);
+    pre_b[0] = *reinterpret_cast<const uint4*>(ptr_b0);
+    pre_b[1] = *reinterpret_cast<const uint4*>(ptr_b1);
 
-            int r_b = chunk / 8;
-            int c_b = (chunk % 8) * 8;
-            int g_row_b = k_curr + r_b;
-            int g_col_b = block_col + c_b;
-            pre_b[rep] = (g_row_b < k && g_col_b + 7 < w)
-                ? *reinterpret_cast<const uint4*>(&b[(size_t)g_row_b * w + g_col_b])
-                : make_uint4(0, 0, 0, 0);
-        }
-    };
-
-    auto store_shared = [&](int stage) {
-        #pragma unroll
-        for (int rep = 0; rep < 2; ++rep) {
-            int chunk = tid + rep * 128;
-            int r_a = chunk / 4;
-            int c_a = (chunk % 4) * 8;
-            *reinterpret_cast<uint4*>(&local_a[stage][r_a][c_a]) = pre_a[rep];
-
-            int r_b = chunk / 8;
-            int c_b = (chunk % 8) * 8;
-            *reinterpret_cast<uint4*>(&local_b[stage][r_b][c_b]) = pre_b[rep];
-        }
-    };
-
-    load_global(0);
-    store_shared(0);
+    #pragma unroll
+    for (int rep = 0; rep < 2; ++rep) {
+        *reinterpret_cast<uint4*>(&local_a[0][smem_ar[rep]][smem_ac[rep]]) = pre_a[rep];
+        *reinterpret_cast<uint4*>(&local_b[0][smem_br[rep]][smem_bc[rep]]) = pre_b[rep];
+    }
     __syncthreads();
 
     int stage = 0;
 
+
     for (unsigned int k_step = 0; k_step < k; k_step += BK) {
         unsigned int next_k = k_step + BK;
 
+
         if (next_k < k) {
-            load_global(next_k);
+            pre_a[0] = *reinterpret_cast<const uint4*>(ptr_a0 + next_k);
+            pre_a[1] = *reinterpret_cast<const uint4*>(ptr_a1 + next_k);
+            pre_b[0] = *reinterpret_cast<const uint4*>(ptr_b0 + (size_t)next_k * w);
+            pre_b[1] = *reinterpret_cast<const uint4*>(ptr_b1 + (size_t)next_k * w);
         }
+
 
         #pragma unroll
         for (int kk = 0; kk < BK; kk += 16) {
@@ -116,23 +113,28 @@ __global__ void __launch_bounds__(128, 4) matrix_multiply_wmma(
 
             #pragma unroll
             for (int i = 0; i < 2; ++i) {
-                wmma::load_matrix_sync(af, &local_a[stage][warp_row + i * 16][kk], BK + PAD);
+                wmma::load_matrix_sync(af[i], &local_a[stage][warp_row + i * 16][kk], BK + PAD);
                 #pragma unroll
                 for (int j = 0; j < 2; ++j) {
-                    wmma::mma_sync(c_frag[i][j], af, bf[j], c_frag[i][j]);
+                    wmma::mma_sync(c_frag[i][j], af[i], bf[j], c_frag[i][j]);
                 }
             }
         }
 
-        __syncthreads();
 
         if (next_k < k) {
-            store_shared(stage ^ 1);
+            #pragma unroll
+            for (int rep = 0; rep < 2; ++rep) {
+                *reinterpret_cast<uint4*>(&local_a[stage ^ 1][smem_ar[rep]][smem_ac[rep]]) = pre_a[rep];
+                *reinterpret_cast<uint4*>(&local_b[stage ^ 1][smem_br[rep]][smem_bc[rep]]) = pre_b[rep];
+            }
         }
+
 
         __syncthreads();
         stage ^= 1;
     }
+
 
     #pragma unroll
     for (int i = 0; i < 2; ++i) {
