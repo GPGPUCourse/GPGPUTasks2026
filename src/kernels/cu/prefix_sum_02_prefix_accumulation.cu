@@ -7,25 +7,64 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
-__global__ void prefix_sum_02_prefix_accumulation(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* pow2_sum, // pow2_sum[i] = sum[i*2^pow2; (i+1)*2^pow2)
-          unsigned int* prefix_sum_accum, // we want to make it finally so that prefix_sum_accum[i] = sum[0, i]
-    unsigned int n,
-    unsigned int pow2)
+__device__ __forceinline__
+void add4(unsigned int* output, size_t idx, size_t n, unsigned int offset)
 {
-    // TODO
+    if (idx < n && n - idx >= 4)
+    {
+        uint4 v = *reinterpret_cast<const uint4*>(output + idx);
+
+        v.x += offset;
+        v.y += offset;
+        v.z += offset;
+        v.w += offset;
+
+        *reinterpret_cast<uint4*>(output + idx) = v;
+        return;
+    }
+
+    if (idx < n)     output[idx] += offset;
+    if (idx + 1 < n) output[idx + 1] += offset;
+    if (idx + 2 < n) output[idx + 2] += offset;
+    if (idx + 3 < n) output[idx + 3] += offset;
 }
 
+__global__ void uniform_add(unsigned int* res, const unsigned int* incr, unsigned int n)
+{
+    constexpr unsigned int B = GROUP_SIZE * 8;
+
+    unsigned int block = blockIdx.x + 1;
+
+    unsigned int thid = threadIdx.x;
+
+    unsigned int offset = incr[block - 1];
+
+    size_t base = static_cast<size_t>(block) * B + thid * 4;
+
+    add4(res, base, n, offset);
+    add4(res, base + 4 * GROUP_SIZE, n, offset);
+
+// #pragma unroll
+//     for (unsigned int i = 0; i < 8; ++i)
+//     {
+//         size_t idx = base + i * GROUP_SIZE;
+//
+//         if (idx < n)
+//             res[idx] += offset;
+//     }
+}
+
+
+// !!! WARNING !!!
+// This file is not actually implements prefix accumulation
+// In fact, it performs uniform add incr[i] to every element of res' i - 1 block
 namespace cuda {
-void prefix_sum_02_prefix_accumulation(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32u &pow2_sum, gpu::gpu_mem_32u &prefix_sum_accum, unsigned int n, unsigned int pow2)
+void uniform_add(const gpu::WorkSize &workSize, unsigned int *res, const unsigned int *incr, unsigned int n)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::prefix_sum_02_prefix_accumulation<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(pow2_sum.cuptr(), prefix_sum_accum.cuptr(), n, pow2);
+    ::uniform_add<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(res, incr, n);
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda

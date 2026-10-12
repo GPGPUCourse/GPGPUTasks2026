@@ -10,6 +10,21 @@
 
 #include <fstream>
 
+constexpr size_t B = GROUP_SIZE * 8;
+
+static void reduceSUMS(unsigned int *SUMS, unsigned int *INCR, size_t currSUMSsize)
+{
+    const bool writeSUMS = currSUMSsize > B;
+    const size_t offset = (currSUMSsize + B - 1) / B;
+    const size_t alignedSize = (currSUMSsize + 3) & ~size_t(3);
+    cuda::gems3_scan_algorithm(gpu::WorkSize(GROUP_SIZE, offset * GROUP_SIZE), SUMS, SUMS + alignedSize, INCR, currSUMSsize, writeSUMS);
+    if (writeSUMS)
+    {
+        reduceSUMS(SUMS + alignedSize, INCR + alignedSize, offset);
+        cuda::uniform_add(gpu::WorkSize(GROUP_SIZE, (offset - 1) * GROUP_SIZE), INCR, INCR + alignedSize, currSUMSsize);
+    }
+}
+
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -25,7 +40,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -68,7 +83,18 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    const size_t numBlocks = (static_cast<size_t>(n) + B - 1) / B;
+
+    size_t sums_incr_size = 0;
+    size_t n_copy = n;
+
+    while (n_copy > B)
+    {
+        n_copy = (n_copy + B - 1) / B;
+        sums_incr_size += (n_copy + 3) & ~size_t(3);
+    }
+
+    gpu::gpu_mem_32u input_gpu(n), sums_gpu(sums_incr_size), incr_gpu(sums_incr_size), output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -87,11 +113,14 @@ void run(int argc, char** argv)
             // ocl_sum_reduction.exec();
             // ocl_prefix_accumulation.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
+            const bool writeSUMS = numBlocks > 1;
+            cuda::gems3_scan_algorithm(gpu::WorkSize(GROUP_SIZE, numBlocks * GROUP_SIZE), input_gpu.cuptr(), sums_gpu.cuptr(), output_gpu.cuptr(), n, writeSUMS);
+            if (writeSUMS)
+            {
+                reduceSUMS(sums_gpu.cuptr(), incr_gpu.cuptr(), numBlocks);
+
+                cuda::uniform_add(gpu::WorkSize(GROUP_SIZE, (numBlocks - 1) * GROUP_SIZE), output_gpu.cuptr(), incr_gpu.cuptr(), n);
+            }
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -113,7 +142,7 @@ void run(int argc, char** argv)
               << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
+    std::vector<unsigned int> gpu_prefix_sum = output_gpu.readVector();
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
