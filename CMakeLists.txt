@@ -6,8 +6,8 @@ set(CMAKE_CXX_STANDARD 17)
 
 # Если вы установили CUDA SDK - можете включить поддержку CUDA
 option(GPU_CUDA_SUPPORT "CUDA support." ON)
-option(CMAKE_CUDA_ARCHITECTURES "WMMA support." 75)
-option(CMAKE_CUDA_FLAGS "for profiling" "-lineinfo")
+#option(CMAKE_CUDA_ARCHITECTURES "WMMA support." 75)
+#option(CMAKE_CUDA_FLAGS "for profiling" -lineinfo)
 
 # GLSLC_BIN используйтся для компиляции Vulkan шейдеров (GLSL)
 if (NOT DEFINED GLSLC_BIN)
