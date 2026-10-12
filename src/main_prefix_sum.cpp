@@ -102,7 +102,7 @@ void run(int argc, char** argv)
             offset += in_size;
         }
 
-        cuda::small_array_prefix(gpu::WorkSize(1, SMALL_ARRAY_SiZE), buffer, SMALL_ARRAY_SiZE, offset);
+        cuda::small_array_prefix(gpu::WorkSize(1, 1), buffer, SMALL_ARRAY_SiZE, offset);
 
         for(unsigned int in_size = SMALL_ARRAY_SiZE; in_size < n; in_size <<= 1) {
             const unsigned int out_size = in_size << 1;

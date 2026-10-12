@@ -8,11 +8,8 @@
 #include "../defines.h"
 
 __global__ void small_array_prefix(unsigned int* arr, unsigned int n)
-{   
-    if(threadIdx.x != 0 || blockIdx.x != 0) {
-        return;
-    }
-    // size(arr) == GROUP_SIZE
+{
+    // only one thread
     for(unsigned int i = 1; i < n; i++) {
         arr[i] += arr[i - 1];
     }
