@@ -15,7 +15,44 @@ __global__ void matrix_multiply_via_local_memory(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO
+    const int TILE = 32;
+    curassert(TILE == blockDim.y, 1243242);
+    curassert(TILE == blockDim.x, 9112343242);
+    __shared__ float A[TILE][TILE];
+    __shared__ float B[TILE][TILE];
+
+    int col = blockDim.x * blockIdx.x;
+    int row = blockDim.y * blockIdx.y;
+
+    float sum = 0.0f;
+    for (int i = 0; TILE * i < k + TILE - 1; i++) {
+        int a_row = row + threadIdx.y;
+        int a_col = threadIdx.x + TILE * i;
+        if (a_row < h && a_col < k) {
+            A[threadIdx.y][threadIdx.x] = a[a_row * k + a_col];
+        } else {
+            A[threadIdx.y][threadIdx.x] = 0;
+        }
+
+        int b_row = threadIdx.y + TILE * i;
+        int b_col = col + threadIdx.x;
+        if (b_row < k && b_col < w) {
+            B[threadIdx.y][threadIdx.x] = b[b_row * w + b_col];
+        } else {
+            B[threadIdx.y][threadIdx.x] = 0;
+        }
+
+        __syncthreads();
+        for (int j = 0; j < TILE; j++) {
+            // мы потоками одного варпа обращаемся к разным банкам бродкастом. возможно быстрее в один банк запихать
+            sum += A[threadIdx.y][j] * B[j][threadIdx.x];
+        }
+
+        __syncthreads();
+    }
+    if (row + threadIdx.y < h && col + threadIdx.x < w) {
+        c[(row + threadIdx.y) * w + col + threadIdx.x] = sum;
+    }
 }
 
 namespace cuda {
