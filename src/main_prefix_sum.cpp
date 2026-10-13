@@ -77,7 +77,7 @@ void run(int argc, char** argv)
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    for (int iter = 0; iter < 1; ++iter) {
+    for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
@@ -100,9 +100,6 @@ void run(int argc, char** argv)
             {
                 for (size_t pow2 = 0; pow2 < mems.size(); pow2++) {
                     cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, 1, n, 1), mems[pow2], prefix_sum_accum_gpu, n, mems[pow2].size(), pow2);
-                    cudaError_t err = cudaDeviceSynchronize();
-                    std::cout << "TEST pow2=" << pow2
-                              << " err=" << cudaGetErrorString(err) << std::endl;
                 }
             }
 
