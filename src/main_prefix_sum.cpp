@@ -112,7 +112,6 @@ void run(int argc, char** argv)
         } else {
             rassert(false, 4531412341, context.type());
         }
-
         times.push_back(t.elapsed());
     }
     std::cout << "prefix sum times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
