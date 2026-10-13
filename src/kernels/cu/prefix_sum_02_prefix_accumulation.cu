@@ -19,30 +19,12 @@ __global__ void prefix_sum_02_prefix_accumulation(
 {
     const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int applier = (1 << pow2);
+    const bool valid = index < n && (((index + 1) & applier) > 0);
 
-    __shared__ unsigned int data[GROUP_SIZE];
-    if (index >= pow2_sum_size) {
-        data[threadIdx.x] = 0;
-    } else {
-        data[threadIdx.x] = pow2_sum[index];
-    }
+    const unsigned int reducer_index = (index + 1) / applier - 1;
 
-    __syncthreads();
-    for (size_t offset = 0; offset < GROUP_SIZE; ++offset) {
-        unsigned const int acc = data[offset];
-        if (acc == 0 || threadIdx.x >= applier) {
-            continue;
-        }
-        unsigned int group_index = (blockIdx.x * blockDim.x + offset + 1) * applier - 1;
-
-        const unsigned int interval_end = group_index + applier > n ? n : group_index + applier;
-        for (; group_index < interval_end; group_index += GROUP_SIZE) {
-            const unsigned int acc_index =  group_index + threadIdx.x;
-
-            if ((group_index + threadIdx.x < interval_end) && (((acc_index + 1) & (1 << pow2)) > 0)) {
-                prefix_sum_accum[acc_index] += acc;
-            }
-        }
+    if (valid) {
+        prefix_sum_accum[index] += pow2_sum[reducer_index];
     }
 }
 
