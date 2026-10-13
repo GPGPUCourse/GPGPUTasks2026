@@ -44,7 +44,6 @@ __global__ void matrix_multiply_via_local_memory(
 
         __syncthreads();
         for (int j = 0; j < TILE; j++) {
-            // мы потоками одного варпа обращаемся к разным банкам бродкастом. возможно быстрее в один банк запихать
             sum += A[threadIdx.y][j] * B[j][threadIdx.x];
         }
 
