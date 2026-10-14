@@ -63,19 +63,23 @@ void run(int argc, char** argv)
                   << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
-    // Аллоцируем буферы в VRAM
+    // Аллоцируем буферы в VRAM + creating cuda streams
 
     gpu::gpu_mem_32u input_gpu(n), prefix_sum_accum_gpu(n);
-    std::vector<gpu::gpu_mem_32u> mems;
-    mems.emplace_back(input_gpu);
+    std::vector<gpu::gpu_mem_32u> reductors;
+    reductors.emplace_back(input_gpu);
     for (unsigned int cur_size = (n + 1) / 2; cur_size >= 2; cur_size = (cur_size + 1) / 2) {
-        mems.emplace_back(cur_size);
+        reductors.emplace_back(cur_size);
     }
-
+    cudaStream_t streams[reductors.size()];
+    for (size_t i = 0; i < reductors.size(); i++) {
+        cudaStreamCreateWithFlags(&streams[i], cudaStreamNonBlocking);
+    }
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
+
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) {
         timer t;
@@ -91,15 +95,18 @@ void run(int argc, char** argv)
         } else if (context.type() == gpu::Context::TypeCUDA) {
             {
                 auto work_size = n;
-                for (size_t i = 1; i < mems.size(); i++) {
-                    cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, 1, work_size, 1), mems[i - 1], mems[i], work_size);
+                for (size_t i = 1; i < reductors.size(); i++) {
+                    cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, 1, work_size, 1), reductors[i - 1], reductors[i], work_size);
                     work_size = (work_size + 1) / 2;
                 }
             }
             cuda::fill_buffer_with_zeros(gpu::WorkSize(GROUP_SIZE, 1, n, 1), prefix_sum_accum_gpu, n);
             {
-                for (size_t pow2 = 0; pow2 < mems.size(); pow2++) {
-                    cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, 1, n, 1), mems[pow2], prefix_sum_accum_gpu, n, mems[pow2].size(), pow2);
+                for (size_t pow2 = 0; pow2 < reductors.size(); pow2++) {
+                    cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, 1, n, 1), reductors[pow2], prefix_sum_accum_gpu, n, pow2, streams[pow2]);
+                }
+                for (size_t pow2 = 0; pow2 < reductors.size(); pow2++) {
+                    cudaStreamSynchronize(streams[pow2]);
                 }
             }
 
