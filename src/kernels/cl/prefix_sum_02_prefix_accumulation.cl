@@ -5,14 +5,24 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-__attribute__((reqd_work_group_size(1, 1, 1)))
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void prefix_sum_02_prefix_accumulation(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* pow2_sum, // pow2_sum[i] = sum[i*2^pow2; (i+1)*2^pow2)
-    __global       uint* prefix_sum_accum, // we want to make it finally so that prefix_sum_accum[i] = sum[0, i]
-    unsigned int n,
-    unsigned int pow2)
+    __global       uint* tree,
+    unsigned int level_off,
+    unsigned int coarse_off,
+    unsigned int m)                 // длина текущего уровня
 {
-    // TODO
+    const size_t idx = get_global_id(0);
+
+    if (idx >= (m + 1) / 2) {
+        return;
+    }
+
+    const uint p = tree[coarse_off + idx];
+    const uint v = tree[level_off + 2 * idx];
+    tree[level_off + 2 * idx] = p;
+
+    if (2 * idx + 1 < m) {
+        tree[level_off + 2 * idx + 1] = p + v;
+    }
 }

@@ -1,12 +1,11 @@
 #include "kernels.h"
 
 #include "cl/generated_kernels/aplusb.h"
-#include "cl/generated_kernels/fill_buffer_with_zeros.h"
 #include "cl/generated_kernels/prefix_sum_01_reduction.h"
 #include "cl/generated_kernels/prefix_sum_02_prefix_accumulation.h"
+#include "cl/generated_kernels/prefix_sum_03_write_result.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
-#include "vk/generated_kernels/fill_buffer_with_zeros_comp.h"
 #include "vk/generated_kernels/prefix_sum_01_reduction_comp.h"
 #include "vk/generated_kernels/prefix_sum_02_prefix_accumulation_comp.h"
 
@@ -14,12 +13,6 @@
 namespace cuda {
 void aplusb(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n)
-{
-    // dummy implementation if CUDA_SUPPORT is disabled
-    rassert(false, 54623523412413);
-}
-void fill_buffer_with_zeros(const gpu::WorkSize &workSize,
-            gpu::gpu_mem_32u &buffer, unsigned int n)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
@@ -38,16 +31,10 @@ void prefix_sum_02_prefix_accumulation(const gpu::WorkSize &workSize,
 }
 } // namespace cuda
 #endif
-
 namespace ocl {
-const ocl::ProgramBinaries& getAplusB()
+const ProgramBinaries& getAplusB()
 {
     return opencl_binaries_aplusb;
-}
-
-const ProgramBinaries& getFillBufferWithZeros()
-{
-    return opencl_binaries_fill_buffer_with_zeros;
 }
 
 const ProgramBinaries& getPrefixSum01Reduction()
@@ -59,17 +46,17 @@ const ProgramBinaries& getPrefixSum02PrefixAccumulation()
 {
     return opencl_binaries_prefix_sum_02_prefix_accumulation;
 }
+
+const ProgramBinaries& getPrefixSum03WriteResult()
+{
+    return opencl_binaries_prefix_sum_03_write_result;
+}
 } // namespace ocl
 
 namespace avk2 {
 const ProgramBinaries& getAplusB()
 {
     return vulkan_binaries_aplusb_comp;
-}
-
-const ProgramBinaries& getFillBufferWithZeros()
-{
-    return vulkan_binaries_fill_buffer_with_zeros_comp;
 }
 
 const ProgramBinaries& getPrefixSum01Reduction()
