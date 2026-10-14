@@ -4,9 +4,10 @@
 
 #include "../defines.h"
 
-__kernel void aplusb_matrix_bad(__global const uint* a,
-                     __global const uint* b,
-                     __global       uint* c,
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__kernel void aplusb_matrix_bad(__global const uint* restrict a,
+                     __global const uint* restrict b,
+                     __global       uint* restrict c,
                      unsigned int width,
                      unsigned int height)
 {
@@ -16,5 +17,13 @@ __kernel void aplusb_matrix_bad(__global const uint* a,
     // т.е. если в матрице сделать шаг вправо или влево на одну ячейку - то в памяти мы шагнем на 4 байта
     // т.е. если в матрице сделать шаг вверх или вниз на одну ячейку - то в памяти мы шагнем на так называемый stride=width*4 байта
 
-    // TODO реализуйте этот кернел - просуммируйте две матрицы так чтобы получить максимально ПЛОХУЮ производительность с точки зрения memory coalesced паттерна доступа
+    // Здесь рабочее пространство — height x width, группа по-прежнему 256 x 1.
+    // Соседние work-items идут по строкам одного столбца: шаг — width * 4 байт.
+    const size_t x = get_global_id(1);
+    const size_t y = get_global_id(0);
+    if (x >= width || y >= height)
+        return;
+
+    const size_t index = y * width + x;
+    c[index] = a[index] + b[index];
 }
