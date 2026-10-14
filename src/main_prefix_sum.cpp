@@ -130,17 +130,20 @@ void run(int argc, char** argv)
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
     std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
+    std::cout << "GPU results read back" << std::endl;
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
         rassert(cpu_prefix_sum[i] == gpu_prefix_sum[i], 566324523452323, cpu_prefix_sum[i], gpu_prefix_sum[i], i);
     }
+    std::cout << "GPU prefix sum verification passed" << std::endl;
 
     // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
     std::vector<unsigned int> input_values = input_gpu.readVector();
     for (size_t i = 0; i < n; ++i) {
         rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
     }
+    std::cout << "Input data verification passed" << std::endl;
 }
 
 int main(int argc, char** argv)
