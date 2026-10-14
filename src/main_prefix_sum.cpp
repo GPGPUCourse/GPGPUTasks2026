@@ -63,7 +63,7 @@ void run(int argc, char** argv)
                   << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
-    // Аллоцируем буферы в VRAM + creating cuda streams
+    // Аллоцируем буферы в VRAM
 
     gpu::gpu_mem_32u input_gpu(n), prefix_sum_accum_gpu(n);
     std::vector<gpu::gpu_mem_32u> reductors;
@@ -71,12 +71,16 @@ void run(int argc, char** argv)
     for (unsigned int cur_size = (n + 1) / 2; cur_size >= 2; cur_size = (cur_size + 1) / 2) {
         reductors.emplace_back(cur_size);
     }
-    cudaStream_t streams[reductors.size()];
-    for (size_t i = 0; i < reductors.size(); i++) {
-        cudaStreamCreateWithFlags(&streams[i], cudaStreamNonBlocking);
+
+    gpu::shared_device_buffer_typed<uint32_t*> pow2_sum(reductors.size());
+    std::vector<uint32_t*> reductors_pointers_tmp;
+    for (auto& reductor : reductors) {
+        reductors_pointers_tmp.emplace_back(reductor.cuptr());
     }
+
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
+    pow2_sum.writeN(reductors_pointers_tmp.data(), reductors.size());
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
 
@@ -100,14 +104,8 @@ void run(int argc, char** argv)
                     work_size = (work_size + 1) / 2;
                 }
             }
-            cuda::fill_buffer_with_zeros(gpu::WorkSize(GROUP_SIZE, 1, n, 1), prefix_sum_accum_gpu, n);
             {
-                for (size_t pow2 = 0; pow2 < reductors.size(); pow2++) {
-                    cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, 1, n, 1), reductors[pow2], prefix_sum_accum_gpu, n, pow2, streams[pow2]);
-                }
-                for (size_t pow2 = 0; pow2 < reductors.size(); pow2++) {
-                    cudaStreamSynchronize(streams[pow2]);
-                }
+                cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, 1, n, 1), pow2_sum, prefix_sum_accum_gpu, n, reductors.size());
             }
 
         } else if (context.type() == gpu::Context::TypeVulkan) {
