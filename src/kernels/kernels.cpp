@@ -32,7 +32,7 @@ void prefix_sum_02_prefix_accumulation(const gpu::WorkSize &workSize,
 } // namespace cuda
 #endif
 namespace ocl {
-const ProgramBinaries& getAplusB()
+const ocl::ProgramBinaries& getAplusB()
 {
     return opencl_binaries_aplusb;
 }
