@@ -96,8 +96,8 @@ void matrix_multiply_wmma(const gpu::WorkSize &workSize,
 
     cudaStream_t stream = context.cudaStream();
 
-    static gpu::gpu_mem_16u a_fp16; // rows=H x cols=K
-    static gpu::gpu_mem_16u b_fp16; // rows=K x cols=W
+    gpu::gpu_mem_16u a_fp16; // rows=H x cols=K
+    gpu::gpu_mem_16u b_fp16; // rows=K x cols=W
 
     a_fp16 = gpu::gpu_mem_16u(size_t(h) * k);
     b_fp16 = gpu::gpu_mem_16u(size_t(k) * w);
