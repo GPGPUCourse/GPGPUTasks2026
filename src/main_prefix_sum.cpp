@@ -1,14 +1,12 @@
+#include <cstdlib>
+
 #include <libbase/stats.h>
 #include <libutils/misc.h>
 
 #include <libbase/timer.h>
-#include <libgpu/vulkan/engine.h>
-#include <libgpu/vulkan/tests/test_utils.h>
 
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
-
-#include <fstream>
 
 void run(int argc, char** argv)
 {
@@ -20,26 +18,11 @@ void run(int argc, char** argv)
     //   - Если аргумент запуска есть и он от 0 до N-1 - вернет устройство под указанным номером
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
-    // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
-    // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
-    // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
-    // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
     gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
-    // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
-    // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
-    // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
-    //          если же вас это не останавливает - профилировщик (nsight-systems) при запуске на NVIDIA тоже работает (хоть и менее мощный чем nsight-compute)
-    //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
-    //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
-    ocl::KernelSource ocl_fill_with_zeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
     ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
-
-    avk2::KernelSource vk_fill_with_zeros(avk2::getFillBufferWithZeros());
-    avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
-    avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
+    ocl::KernelSource ocl_write_result(ocl::getPrefixSum03WriteResult());
 
     unsigned int n = 100*1000*1000;
     std::vector<unsigned int> as(n, 0);
@@ -66,42 +49,77 @@ void run(int argc, char** argv)
                   << memory_size_gb / elapsed << " GB/s ("
                   << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
-
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    // Пирамида частичных сумм лежит в одном буфере: вершина (1 элемент) - в начале,
+    // ниже - всё более длинные уровни; сумма длин уровней <= n + ceil(log2(n)) + 1
+    gpu::gpu_mem_32u input_gpu(n), pow2_tree_gpu(n + 64), prefix_sum_accum_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
+
+    // Вершина пирамиды (tree[0]) - seed down-sweep: префикс перед первым блоком равен нулю.
+    // Вверх пирамида вершину не строит, вниз никто в неё не пишет, поэтому нуля достаточно на все итерации
+    const unsigned int zero = 0;
+    pow2_tree_gpu.writeN(&zero, 1);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) {
         timer t;
+        // Раскладка пирамиды: длины уровней снизу вверх (m_1 = ceil(n/2), m_{k+1} = ceil(m_k/2), вершина - 1 элемент)
+        std::vector<unsigned int> level_lens; // level_lens[i] - длина уровня i+1
+        for (unsigned int m = (n + 1) / 2; ; m = (m + 1) / 2) {
+            level_lens.push_back(m);
+            if (m == 1) {
+                break;
+            }
+        }
+        // Смещения уровней: вершина - в начале буфера, каждый следующий (более длинный) уровень - ниже
+        std::vector<unsigned int> level_offs(level_lens.size());
+        {
+            unsigned int tree_size = 0;
+            for (size_t i = 0; i < level_lens.size(); ++i) {
+                tree_size += level_lens[i];
+            }
+            rassert(tree_size <= n + 64, 53451234512341, tree_size, n);
+            unsigned int tail = tree_size;
+            for (size_t i = 0; i < level_lens.size(); ++i) {
+                tail -= level_lens[i];
+                level_offs[i] = tail; // уровень i+1 (длина level_lens[i]) начинается с этой позиции
+            }
+        }
 
-        // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-        // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fill_with_zeros.exec();
-            // vk_sum_reduction.exec();
-            // vk_prefix_accumulation.exec();
+            // Up-sweep: строим пирамиду частичных сумм снизу вверх;
+            // нижний уровень читает входной массив напрямую, каждый запуск суммирует пары соседних элементов уровня.
+            // Вершину (последний уровень из 1 элемента) не строим: scan'у нужна не полная сумма, а ноль перед первым блоком
+            for (size_t i = 0; i + 1 < level_lens.size(); ++i) {
+                const unsigned int src_len = (i == 0) ? n : level_lens[i - 1];
+                const unsigned int src_off = (i == 0) ? 0 : level_offs[i - 1];
+                const unsigned int dst_off = level_offs[i];
+                const gpu::WorkSize ws(GROUP_SIZE, level_lens[i]);
+                if (i == 0) {
+                    ocl_sum_reduction.exec(ws, input_gpu, pow2_tree_gpu, src_off, dst_off, src_len);
+                } else {
+                    ocl_sum_reduction.exec(ws, pow2_tree_gpu, pow2_tree_gpu, src_off, dst_off, src_len);
+                }
+            }
+
+            // Down-sweep: переписываем blocksum-ы каждого уровня на префиксы начал его блоков,
+            // беря seed с уровня выше (уровни обрабатываем сверху вниз)
+            for (size_t i = level_lens.size() - 1; i >= 1; --i) {
+                const unsigned int m = level_lens[i - 1];      // длина текущего уровня
+                const unsigned int level_off = level_offs[i - 1];
+                const unsigned int coarse_off = level_offs[i]; // уровень выше уже содержит префиксы
+                const gpu::WorkSize ws(GROUP_SIZE, (m + 1) / 2);
+                ocl_prefix_accumulation.exec(ws, pow2_tree_gpu, level_off, coarse_off, m);
+            }
+
+            // Финальный шаг: префиксы перед парами + сами элементы => включительные префиксы
+            ocl_write_result.exec(gpu::WorkSize(GROUP_SIZE, (n + 1) / 2), input_gpu, pow2_tree_gpu, prefix_sum_accum_gpu, level_offs[0], n);
         } else {
             rassert(false, 4531412341, context.type());
         }
-
         times.push_back(t.elapsed());
     }
     std::cout << "prefix sum times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
@@ -114,17 +132,24 @@ void run(int argc, char** argv)
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
     std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
+    std::cout << "GPU results read back" << std::endl;
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
         rassert(cpu_prefix_sum[i] == gpu_prefix_sum[i], 566324523452323, cpu_prefix_sum[i], gpu_prefix_sum[i], i);
     }
+    std::cout << "GPU prefix sum verification passed" << std::endl;
 
     // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
     std::vector<unsigned int> input_values = input_gpu.readVector();
     for (size_t i = 0; i < n; ++i) {
         rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
     }
+
+    std::cout << "Input data verification passed" << std::endl;
+
+    // волшебный костыль
+    std::_Exit(0);
 }
 
 int main(int argc, char** argv)
@@ -135,19 +160,13 @@ int main(int argc, char** argv)
     } catch (std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         if (e.what() == DEVICE_NOT_SUPPORT_API) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за выбора CUDA API (его нет на процессоре - т.е. в случае CI на GitHub Actions)
             exit_code = 0;
         } else if (e.what() == CODE_IS_NOT_IMPLEMENTED) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за того что задание еще не выполнено
             exit_code = 0;
         } else {
-            // Выставляем ненулевой exit code, чтобы сообщить, что случилась ошибка
             exit_code = 1;
         }
     }
-
-    // we need to gracefully clear Vulkan context before it is too late (otherwise we encounter segfault on some systems)
-    avk2::InstanceContext::clearGlobalInstanceContext();
 
     return exit_code;
 }
