@@ -17,7 +17,6 @@ void run(int argc, char** argv)
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
     gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
-    // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind - https://github.com/jrprice/Oclgrind
 
     ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
     ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
@@ -152,13 +151,10 @@ int main(int argc, char** argv)
     } catch (std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         if (e.what() == DEVICE_NOT_SUPPORT_API) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за отсутствия поддерживаемого GPU API (т.е. в случае CI на GitHub Actions)
             exit_code = 0;
         } else if (e.what() == CODE_IS_NOT_IMPLEMENTED) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за того что задание еще не выполнено
             exit_code = 0;
         } else {
-            // Выставляем ненулевой exit code, чтобы сообщить, что случилась ошибка
             exit_code = 1;
         }
     }
