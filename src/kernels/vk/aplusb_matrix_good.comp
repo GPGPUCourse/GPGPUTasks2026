@@ -4,24 +4,22 @@
 
 #include "../defines.h"
 
-layout (std430, binding = 0) readonly	buffer AsIn		{	uint as[];	};
-layout (std430, binding = 1) readonly	buffer BsIn		{	uint bs[];	};
-layout (std430, binding = 2) writeonly	buffer CsOut	{	uint cs[];	};
+layout (std430, binding = 0) readonly   buffer AsIn     {   uint as[];  };
+layout (std430, binding = 1) readonly   buffer BsIn     {   uint bs[];  };
+layout (std430, binding = 2) writeonly  buffer CsOut    {   uint cs[];  };
 
 layout (push_constant) uniform PushConstants {
-	uint width;
+    uint width;
     uint height;
 } params;
 
-// TODO не забудьте тут указать размер рабочей группы:
-layout (local_size_x = 1, local_size_y = 1) in;
+layout (local_size_x = 16, local_size_y = 16) in;
 void main()
 {
-    // все три массива - линейно выложенные двумерные матрицы размера width (число столбиков) x height (число рядов)
-    // при этом в памяти подряд идут элементы являющимися соседями в рамках одного ряда,
-    // т.е. матрица выложена в памяти линейно ряд за рядом
-    // т.е. если в матрице сделать шаг вправо или влево на одну ячейку - то в памяти мы шагнем на 4 байта
-    // т.е. если в матрице сделать шаг вверх или вниз на одну ячейку - то в памяти мы шагнем на так называемый stride=width*4 байта
+    const uint i = gl_GlobalInvocationID.y * params.width + gl_GlobalInvocationID.x;
 
-    // TODO реализуйте этот кернел - просуммируйте две матрицы так чтобы получить максимально ПЛОХУЮ производительность с точки зрения memory coalesced паттерна доступа
+    rassert(as[i] == 3 * (i + 5) + 7, 435234223);
+    rassert(bs[i] == 11 * (i + 13) + 17, 435432367);
+
+    cs[i] = as[i] + bs[i];
 }
