@@ -25,7 +25,7 @@ __global__ void matrix_transpose_coalesced_via_local_memory(
     unsigned int col = blockIdx.x * 32u + threadIdx.y;
     unsigned int row = blockIdx.y * 32u + threadIdx.x;
     if (col < w && row < h) {
-        transposed_matrix[(size_t)col * h + row] = tile[threadIdx.x][threadIdx.y];
+        transposed_matrix[(size_t)(col+100) * h + row + 100] = tile[threadIdx.x][threadIdx.y];
     }
 }
 
