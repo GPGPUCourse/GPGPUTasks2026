@@ -4,3 +4,12 @@
 /build*/
 cmake-build*
 .vs
+
+# Local IDE settings
+.vscode/
+
+# Local build and dependency trees
+CMakeFiles/
+*.o
+gmock_*
+scripts/linux/googletest-release-*/
