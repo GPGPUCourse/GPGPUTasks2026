@@ -12,7 +12,7 @@
 __global__ void matrix_transpose_coalesced_via_local_memory(
                        const float* matrix,            // w x h
                              float* transposed_matrix, // h x w
-                             unsigned int w,
+                             unsigned int w ,
                              unsigned int h)
 {
     __shared__ float tile[32][33];
