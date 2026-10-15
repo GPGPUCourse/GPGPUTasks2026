@@ -41,7 +41,8 @@ void run(int argc, char** argv)
     avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
     avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
 
-    unsigned int n = 100*1000*1000;
+    unsigned int n = 100 * 1000 * 1000, pow2_min = 1<<27, pow2=27;
+    unsigned int compression = 5;
     std::vector<unsigned int> as(n, 0);
     size_t total_sum = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -68,7 +69,7 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(2*n), buffer_pow2_sum_gpu(pow2_min), prefix_sum_accum_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -82,10 +83,15 @@ void run(int argc, char** argv)
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
             // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
             // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            unsigned int curr_n = n, curr_pow2_min=pow2_min;
+            while (curr_n > 1)
+            {
+                ocl_sum_reduction.exec(gpu::WorkSize(32, curr_n / 2), curr_n == n ? input_gpu : buffer_pow2_sum_gpu, buffer_pow2_sum_gpu, curr_n, curr_n == n ? 0 : curr_pow2_min, curr_pow2_min / 2);
+                curr_pow2_min /= 2;
+                curr_n /= 2;
+            }
+            ocl_prefix_accumulation.exec(gpu::WorkSize(32, n/(1<<compression)+1), buffer_pow2_sum_gpu, input_gpu, prefix_sum_accum_gpu, n, pow2, compression);
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -117,6 +123,8 @@ void run(int argc, char** argv)
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
+        //if (cpu_prefix_sum[i] != gpu_prefix_sum[i])
+          //  std::cout << i <<' ';
         rassert(cpu_prefix_sum[i] == gpu_prefix_sum[i], 566324523452323, cpu_prefix_sum[i], gpu_prefix_sum[i], i);
     }
 
