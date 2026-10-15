@@ -55,7 +55,7 @@ void run(int argc, char** argv)
     //avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
 
     unsigned int n = 100*1000*1000;
-    unsigned int reduction_coef = 2;
+    unsigned int reduction_coef = 8;
     std::vector<unsigned int> as(n, 0);
     size_t total_sum = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -88,100 +88,88 @@ void run(int argc, char** argv)
     input_gpu.writeN(as.data(), n);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
-    for(; reduction_coef < 128; reduction_coef *= 2) {
-        std::cout << "_____________________________________________________________" << std::endl;
-        std::cout << "Evaluating algorithm with " << reduction_coef << " times/iter reduction" << std::endl;
-        std::vector<double> times;
-        for (int iter = 0; iter < 10; ++iter) {
-            timer t;
-            if (context.type() == gpu::Context::TypeCUDA) {
-                size_t curr_size = n;
-                std::vector<size_t> offsets(0,1);
-                size_t iter = 0;
-
-                cuda::prefix_sum_01_reduction(
-                        gpu::WorkSize(256, (curr_size + 255)/256*256), 
-                        input_gpu, 
-                        0,
-                        prefix_sum_accum_gpu,
-                        0,
-                        curr_size,
-                        reduction_coef
-                    );
-                
-                offsets.push_back(0);
-                curr_size = (curr_size + reduction_coef - 1) / reduction_coef;
-                offsets.push_back(curr_size);
-                iter += 1;
-
-                while(curr_size > 1){
-                    cuda::prefix_sum_01_reduction(
-                        gpu::WorkSize(256, (curr_size + 255)/256*256), 
-                        prefix_sum_accum_gpu, 
-                        offsets[iter-1],
-                        prefix_sum_accum_gpu,
-                        offsets[iter],
-                        curr_size,
-                        reduction_coef
-                    );
-                    curr_size = (curr_size + reduction_coef - 1) / reduction_coef;
-                    offsets.push_back(curr_size + offsets[iter]);
-                    iter += 1;
-                }            
-
-                iter -= 1;
-                for(; iter > 0; iter--){
-                    curr_size = offsets[iter] - offsets[iter - 1];
-                    cuda::prefix_sum_02_prefix_accumulation(
-                        gpu::WorkSize(256, (curr_size + 255)/256*256),
-                        prefix_sum_accum_gpu,
-                        offsets[iter],
-                        prefix_sum_accum_gpu,
-                        offsets[iter - 1],
-                        prefix_sum_accum_gpu,
-                        offsets[iter - 1],
-                        curr_size,
-                        reduction_coef
-                    );
-                }
-                cuda::prefix_sum_02_prefix_accumulation(
-                    gpu::WorkSize(256, (n + 255) / 256 * 256),
+    std::vector<double> times;
+    for (int iter = 0; iter < 10; ++iter) {
+        timer t;
+        if (context.type() == gpu::Context::TypeCUDA) {
+            size_t curr_size = n;
+            std::vector<size_t> offsets(0,1);
+            size_t iter = 0;
+            cuda::prefix_sum_01_reduction(
+                    gpu::WorkSize(256, (curr_size + 255)/256*256), 
+                    input_gpu, 
+                    0,
                     prefix_sum_accum_gpu,
                     0,
-                    input_gpu,
-                    0,
-                    output_gpu,
-                    0,
-                    n,
+                    curr_size,
                     reduction_coef
                 );
-            } else {
-                rassert(false, 4531412341, context.type());
+            
+            offsets.push_back(0);
+            curr_size = (curr_size + reduction_coef - 1) / reduction_coef;
+            offsets.push_back(curr_size);
+            iter += 1;
+            while(curr_size > 1){
+                cuda::prefix_sum_01_reduction(
+                    gpu::WorkSize(256, (curr_size + 255)/256*256), 
+                    prefix_sum_accum_gpu, 
+                    offsets[iter-1],
+                    prefix_sum_accum_gpu,
+                    offsets[iter],
+                    curr_size,
+                    reduction_coef
+                );
+                curr_size = (curr_size + reduction_coef - 1) / reduction_coef;
+                offsets.push_back(curr_size + offsets[iter]);
+                iter += 1;
+            }            
+            iter -= 1;
+            for(; iter > 0; iter--){
+                curr_size = offsets[iter] - offsets[iter - 1];
+                cuda::prefix_sum_02_prefix_accumulation(
+                    gpu::WorkSize(256, (curr_size + 255)/256*256),
+                    prefix_sum_accum_gpu,
+                    offsets[iter],
+                    prefix_sum_accum_gpu,
+                    offsets[iter - 1],
+                    prefix_sum_accum_gpu,
+                    offsets[iter - 1],
+                    curr_size,
+                    reduction_coef
+                );
             }
-
-            times.push_back(t.elapsed());
+            cuda::prefix_sum_02_prefix_accumulation(
+                gpu::WorkSize(256, (n + 255) / 256 * 256),
+                prefix_sum_accum_gpu,
+                0,
+                input_gpu,
+                0,
+                output_gpu,
+                0,
+                n,
+                reduction_coef
+            );
+        } else {
+            rassert(false, 4531412341, context.type());
         }
-        std::cout << "prefix sum times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
-
-        // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили префиксные суммы)
-        double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
-        std::cout << "GPU prefix sum median effective VRAM bandwidth: "
-                  << memory_size_gb / stats::median(times) << " GB/s ("
-                  << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
-
-        // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-        std::vector<unsigned int> gpu_prefix_sum = output_gpu.readVector();
-
-        // Сверяем результат
-        for (size_t i = 0; i < n; ++i) {
-            rassert(cpu_prefix_sum[i] == gpu_prefix_sum[i], 566324523452323, cpu_prefix_sum[i], gpu_prefix_sum[i], i);
-        }
-
-        // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
-        std::vector<unsigned int> input_values = input_gpu.readVector();
-        for (size_t i = 0; i < n; ++i) {
-            rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
-        }
+        times.push_back(t.elapsed());
+    }
+    std::cout << "prefix sum times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+    // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили префиксные суммы)
+    double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
+    std::cout << "GPU prefix sum median effective VRAM bandwidth: "
+              << memory_size_gb / stats::median(times) << " GB/s ("
+              << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
+    // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
+    std::vector<unsigned int> gpu_prefix_sum = output_gpu.readVector();
+    // Сверяем результат
+    for (size_t i = 0; i < n; ++i) {
+        rassert(cpu_prefix_sum[i] == gpu_prefix_sum[i], 566324523452323, cpu_prefix_sum[i], gpu_prefix_sum[i], i);
+    }
+    // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
+    std::vector<unsigned int> input_values = input_gpu.readVector();
+    for (size_t i = 0; i < n; ++i) {
+        rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
     }
 }
 
