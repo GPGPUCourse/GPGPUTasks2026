@@ -7,28 +7,56 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+__device__ void warpScanAndReduce(uint32_t value, uint32_t& scan, uint32_t& total) {
+  const unsigned mask = 0xffffffff;
+  const uint32_t lane = threadIdx.x & 31;
+
+  scan = value;
+  #pragma unroll
+  for (uint32_t offset = 1; offset < 32; offset <<= 1) {
+      uint32_t n = __shfl_up_sync(mask, scan, offset);
+      if (lane >= offset) scan += n;
+  }
+  total = __shfl_sync(mask, scan, 31);
+}
+
 __global__ void prefix_sum_02_prefix_accumulation(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
     const uint32_t *elems,
-    const unsigned int* pow2_sum, // pow2_sum[i] = sum[i*2^pow2; (i+1)*2^pow2)
-    unsigned int* prefix_sum_accum, // we want to make it finally so that prefix_sum_accum[i] = sum[0, i]
+    const unsigned int* pow2_sum,
+    unsigned int* prefix_sum_accum,
     unsigned int n)
 {
   uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-  if (idx >= n) {
-    return;
-  }
-  
   uint32_t elems_count = idx + 1;
+  uint32_t local_idx = threadIdx.x;
+  uint32_t warp_idx = local_idx / 32;
+  
+  __shared__ uint32_t warp_sum[GROUP_SIZE/32];
   uint32_t res = 0;
-  if (elems_count % 2 != 0) {
-    res += elems[idx];
+
+  uint32_t elem = (idx < n) ? elems[idx] : 0;
+  uint32_t warp_prefix_sum = 0;
+  uint32_t cur_warp_sum = 0;
+  warpScanAndReduce(elem, warp_prefix_sum, cur_warp_sum);
+  if (local_idx % 32 == 0) {
+    warp_sum[warp_idx] = cur_warp_sum;
+  }
+  __syncthreads();
+
+  res += warp_prefix_sum;
+  for (int wi = 0; wi < warp_idx; ++wi) {
+    res += warp_sum[wi];
   }
 
   uint32_t offset = 0;
-  uint32_t cur_aligned = elems_count >> 1;
+  uint32_t cur_aligned = idx >> 1;
   uint32_t pow_elems_count = (n+1)/2;
+  for (int i = 0; i < 7; ++i) {
+    cur_aligned >>= 1;
+    offset += pow_elems_count;
+    pow_elems_count = (pow_elems_count + 1) / 2; 
+  }
+  
   while(cur_aligned) {
     if (cur_aligned & 1) {
       res += pow2_sum[offset + cur_aligned - 1];
