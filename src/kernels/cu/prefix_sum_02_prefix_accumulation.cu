@@ -27,11 +27,11 @@ __global__ void prefix_sum_02_prefix_accumulation(
     unsigned int n)
 {
   uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-  uint32_t elems_count = idx + 1;
   uint32_t local_idx = threadIdx.x;
   uint32_t warp_idx = local_idx / 32;
   
   __shared__ uint32_t warp_sum[GROUP_SIZE/32];
+  __shared__ uint32_t wgsum;
   uint32_t res = 0;
 
   uint32_t elem = (idx < n) ? elems[idx] : 0;
@@ -49,21 +49,25 @@ __global__ void prefix_sum_02_prefix_accumulation(
   }
 
   uint32_t offset = 0;
-  uint32_t cur_aligned = idx >> 1;
-  uint32_t pow_elems_count = (n+1)/2;
-  for (int i = 0; i < 7; ++i) {
-    cur_aligned >>= 1;
-    offset += pow_elems_count;
-    pow_elems_count = (pow_elems_count + 1) / 2; 
-  }
-  
-  while(cur_aligned) {
-    if (cur_aligned & 1) {
-      res += pow2_sum[offset + cur_aligned - 1];
+  uint32_t count = blockIdx.x;
+  uint32_t pow_count = (n+255) / 256;
+
+  while(count > 0) {
+    uint32_t mod = count % 256;
+
+    uint32_t my_value = local_idx < mod ? pow2_sum[offset + (count - mod) + local_idx] : 0;
+    __syncthreads();
+    if (threadIdx.x == 0) {
+      wgsum = 0;
     }
-    cur_aligned >>= 1;
-    offset += pow_elems_count;
-    pow_elems_count = (pow_elems_count + 1) / 2; 
+    __syncthreads();
+    atomicAdd(&wgsum, my_value);
+    __syncthreads();
+
+    res += wgsum;
+    offset += pow_count;
+    pow_count = (pow_count + 255) / 256;
+    count /= 256;
   }
 
   prefix_sum_accum[idx] = res;
