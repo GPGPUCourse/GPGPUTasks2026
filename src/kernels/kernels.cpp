@@ -5,6 +5,9 @@
 #include "cl/generated_kernels/prefix_sum_01_reduction.h"
 #include "cl/generated_kernels/prefix_sum_02_prefix_accumulation.h"
 
+#include "cl/generated_kernels/prefix_sum_01_sweep_up.h"
+#include "cl/generated_kernels/prefix_sum_02_sweep_down.h"
+
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/fill_buffer_with_zeros_comp.h"
 #include "vk/generated_kernels/prefix_sum_01_reduction_comp.h"
@@ -59,6 +62,17 @@ const ProgramBinaries& getPrefixSum02PrefixAccumulation()
 {
     return opencl_binaries_prefix_sum_02_prefix_accumulation;
 }
+
+const ProgramBinaries& getPrefixSum01SweepUp()
+{
+    return opencl_binaries_prefix_sum_01_sweep_up;
+}
+
+const ProgramBinaries& getPrefixSum02SweepDown()
+{
+    return opencl_binaries_prefix_sum_02_sweep_down;
+}
+
 } // namespace ocl
 
 namespace avk2 {

@@ -15,6 +15,9 @@ const ProgramBinaries& getAplusB();
 const ProgramBinaries& getFillBufferWithZeros();
 const ProgramBinaries& getPrefixSum01Reduction();
 const ProgramBinaries& getPrefixSum02PrefixAccumulation();
+
+const ProgramBinaries& getPrefixSum01SweepUp();
+const ProgramBinaries& getPrefixSum02SweepDown();
 }
 
 namespace avk2 {
