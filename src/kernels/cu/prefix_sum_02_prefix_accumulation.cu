@@ -8,24 +8,65 @@
 #include "../defines.h"
 
 __global__ void prefix_sum_02_prefix_accumulation(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* pow2_sum, // pow2_sum[i] = sum[i*2^pow2; (i+1)*2^pow2)
-          unsigned int* prefix_sum_accum, // we want to make it finally so that prefix_sum_accum[i] = sum[0, i]
-    unsigned int n,
-    unsigned int pow2)
+                                      unsigned int* partial_sum_buf,
+                                const unsigned int* input_nums,
+                                      unsigned int* result_buf,
+                                      unsigned int  n,
+                                      unsigned int  reduction_coef)
 {
-    // TODO
+    __shared__ unsigned int shared_data[256];
+    __shared__ unsigned int shared_results[256];
+    unsigned int local_id = threadIdx.x;
+    unsigned int block_offset = blockDim.x * blockIdx.x;
+    unsigned int global_id = local_id + block_offset;
+    if(global_id < n){
+        shared_data[local_id] = input_nums[global_id];
+    }
+    else{
+        shared_data[local_id] = 0;
+    }
+    __syncthreads();
+    
+    if(local_id % reduction_coef == 0){
+        unsigned int prefix_sum = 0;
+        if(global_id / reduction_coef > 0){
+            prefix_sum = partial_sum_buf[global_id / reduction_coef - 1];
+        }
+        for(int i = 0; i < reduction_coef; i++){
+            prefix_sum += shared_data[local_id + i];
+            shared_results[local_id + i] = prefix_sum;
+        }
+    }
+    __syncthreads();
+    
+    if(global_id < n){
+        result_buf[global_id] = shared_results[local_id];
+    }
+    
 }
 
 namespace cuda {
-void prefix_sum_02_prefix_accumulation(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32u &pow2_sum, gpu::gpu_mem_32u &prefix_sum_accum, unsigned int n, unsigned int pow2)
+void prefix_sum_02_prefix_accumulation(
+                    const gpu::WorkSize  &workSize,
+                 const gpu::gpu_mem_32u  &partial_sum_buf,
+                           unsigned int  partial_sum_offset,
+                 const gpu::gpu_mem_32u  &input_nums,
+                           unsigned int  input_nums_offset,
+                 const gpu::gpu_mem_32u  result_buf,
+                           unsigned int  results_buf_offset,
+                           unsigned int  n,
+                           unsigned int  reduction_coef                                        
+    )
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::prefix_sum_02_prefix_accumulation<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(pow2_sum.cuptr(), prefix_sum_accum.cuptr(), n, pow2);
+    ::prefix_sum_02_prefix_accumulation<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+        partial_sum_buf.cuptr() + partial_sum_offset,
+        input_nums.cuptr() + input_nums_offset,
+        result_buf.cuptr() + results_buf_offset,
+        n, reduction_coef
+    );
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda
