@@ -36,6 +36,8 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_fill_with_zeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
     ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
+    ocl::KernelSource ocl_sweep_up{ocl::getPrefixSum01SweepUp()};
+    ocl::KernelSource ocl_sweep_down{ocl::getPrefixSum02SweepDown()};
 
     avk2::KernelSource vk_fill_with_zeros(avk2::getFillBufferWithZeros());
     avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
@@ -68,7 +70,13 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), prefix_sum_accum_gpu(n);
+    std::vector<gpu::gpu_mem_32u> reduction_buffers;
+    unsigned int count = n;
+    while (count > 1) {
+        count = (count + GROUP_SIZE - 1) / GROUP_SIZE;
+        reduction_buffers.emplace_back(count);
+    }
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -81,27 +89,25 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            gpu::WorkSize workSize(GROUP_SIZE, n);
-            ocl_fill_with_zeros.exec(workSize, buffer1_pow2_sum_gpu, n);
-            ocl_fill_with_zeros.exec(workSize, buffer2_pow2_sum_gpu, n);
-            ocl_fill_with_zeros.exec(workSize, prefix_sum_accum_gpu, n);
+            gpu::WorkSize workSize{GROUP_SIZE, n};
+            ocl_sweep_up.exec(workSize, input_gpu, prefix_sum_accum_gpu, reduction_buffers[0], n);
 
-            ocl_prefix_accumulation.exec(workSize, input_gpu, prefix_sum_accum_gpu, n, 0);
-            ocl_sum_reduction.exec(workSize, input_gpu, buffer1_pow2_sum_gpu, n);
-            ocl_prefix_accumulation.exec(workSize, buffer1_pow2_sum_gpu, prefix_sum_accum_gpu, n, 1);
+            for (size_t level = 1; level < reduction_buffers.size(); ++level) {
+                auto& cur = reduction_buffers[level - 1];
+                auto& next = reduction_buffers[level];
+                const unsigned int level_n = static_cast<unsigned int>(cur.number());
 
-            size_t prev = 0;
-            for (unsigned int pow = 1; (1U << pow) < n; ++pow) {
-                gpu::gpu_mem_32u & cur_buf = prev == 0 ? buffer1_pow2_sum_gpu : buffer2_pow2_sum_gpu;
-                gpu::gpu_mem_32u & next_buf = prev == 0 ? buffer2_pow2_sum_gpu : buffer1_pow2_sum_gpu;
-                prev = (prev + 1) % 2;
-
-                unsigned int reduction_input = n / (1 << pow);
-                unsigned int reduction_output = (reduction_input + 1) / 2;
-                gpu::WorkSize reduction_work_size(GROUP_SIZE, reduction_output);
-                ocl_sum_reduction.exec(reduction_work_size, cur_buf, next_buf, reduction_input);
-                ocl_prefix_accumulation.exec(workSize, next_buf, prefix_sum_accum_gpu, n, pow + 1);
+                ocl_sweep_up.exec(gpu::WorkSize{GROUP_SIZE, level_n}, cur, cur, next, level_n);
             }
+            for (size_t level = reduction_buffers.size() - 1; level > 1; --level) {
+                auto& cur = reduction_buffers[level - 1];
+                auto& prev = reduction_buffers[level - 2];
+                const unsigned int level_n = static_cast<unsigned int>(prev.number());
+
+                ocl_sweep_down.exec(gpu::WorkSize{GROUP_SIZE, level_n}, cur, prev, level_n);
+            }
+
+            ocl_sweep_down.exec(workSize, reduction_buffers[0], prefix_sum_accum_gpu, n);
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
