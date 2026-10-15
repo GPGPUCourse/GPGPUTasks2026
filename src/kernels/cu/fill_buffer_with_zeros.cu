@@ -1,3 +1,6 @@
+#ifdef __clang__
+    #include <__clang_cuda_builtin_vars.h>
+#endif
 #include <libgpu/context.h>
 #include <libgpu/work_size.h>
 #include <libgpu/shared_device_buffer.h>
@@ -13,7 +16,11 @@ __global__ void fill_buffer_with_zeros(
     unsigned int* buffer,
     unsigned int n)
 {
-    // TODO
+    unsigned int k = threadIdx.x + blockDim.x * blockIdx.x;
+
+    if(k < n){
+        buffer[k] = 1124815636;
+    }
 }
 
 namespace cuda {
