@@ -48,7 +48,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -69,7 +69,7 @@ void run(int argc, char** argv)
     unsigned int h = ksize * 16;
     std::cout << "C = A x B, matrices size: C (rows=H=" << h << " x cols=W=" << w << ")"
               << " = A (rows=H=" << h << " x cols=K=" << k << ") x B (rows=K=" << k << " x cols=W=" << w << ")" << std::endl;
-    std::cout << "matrices data size: A - " << sizeof(float) * h * k / 1024 / 1024 << " MB, B - " << sizeof(float) * k * w / 1024 / 1024 << " MB, C - " << sizeof(float) * k * w / 1024 / 1024 << " MB" << std::endl;
+    std::cout << "matrices data size: A - " << sizeof(float) * h * k / 1024 / 1024 << " MB, B - " << sizeof(float) * k * w / 1024 / 1024 << " MB, C - " << sizeof(float) * h * w / 1024 / 1024 << " MB" << std::endl;
 
     std::vector<float> input_a_cpu(h * k, 0);  // rows=H x cols=K
     std::vector<float> input_b_cpu(k * w, 0);  // rows=K x cols=W
@@ -92,14 +92,31 @@ void run(int argc, char** argv)
     matrix_a_gpu.writeN(input_a_cpu.data(), input_a_cpu.size());
     matrix_b_gpu.writeN(input_b_cpu.data(), input_b_cpu.size());
 
+    // Один поток вычисляет один элемент C (строки=h, столбцы=w).
+    // Кернел с локальной памятью должен использовать тайлы соответствующего размера.
+    const gpu::WorkSize cuda_work_size(GROUP_SIZE_X, GROUP_SIZE_Y, w, h);
+
+    static_assert(BLOCKS_X > 0 && BLOCKS_Y > 0,
+        "WMMA tile dimensions must be positive");
+    static_assert(BLOCKS_X * BLOCKS_Y <= 32,
+        "A CUDA block can contain at most 32 warps");
+    constexpr unsigned int wmma_group_size = 32 * BLOCKS_X * BLOCKS_Y;
+    constexpr unsigned int wmma_tile_width = 16 * BLOCKS_X;
+    constexpr unsigned int wmma_tile_height = 16 * BLOCKS_Y;
+    const unsigned int wmma_groups_x = (w + wmma_tile_width - 1) / wmma_tile_width;
+    const unsigned int wmma_groups_y = (h + wmma_tile_height - 1) / wmma_tile_height;
+    // Один warp на тайл 16 x 16; блок вычисляет BLOCKS_X x BLOCKS_Y тайлов.
+    const gpu::WorkSize cuda_wmma_work_size(
+        wmma_group_size, 1, wmma_groups_x * wmma_group_size, wmma_groups_y);
+
     std::vector<std::string> algorithm_names = {
         "CPU with OpenMP",
         "01 naive",
         "02 using local memory",
     };
 
-    // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
-    bool I_Want_Super_Puper_Prestige_Points = false;
+    // Добровольное задание за супер-пупер-баллы престижа сверх нормы.
+    bool I_Want_Super_Puper_Prestige_Points = true;
     if (I_Want_Super_Puper_Prestige_Points) {
         if (context.type() == gpu::Context::TypeCUDA) {
             algorithm_names.push_back("03 using WMMA (Tensor Cores) [+Prestige Points]");
@@ -129,7 +146,6 @@ void run(int argc, char** argv)
             if (algorithm == "CPU with OpenMP") {
                 cpu::multiply(input_a_cpu, input_b_cpu, output_c_cpu, w, h, k, true);
             } else {
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED); // TODO remove me
                 // _______________________________OpenCL_____________________________________________
                 if (context.type() == gpu::Context::TypeOpenCL) {
                     if (algorithm == "01 naive") {
@@ -143,12 +159,11 @@ void run(int argc, char** argv)
                     // _______________________________CUDA___________________________________________
                 } else if (context.type() == gpu::Context::TypeCUDA) {
                     if (algorithm == "01 naive") {
-                        // TODO обязательно замените размер рабочей группы 1x1 на больший
-                        cuda::matrix_multiply_naive(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                        cuda::matrix_multiply_naive(cuda_work_size, matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else if (algorithm == "02 using local memory") {
-                        cuda::matrix_multiply_via_local_memory(gpu::WorkSize(1, 1, w, h), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                        cuda::matrix_multiply_via_local_memory(cuda_work_size, matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else if (algorithm == "03 using WMMA (Tensor Cores) [+Prestige Points]") {
-                        cuda::matrix_multiply_wmma(gpu::WorkSize(1, 1, w, h * 2 / 16), matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
+                        cuda::matrix_multiply_wmma(cuda_wmma_work_size, matrix_a_gpu, matrix_b_gpu, matrix_c_gpu, w, h, k);
                     } else {
                         rassert(false, 652345234321, algorithm, algorithm_index);
                     }

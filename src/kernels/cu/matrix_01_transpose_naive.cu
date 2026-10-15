@@ -8,22 +8,25 @@
 #include "../defines.h"
 
 __global__ void matrix_transpose_naive(
-                       const float* matrix,            // w x h
-                             float* transposed_matrix, // h x w
-                             unsigned int w,
-                             unsigned int h)
-{
-    // TODO
+    const float* matrix,            // w x h
+    float* transposed_matrix, // h x w
+    unsigned int w,
+    unsigned int h) {
+    int x = threadIdx.x + blockDim.x * blockIdx.x;
+    int y = threadIdx.y + blockDim.y * blockIdx.y;
+    if(x < w and y < h){
+        transposed_matrix[y + h * x] = matrix[x + w * y];
+    }
 }
 
 namespace cuda {
-void matrix_transpose_naive(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32f &matrix, gpu::gpu_mem_32f &transposed_matrix, unsigned int w, unsigned int h)
-{
-    gpu::Context context;
-    rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
-    cudaStream_t stream = context.cudaStream();
-    ::matrix_transpose_naive<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(matrix.cuptr(), transposed_matrix.cuptr(), w, h);
-    CUDA_CHECK_KERNEL(stream);
-}
+    void matrix_transpose_naive(const gpu::WorkSize& workSize,
+        const gpu::gpu_mem_32f& matrix, gpu::gpu_mem_32f& transposed_matrix, unsigned int w, unsigned int h)
+    {
+        gpu::Context context;
+        rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
+        cudaStream_t stream = context.cudaStream();
+        ::matrix_transpose_naive << <workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream >> > (matrix.cuptr(), transposed_matrix.cuptr(), w, h);
+        CUDA_CHECK_KERNEL(stream);
+    }
 } // namespace cuda
