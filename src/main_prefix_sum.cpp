@@ -78,7 +78,7 @@ void run(int argc, char** argv)
         reductors_pointers_tmp.emplace_back(reductor.cuptr());
     }
 
-    
+
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
     pow2_sum.writeN(reductors_pointers_tmp.data(), reductors.size());
