@@ -110,13 +110,13 @@ void run(int argc, char** argv)
               offset += (insz + 255) / 256;
               insz = (insz + 255) / 256;
             }
-            std::cout << "reduce time: " << reduceTime.elapsed() << std::endl;
+            // std::cout << "reduce time: " << reduceTime.elapsed() << std::endl;
 
             timer accumTime;
             gpu::WorkSize ws(256, n);
             cuda::prefix_sum_02_prefix_accumulation(
                 ws, input_gpu, buffer_pow2_sum_gpu, prefix_sum_accum_gpu, n);
-            std::cout << "accum time: " << accumTime.elapsed() << std::endl;
+            // std::cout << "accum time: " << accumTime.elapsed() << std::endl;
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
