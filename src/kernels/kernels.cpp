@@ -18,23 +18,26 @@ void aplusb(const gpu::WorkSize& workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
-void fill_buffer_with_zeros(const gpu::WorkSize &workSize,
-            gpu::gpu_mem_32u &buffer, unsigned int n)
+void fill_tail_with_zeros(const gpu::WorkSize &workSize, gpu::gpu_mem_32u &buffer, unsigned int start_index, unsigned int n)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
-void prefix_sum_01_reduction(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32u &pow2_sum, gpu::gpu_mem_32u &next_pow2_sum, unsigned int n)
+void prefix_sum_01_reduction(const gpu::WorkSize &workSize, gpu::gpu_mem_32u &a, unsigned int pow2, unsigned int n)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
-void prefix_sum_02_prefix_accumulation(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32u &pow2_sum, gpu::gpu_mem_32u &prefix_sum_accum, unsigned int n, unsigned int pow2)
+void prefix_sum_02_prefix_accumulation(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &a, unsigned int n, unsigned int pow2)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 546237686412414);
+}
+
+void set_zero(const gpu::WorkSize &workSize, gpu::gpu_mem_32u &buffer, unsigned int last_idx)
+{
+    // dummy implementation if CUDA_SUPPORT is disabled
+    rassert(false, 546237686412415);
 }
 } // namespace cuda
 #endif
