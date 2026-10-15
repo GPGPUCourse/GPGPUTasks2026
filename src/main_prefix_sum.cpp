@@ -25,7 +25,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -67,8 +67,17 @@ void run(int argc, char** argv)
                   << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
+    uint32_t partsCount = 0;
+    {
+      uint32_t cur = n;
+      while (cur > 1) {
+        partsCount += (cur+1) / 2;
+        cur = (cur+1) / 2;
+      }
+    }
+
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), buffer_pow2_sum_gpu(partsCount), prefix_sum_accum_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -88,10 +97,22 @@ void run(int argc, char** argv)
             // ocl_prefix_accumulation.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            // throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
             // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
+            uint32_t insz = n;
+            uint32_t offset = 0;
+            while (insz > 1) {
+              gpu::WorkSize ws(256, (insz+1)/2);
+              const uint32_t *in = (offset == 0) ? input_gpu.cuptr() : (buffer_pow2_sum_gpu.cuptr() + offset - insz);
+              uint32_t *out = buffer_pow2_sum_gpu.cuptr() + offset;
+              cuda::prefix_sum_01_reduction(ws, in, out, insz);
+              offset += (insz + 1) / 2;
+              insz = (insz + 1) / 2;
+            }
+
+            gpu::WorkSize ws(256, n);
+            cuda::prefix_sum_02_prefix_accumulation(
+                ws, input_gpu, buffer_pow2_sum_gpu, prefix_sum_accum_gpu, n);
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
