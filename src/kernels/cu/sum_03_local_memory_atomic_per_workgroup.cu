@@ -11,13 +11,23 @@ __global__ void sum_03_local_memory_atomic_per_workgroup(
     unsigned int* sum,
     unsigned int  n)
 {
-    // Подсказки:
-    // const uint index = blockIdx.x * blockDim.x + threadIdx.x;
-    // const uint local_index = threadIdx.x;
-    // __shared__ unsigned int local_data[GROUP_SIZE];
-    // __syncthreads();
+    __shared__ unsigned int smem[GROUP_SIZE];
+    const unsigned int index = blockDim.x * blockIdx.x + threadIdx.x;
+    const unsigned int tid = threadIdx.x;
+    if (index < n) {
+        smem[tid] = a[index];
+    } else {
+        smem[tid] = 0;
+    }
 
-    // TODO
+    __syncthreads();
+    if (tid == 0) {
+        unsigned int group_sum = 0;
+        for (unsigned int k = 0; k < GROUP_SIZE; ++k) {
+            group_sum += smem[k];
+        }
+        atomicAdd(sum, group_sum);
+    }
 }
 
 namespace cuda {

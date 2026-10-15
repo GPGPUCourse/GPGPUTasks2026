@@ -13,13 +13,27 @@ __global__ void sum_04_local_reduction(
     unsigned int* b,
     unsigned int  n)
 {
-    // Подсказки:
-    // const uint index = blockIdx.x * blockDim.x + threadIdx.x;
-    // const uint local_index = threadIdx.x;
-    // __shared__ unsigned int local_data[GROUP_SIZE];
-    // __syncthreads();
+    __shared__ unsigned int smem[GROUP_SIZE];
+    const unsigned int index = blockDim.x * blockIdx.x + threadIdx.x;
+    const unsigned int tid = threadIdx.x;
+    if (index < n) {
+        smem[tid] = a[index];
+    } else {
+        smem[tid] = 0;
+    }
 
-    // TODO
+    __syncthreads();
+
+    for (unsigned int stride = GROUP_SIZE / 2; stride > 0; stride /= 2) {
+        if (tid < stride) {
+            smem[tid] += smem[tid + stride];
+        }
+        __syncthreads();
+    }
+
+    if (tid == 0) {
+        b[blockIdx.x] = smem[0];
+    }
 }
 
 namespace cuda {
