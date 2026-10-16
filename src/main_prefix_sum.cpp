@@ -96,7 +96,7 @@ void run(int argc, char** argv)
             unsigned int cur_pow2 = 0;
 
             while(cur_n > 0) {
-                cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n),*cur, prefix_sum_accum_gpu, cur_n, cur_pow2);
+                cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n),*cur, prefix_sum_accum_gpu, n, cur_pow2);
                 
                 if(cur_n <= 1) {
                     break;
@@ -104,7 +104,7 @@ void run(int argc, char** argv)
 
                 next_n = (cur_n + 1) / 2;
                 
-                cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, next_n), *cur, *next, n, next_n);
+                cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, next_n), *cur, *next, cur_n, next_n);
 
                 cur_n = next_n;
                 cur_pow2++;
