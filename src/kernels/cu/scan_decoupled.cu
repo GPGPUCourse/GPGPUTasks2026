@@ -36,7 +36,7 @@ __device__ __forceinline__ unsigned int warp_scan_inclusive(unsigned int val) {
     return val;
 }
 
-__launch_bounds__(BLOCK_THREADS, 6)
+__launch_bounds__(BLOCK_THREADS, 8)
 __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
                                       unsigned int* __restrict__ d_out,
                                       unsigned int* __restrict__ d_tile_counter,
