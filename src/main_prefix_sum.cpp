@@ -89,7 +89,6 @@ void run(int argc, char** argv)
         } else if (context.type() == gpu::Context::TypeCUDA) {
             unsigned int work_group_size = 256;
             unsigned int global_work_size = ((n + work_group_size - 1) / work_group_size) * work_group_size;
-            cuda::fill_buffer_with_zeros(gpu::WorkSize(work_group_size, global_work_size), prefix_sum_accum_gpu, n);
             cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(work_group_size, global_work_size), prefix_sum_accum_gpu, n);
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
