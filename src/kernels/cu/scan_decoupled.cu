@@ -27,11 +27,6 @@ __device__ __forceinline__ uint64_t load_descriptor_relaxed(const uint64_t* ptr)
     return d;
 }
 
-__device__ __forceinline__ void store_uint4_cs(uint4* ptr, uint4 val) {
-    asm volatile("st.global.cs.v4.u32 [%0], {%1, %2, %3, %4};"
-                 :: "l"(ptr), "r"(val.x), "r"(val.y), "r"(val.z), "r"(val.w) : "memory");
-}
-
 __device__ __forceinline__ unsigned int warp_scan_inclusive(unsigned int val) {
     #pragma unroll
     for (int offset = 1; offset < 32; offset <<= 1) {
@@ -50,8 +45,8 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
                                       unsigned int num_tiles)
 {
     __shared__ unsigned int s_tile_idx;
-    __align__(16) __shared__ unsigned int s_base[4];
-    __shared__ unsigned int s_warp_chunk_sums[4][8];
+    __shared__ unsigned int s_tile_prefix;
+    __shared__ unsigned int s_warp_sums[32];
 
     const unsigned int tid = threadIdx.x;
     const unsigned int lane = tid & 31;
@@ -86,7 +81,7 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
         #pragma unroll
         for (int c = 0; c < 4; ++c) {
             unsigned int idx = tile_offset + c * 256 * 4 + tid * 4;
-            u[c].x = (idx < n) ? d_in[idx] : 0;
+            u[c].x = (idx < n)     ? d_in[idx]     : 0;
             u[c].y = (idx + 1 < n) ? d_in[idx + 1] : 0;
             u[c].z = (idx + 2 < n) ? d_in[idx + 2] : 0;
             u[c].w = (idx + 3 < n) ? d_in[idx + 3] : 0;
@@ -103,28 +98,23 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
         unsigned int inc = warp_scan_inclusive(chunk_sum[c]);
         chunk_exc[c] = inc - chunk_sum[c];
         if (lane == 31) {
-            s_warp_chunk_sums[c][warp] = inc;
+            s_warp_sums[c * 8 + warp] = inc;
         }
     }
     __syncthreads();
-    if (tid == 0) {
-        unsigned int tile_agg = 0;
-        #pragma unroll
-        for (int c = 0; c < 4; ++c) {
-            unsigned int sum = s_warp_chunk_sums[c][0];
-            #pragma unroll
-            for (int w = 1; w < 8; ++w) {
-                sum += s_warp_chunk_sums[c][w];
-                s_warp_chunk_sums[c][w] = sum;
-            }
-            tile_agg += sum;
-        }
 
+    unsigned int tile_agg = 0;
+    if (warp == 0) {
+        unsigned int val = s_warp_sums[lane];
+        unsigned int scanned = warp_scan_inclusive(val);
+        s_warp_sums[lane] = scanned;
+
+        tile_agg = __shfl_sync(0xffffffff, scanned, 31);
+    }
+
+    if (tid == 0) {
         if (tile_idx == 0) {
-            s_base[0] = 0;
-            s_base[1] = s_warp_chunk_sums[0][7];
-            s_base[2] = s_base[1] + s_warp_chunk_sums[1][7];
-            s_base[3] = s_base[2] + s_warp_chunk_sums[2][7];
+            s_tile_prefix = 0;
             store_descriptor_release(&d_descriptors[0], FLAG_PREFIX, tile_agg);
         } else {
             store_descriptor_release(&d_descriptors[tile_idx], FLAG_AGGREGATE, tile_agg);
@@ -136,70 +126,50 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
                 uint64_t probe = load_descriptor_relaxed(&d_descriptors[lookback_idx]);
                 unsigned int status = (unsigned int)(probe >> 32);
 
-                #pragma unroll
-                for (int spin = 0; spin < 4; ++spin) {
-                    if (status != FLAG_NOT_READY) break;
-                    probe = load_descriptor_relaxed(&d_descriptors[lookback_idx]);
-                    status = (unsigned int)(probe >> 32);
-                }
-
                 while (status == FLAG_NOT_READY) {
-                    __nanosleep(16);
                     probe = load_descriptor_relaxed(&d_descriptors[lookback_idx]);
                     status = (unsigned int)(probe >> 32);
                 }
 
                 unsigned int val = (unsigned int)(probe & 0xFFFFFFFFu);
+                exclusive_prefix += val;
 
                 if (status == FLAG_PREFIX) {
-                    exclusive_prefix += val;
                     break;
-                } else {
-                    exclusive_prefix += val;
-                    lookback_idx--;
                 }
+                lookback_idx--;
             }
 
-            s_base[0] = exclusive_prefix;
-            s_base[1] = exclusive_prefix + s_warp_chunk_sums[0][7];
-            s_base[2] = s_base[1] + s_warp_chunk_sums[1][7];
-            s_base[3] = s_base[2] + s_warp_chunk_sums[2][7];
+            s_tile_prefix = exclusive_prefix;
             store_descriptor_release(&d_descriptors[tile_idx], FLAG_PREFIX, exclusive_prefix + tile_agg);
         }
     }
     __syncthreads();
 
+    const unsigned int tile_base = s_tile_prefix;
+
     #pragma unroll
     for (int c = 0; c < 4; ++c) {
-        if (warp > 0) {
-            chunk_exc[c] += s_warp_chunk_sums[c][warp - 1];
-        }
-    }
+        const unsigned int warp_chunk_id = c * 8 + warp;
+        const unsigned int warp_prefix = (warp_chunk_id > 0) ? s_warp_sums[warp_chunk_id - 1] : 0;
+        const unsigned int thread_base = tile_base + warp_prefix + chunk_exc[c];
 
-    const uint4 b = *reinterpret_cast<const uint4*>(s_base);
-    const unsigned int base[4] = {b.x, b.y, b.z, b.w};
+        u[c].x += thread_base;
+        u[c].y += thread_base;
+        u[c].z += thread_base;
+        u[c].w += thread_base;
+    }
 
     if (__builtin_expect(is_full_tile, 1)) {
         uint4* out_u4 = reinterpret_cast<uint4*>(d_out + tile_offset);
         #pragma unroll
         for (int c = 0; c < 4; ++c) {
-            unsigned int thread_base = base[c] + chunk_exc[c];
-            u[c].x += thread_base;
-            u[c].y += thread_base;
-            u[c].z += thread_base;
-            u[c].w += thread_base;
-            store_uint4_cs(&out_u4[c * 256 + tid], u[c]);
+            out_u4[c * 256 + tid] = u[c];
         }
     } else {
         #pragma unroll
         for (int c = 0; c < 4; ++c) {
             unsigned int idx = tile_offset + c * 256 * 4 + tid * 4;
-            unsigned int thread_base = base[c] + chunk_exc[c];
-            u[c].x += thread_base;
-            u[c].y += thread_base;
-            u[c].z += thread_base;
-            u[c].w += thread_base;
-
             if (idx < n)     d_out[idx]     = u[c].x;
             if (idx + 1 < n) d_out[idx + 1] = u[c].y;
             if (idx + 2 < n) d_out[idx + 2] = u[c].z;
