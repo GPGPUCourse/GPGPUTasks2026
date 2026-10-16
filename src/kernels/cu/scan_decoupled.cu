@@ -36,7 +36,7 @@ __device__ __forceinline__ unsigned int warp_scan_inclusive(unsigned int val) {
     return val;
 }
 
-__launch_bounds__(BLOCK_THREADS, 8)
+__launch_bounds__(BLOCK_THREADS, 6)
 __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
                                       unsigned int* __restrict__ d_out,
                                       unsigned int* __restrict__ d_tile_counter,
@@ -67,7 +67,7 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
     unsigned int chunk_sum[4];
     unsigned int chunk_exc[4];
 
-    if (is_full_tile) {
+    if (__builtin_expect(is_full_tile, 1)) {
         const uint4* in_u4 = reinterpret_cast<const uint4*>(d_in + tile_offset);
         #pragma unroll
         for (int c = 0; c < 4; ++c) {
@@ -107,7 +107,7 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
         #pragma unroll
         for (int c = 0; c < 4; ++c) {
             unsigned int sum = s_warp_chunk_sums[c][0];
-        //    #pragma unroll
+            #pragma unroll
             for (int w = 1; w < 8; ++w) {
                 sum += s_warp_chunk_sums[c][w];
                 s_warp_chunk_sums[c][w] = sum;
@@ -131,8 +131,8 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
                 uint64_t probe = load_descriptor_relaxed(&d_descriptors[lookback_idx]);
                 unsigned int status = (unsigned int)(probe >> 32);
 
-                //#pragma unroll
-                for (int spin = 0; spin < 5 && status == FLAG_NOT_READY; ++spin) {
+                #pragma unroll
+                for (int spin = 0; spin < 4 && status == FLAG_NOT_READY; ++spin) {
                     probe = load_descriptor_relaxed(&d_descriptors[lookback_idx]);
                     status = (unsigned int)(probe >> 32);
                 }
@@ -173,7 +173,7 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
     const uint4 b = *reinterpret_cast<const uint4*>(s_base);
     const unsigned int base[4] = {b.x, b.y, b.z, b.w};
 
-    if (is_full_tile) {
+    if (__builtin_expect(is_full_tile, 1)) {
         uint4* out_u4 = reinterpret_cast<uint4*>(d_out + tile_offset);
         #pragma unroll
         for (int c = 0; c < 4; ++c) {
