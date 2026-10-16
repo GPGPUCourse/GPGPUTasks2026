@@ -27,6 +27,11 @@ __device__ __forceinline__ uint64_t load_descriptor_relaxed(const uint64_t* ptr)
     return d;
 }
 
+__device__ __forceinline__ void store_uint4_cs(uint4* ptr, uint4 val) {
+    asm volatile("st.global.cs.v4.u32 [%0], {%1, %2, %3, %4};"
+                 :: "l"(ptr), "r"(val.x), "r"(val.y), "r"(val.z), "r"(val.w) : "memory");
+}
+
 __device__ __forceinline__ unsigned int warp_scan_inclusive(unsigned int val) {
     #pragma unroll
     for (int offset = 1; offset < 32; offset <<= 1) {
@@ -132,7 +137,8 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
                 unsigned int status = (unsigned int)(probe >> 32);
 
                 #pragma unroll
-                for (int spin = 0; spin < 4 && status == FLAG_NOT_READY; ++spin) {
+                for (int spin = 0; spin < 4; ++spin) {
+                    if (status != FLAG_NOT_READY) break;
                     probe = load_descriptor_relaxed(&d_descriptors[lookback_idx]);
                     status = (unsigned int)(probe >> 32);
                 }
@@ -182,7 +188,7 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
             u[c].y += thread_base;
             u[c].z += thread_base;
             u[c].w += thread_base;
-            out_u4[c * 256 + tid] = u[c];
+            store_uint4_cs(&out_u4[c * 256 + tid], u[c]);
         }
     } else {
         #pragma unroll
