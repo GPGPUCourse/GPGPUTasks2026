@@ -109,7 +109,7 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
         }
     }
     __syncthreads();
-
+//
     if (tid == 0) {
         unsigned int tile_agg = 0;
         #pragma unroll
