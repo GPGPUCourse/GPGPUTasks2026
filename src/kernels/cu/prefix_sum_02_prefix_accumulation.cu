@@ -52,25 +52,27 @@ __global__ void prefix_sum_02_prefix_accumulation(
   uint32_t count = blockIdx.x;
   uint32_t pow_count = (n+255) / 256;
 
+  uint32_t sum = 0;
   while(count > 0) {
     uint32_t mod = count % 256;
 
     uint32_t my_value = local_idx < mod ? pow2_sum[offset + (count - mod) + local_idx] : 0;
-    __syncthreads();
-    if (threadIdx.x == 0) {
-      wgsum = 0;
-    }
-    __syncthreads();
-    atomicAdd(&wgsum, my_value);
-    __syncthreads();
+    sum += my_value;
 
-    res += wgsum;
     offset += pow_count;
     pow_count = (pow_count + 255) / 256;
     count /= 256;
   }
 
-  prefix_sum_accum[idx] = res;
+  __syncthreads();
+  if (threadIdx.x == 0) {
+    wgsum = 0;
+  }
+  __syncthreads();
+  atomicAdd(&wgsum, sum);
+  __syncthreads();
+
+  prefix_sum_accum[idx] = res + wgsum;
 }
 
 namespace cuda {
