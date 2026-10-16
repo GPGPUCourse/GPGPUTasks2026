@@ -12,10 +12,19 @@ __kernel void sum_04_local_reduction(__global const uint* a,
                                             unsigned int  n)
 {
     // Подсказки:
-    // const uint index = get_global_id(0);
-    // const uint local_index = get_local_id(0);
-    // __local uint local_data[GROUP_SIZE];
-    // barrier(CLK_LOCAL_MEM_FENCE);
+    const uint index = get_global_id(0);
+    const uint local_index = get_local_id(0);
+    __local uint local_data[GROUP_SIZE];
 
-    // TODO
+    local_data[local_index] = index < n ? a[index] : 0;
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    uint acc = 0;
+    if (local_index == 0)
+    {
+        for (int i = 0; i < GROUP_SIZE; ++i)
+            acc += local_data[i];
+
+        b[index / GROUP_SIZE] = acc;
+    }
 }
