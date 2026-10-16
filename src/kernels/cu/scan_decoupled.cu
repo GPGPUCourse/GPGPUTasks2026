@@ -42,8 +42,8 @@ __device__ __forceinline__ unsigned int warp_scan_inclusive(unsigned int val) {
     }
     return val;
 }
-//
-__launch_bounds__(BLOCK_THREADS, 2)
+
+__launch_bounds__(BLOCK_THREADS, 5)
 __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
                                       unsigned int* __restrict__ d_out,
                                       unsigned int* __restrict__ d_tile_counter,
@@ -111,6 +111,7 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
     __syncthreads();
 
     if (tid == 0) {
+        unsigned int tile_agg = 0;
         #pragma unroll
         for (int c = 0; c < 4; ++c) {
             unsigned int sum = s_warp_chunk_sums[c][0];
@@ -119,10 +120,8 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
                 sum += s_warp_chunk_sums[c][w];
                 s_warp_chunk_sums[c][w] = sum;
             }
+            tile_agg += sum;
         }
-
-        unsigned int tile_agg = s_warp_chunk_sums[0][7] + s_warp_chunk_sums[1][7] +
-                               s_warp_chunk_sums[2][7] + s_warp_chunk_sums[3][7];
 
         if (tile_idx == 0) {
             s_base[0] = 0;
@@ -140,8 +139,14 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
                 uint64_t probe = load_descriptor_relaxed(&d_descriptors[lookback_idx]);
                 unsigned int status = (unsigned int)(probe >> 32);
 
+                //#pragma unroll
+                for (int spin = 0; spin < 5 && status == FLAG_NOT_READY; ++spin) {
+                    probe = load_descriptor_relaxed(&d_descriptors[lookback_idx]);
+                    status = (unsigned int)(probe >> 32);
+                }
+
                 while (status == FLAG_NOT_READY) {
-                    __nanosleep(32);
+                    __nanosleep(16);
                     probe = load_descriptor_relaxed(&d_descriptors[lookback_idx]);
                     status = (unsigned int)(probe >> 32);
                 }
