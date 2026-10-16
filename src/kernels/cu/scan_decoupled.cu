@@ -64,8 +64,6 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
     const bool is_full_tile = (tile_offset + TILE_ITEMS <= n);
 
     uint4 u[4];
-    unsigned int chunk_sum[4];
-    unsigned int chunk_exc[4];
 
     if (__builtin_expect(is_full_tile, 1)) {
         const uint4* in_u4 = reinterpret_cast<const uint4*>(d_in + tile_offset);
@@ -75,7 +73,6 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
             u[c].y += u[c].x;
             u[c].z += u[c].y;
             u[c].w += u[c].z;
-            chunk_sum[c] = u[c].w;
         }
     } else {
         #pragma unroll
@@ -89,17 +86,21 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
             u[c].y += u[c].x;
             u[c].z += u[c].y;
             u[c].w += u[c].z;
-            chunk_sum[c] = u[c].w;
         }
     }
 
     #pragma unroll
     for (int c = 0; c < 4; ++c) {
-        unsigned int inc = warp_scan_inclusive(chunk_sum[c]);
-        chunk_exc[c] = inc - chunk_sum[c];
+        unsigned int my_sum = u[c].w;
+        unsigned int inc = warp_scan_inclusive(my_sum);
+        unsigned int warp_exc = inc - my_sum;
         if (lane == 31) {
             s_warp_sums[c * 8 + warp] = inc;
         }
+        u[c].x += warp_exc;
+        u[c].y += warp_exc;
+        u[c].z += warp_exc;
+        u[c].w += warp_exc;
     }
     __syncthreads();
 
@@ -108,7 +109,6 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
         unsigned int val = s_warp_sums[lane];
         unsigned int scanned = warp_scan_inclusive(val);
         s_warp_sums[lane] = scanned;
-
         tile_agg = __shfl_sync(0xffffffff, scanned, 31);
     }
 
@@ -152,7 +152,7 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
     for (int c = 0; c < 4; ++c) {
         const unsigned int warp_chunk_id = c * 8 + warp;
         const unsigned int warp_prefix = (warp_chunk_id > 0) ? s_warp_sums[warp_chunk_id - 1] : 0;
-        const unsigned int thread_base = tile_base + warp_prefix + chunk_exc[c];
+        const unsigned int thread_base = tile_base + warp_prefix;
 
         u[c].x += thread_base;
         u[c].y += thread_base;
