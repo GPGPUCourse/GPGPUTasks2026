@@ -27,13 +27,6 @@ __device__ __forceinline__ uint64_t load_descriptor_relaxed(const uint64_t* ptr)
     return d;
 }
 
-__device__ __forceinline__ void load_descriptor_acquire(const uint64_t* ptr, unsigned int &status, unsigned int &val) {
-    uint64_t d;
-    asm volatile("ld.acquire.gpu.u64 %0, [%1];" : "=l"(d) : "l"(ptr) : "memory");
-    status = (unsigned int)(d >> 32);
-    val    = (unsigned int)(d & 0xFFFFFFFFu);
-}
-
 __device__ __forceinline__ unsigned int warp_scan_inclusive(unsigned int val) {
     #pragma unroll
     for (int offset = 1; offset < 32; offset <<= 1) {
@@ -43,7 +36,7 @@ __device__ __forceinline__ unsigned int warp_scan_inclusive(unsigned int val) {
     return val;
 }
 
-__launch_bounds__(BLOCK_THREADS, 5)
+__launch_bounds__(BLOCK_THREADS, 6)
 __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
                                       unsigned int* __restrict__ d_out,
                                       unsigned int* __restrict__ d_tile_counter,
@@ -109,7 +102,6 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
         }
     }
     __syncthreads();
-//
     if (tid == 0) {
         unsigned int tile_agg = 0;
         #pragma unroll
@@ -151,8 +143,7 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
                     status = (unsigned int)(probe >> 32);
                 }
 
-                unsigned int val;
-                load_descriptor_acquire(&d_descriptors[lookback_idx], status, val);
+                unsigned int val = (unsigned int)(probe & 0xFFFFFFFFu);
 
                 if (status == FLAG_PREFIX) {
                     exclusive_prefix += val;
