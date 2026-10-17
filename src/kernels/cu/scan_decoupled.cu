@@ -325,6 +325,7 @@ void scan_decoupled(const gpu::gpu_mem_32u &d_in,
         }
         initialized = true;
     }
+    cudaSetDevice(0);
 
     if (d_in.cuptr() != last_in_ptr) {
         for (int i = 1; i < num_gpus; ++i) {
