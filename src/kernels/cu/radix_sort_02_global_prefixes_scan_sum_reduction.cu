@@ -7,15 +7,16 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+//task04: prefix_sum_01_reduction
 __global__ void radix_sort_02_global_prefixes_scan_sum_reduction(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    // TODO try char
-    const unsigned int* buffer1,
-          unsigned int* buffer2,
-    unsigned int a1)
+    const unsigned int* pow2_zero_sums,
+          unsigned int* next_pow2_zero_sums,
+    unsigned int n)
 {
-    // TODO
+    const unsigned index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index < n) {
+        next_pow2_zero_sums[index] = pow2_zero_sums[2 * index] + pow2_zero_sums[2 * index + 1];
+    }
 }
 
 namespace cuda {
@@ -26,6 +27,6 @@ void radix_sort_02_global_prefixes_scan_sum_reduction(const gpu::WorkSize &workS
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
     ::radix_sort_02_global_prefixes_scan_sum_reduction<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(buffer1.cuptr(), buffer2.cuptr(), a1);
-    CUDA_CHECK_KERNEL(stream);
+    CUDA_CHECK_KERNEL_ASYNC(stream);
 }
 } // namespace cuda

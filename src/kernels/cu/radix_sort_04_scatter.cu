@@ -8,15 +8,22 @@
 #include "../defines.h"
 
 __global__ void radix_sort_04_scatter(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* buffer1,
-    const unsigned int* buffer2,
-          unsigned int* buffer3,
-    unsigned int a1,
-    unsigned int a2)
+    const unsigned int* input,
+    const unsigned int* zero_prefixes,
+          unsigned int* output,
+    unsigned int n,
+    unsigned int bit)
 {
-    // TODO
+    const unsigned index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index >= n) {
+        return;
+    }
+    const unsigned value = input[index];
+    const unsigned zeros = zero_prefixes[index];
+    const bool is_zero = (value >> bit & 1) == 0;
+
+    const unsigned dest = is_zero ? zeros : zero_prefixes[n] + (index - zeros);
+    output[dest] = value;
 }
 
 namespace cuda {
@@ -27,6 +34,6 @@ void radix_sort_04_scatter(const gpu::WorkSize &workSize,
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
     ::radix_sort_04_scatter<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(buffer1.cuptr(), buffer2.cuptr(), buffer3.cuptr(), a1, a2);
-    CUDA_CHECK_KERNEL(stream);
+    CUDA_CHECK_KERNEL_ASYNC(stream);
 }
 } // namespace cuda
