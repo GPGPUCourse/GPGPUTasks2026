@@ -5,7 +5,7 @@
 
 #define LOCAL_WORK_SIZE 1024
 
-#define COUNTING_THREAD_WORK 8
+#define COUNTING_THREAD_WORK 16
 #define COUNTING_GROUP_SIZE (LOCAL_WORK_SIZE / COUNTING_THREAD_WORK)
 
 // Настройки префиксных сумм
