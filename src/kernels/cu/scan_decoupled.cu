@@ -3,6 +3,11 @@
 #include <libgpu/shared_device_buffer.h>
 #include <libgpu/cuda/cu/common.cu>
 
+#include <cuda.h>
+#include <cuda_runtime.h>
+#include <algorithm>
+#include <iostream>
+
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
@@ -187,19 +192,20 @@ void scan_decoupled(const gpu::gpu_mem_32u &d_in,
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
 
-    int num_gpus = 1;
-    cudaGetDeviceCount(&num_gpus);
-    if (num_gpus > 4) num_gpus = 4;
+    CUcontext ctx0 = nullptr;
+    cuCtxGetCurrent(&ctx0);
+
+    int dev_count = 1;
+    cuDeviceGetCount(&dev_count);
+    int num_gpus = std::min(dev_count, 4);
 
     const unsigned int num_tiles = (n + TILE_ITEMS - 1) / TILE_ITEMS;
     unsigned int* d_tile_counter = d_temp.cuptr();
     uint64_t* d_descriptors = reinterpret_cast<uint64_t*>(d_temp.cuptr() + DESCRIPTORS_OFFSET_U32);
 
-    int base_dev = 0;
-    cudaGetDevice(&base_dev);
-
     const size_t total_clear_bytes = (DESCRIPTORS_OFFSET_U32 * sizeof(unsigned int)) +
                                      (num_tiles * sizeof(uint64_t));
+
     cudaMemsetAsync(d_temp.cuptr(), 0, total_clear_bytes, context.cudaStream());
 
     if (num_gpus <= 1) {
@@ -215,38 +221,59 @@ void scan_decoupled(const gpu::gpu_mem_32u &d_in,
         return;
     }
 
-
     static bool p2p_initialized = false;
+    static CUcontext contexts[4] = {nullptr};
+    static CUstream streams[4] = {nullptr};
+
     if (!p2p_initialized) {
-        for (int i = 0; i < num_gpus; ++i) {
-            cudaSetDevice(i);
-            for (int j = 0; j < num_gpus; ++j) {
-                if (i != j) {
-                    int can_access = 0;
-                    cudaDeviceCanAccessPeer(&can_access, i, j);
-                    if (can_access) {
-                        cudaDeviceEnablePeerAccess(j, 0);
-                    }
-                }
+        contexts[0] = ctx0;
+        streams[0] = (CUstream)context.cudaStream();
+
+        for (int i = 1; i < num_gpus; ++i) {
+            CUdevice dev_i;
+            cuDeviceGet(&dev_i, i);
+
+            CUresult res;
+#if defined(CUDART_VERSION) && (CUDART_VERSION >= 13000)
+            CUctxCreateParams params{};
+            res = cuCtxCreate(&contexts[i], &params, 0, dev_i);
+#else
+            res = cuCtxCreate(&contexts[i], 0, dev_i);
+#endif
+            if (res != CUDA_SUCCESS) {
+                num_gpus = i;
+                break;
+            }
+            cuStreamCreate(&streams[i], CU_STREAM_NON_BLOCKING);
+
+            cuCtxSetCurrent(contexts[i]);
+            res = cuCtxEnablePeerAccess(ctx0, 0);
+            if (res != CUDA_SUCCESS && res != CUDA_ERROR_PEER_ACCESS_ALREADY_ENABLED) {
+                std::cerr << "Warning: cuCtxEnablePeerAccess from GPU " << i << " to GPU 0 failed: " << res << std::endl;
+            }
+
+            cuCtxSetCurrent(ctx0);
+            res = cuCtxEnablePeerAccess(contexts[i], 0);
+            if (res != CUDA_SUCCESS && res != CUDA_ERROR_PEER_ACCESS_ALREADY_ENABLED) {
+                std::cerr << "Warning: cuCtxEnablePeerAccess from GPU 0 to GPU " << i << " failed: " << res << std::endl;
             }
         }
         p2p_initialized = true;
     }
 
+    cuCtxSetCurrent(ctx0);
+    cuStreamSynchronize(streams[0]);
+
     unsigned int tiles_per_gpu = num_tiles / num_gpus;
     unsigned int remainder = num_tiles % num_gpus;
 
-    cudaStream_t streams[4];
-
     for (int i = 0; i < num_gpus; ++i) {
-        cudaSetDevice(i);
-        cudaStreamCreateWithFlags(&streams[i], cudaStreamNonBlocking);
-
         unsigned int grid_size = tiles_per_gpu + (i < remainder ? 1 : 0);
         if (grid_size == 0) continue;
 
+        cuCtxSetCurrent(contexts[i]);
 
-        scan_decoupled_kernel<<<grid_size, BLOCK_THREADS, 0, streams[i]>>>(
+        scan_decoupled_kernel<<<grid_size, BLOCK_THREADS, 0, (cudaStream_t)streams[i]>>>(
             d_in.cuptr(),
             d_out.cuptr(),
             d_tile_counter,
@@ -257,11 +284,10 @@ void scan_decoupled(const gpu::gpu_mem_32u &d_in,
     }
 
     for (int i = 0; i < num_gpus; ++i) {
-        cudaSetDevice(i);
-        cudaStreamSynchronize(streams[i]);
-        cudaStreamDestroy(streams[i]);
+        cuCtxSetCurrent(contexts[i]);
+        cuStreamSynchronize(streams[i]);
     }
 
-    cudaSetDevice(base_dev);
+    cuCtxSetCurrent(ctx0);
 }
 } // namespace cuda
