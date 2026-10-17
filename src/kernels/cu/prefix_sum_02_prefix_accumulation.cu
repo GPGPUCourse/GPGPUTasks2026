@@ -3,6 +3,7 @@
 #include <cub/device/device_reduce.cuh>
 #include <cub/device/device_scan.cuh>
 
+
 namespace {
 
 __global__ void prepare_first_element_kernel(
