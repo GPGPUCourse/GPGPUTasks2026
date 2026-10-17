@@ -4,16 +4,17 @@
 
 #include <libgpu/cuda/cu/common.cu>
 
-#include "helpers/rassert.cu"
-#include "../defines.h"
-
 __global__ void fill_buffer_with_zeros(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
     unsigned int* buffer,
     unsigned int n)
 {
-    // TODO
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (index >= n) {
+        return;
+    }
+
+    buffer[index] = 0;
 }
 
 namespace cuda {
