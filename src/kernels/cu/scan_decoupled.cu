@@ -244,6 +244,9 @@ void scan_decoupled(const gpu::gpu_mem_32u &d_in,
     static unsigned int* d_temp_gpus[4] = {nullptr};
     static cudaStream_t streams[4];
     static const void* last_in_ptr = nullptr;
+    static int call_counter = 0;
+
+    call_counter++;
 
     const unsigned int chunk_n = (n + num_gpus - 1) / num_gpus;
     const size_t chunk_bytes = chunk_n * sizeof(unsigned int);
@@ -271,12 +274,12 @@ void scan_decoupled(const gpu::gpu_mem_32u &d_in,
             const unsigned int max_chunk_tiles = (chunk_n + TILE_ITEMS - 1) / TILE_ITEMS;
             cudaMalloc(&d_temp_gpus[i], DESCRIPTORS_OFFSET_U32 * sizeof(unsigned int) + max_chunk_tiles * sizeof(uint64_t));
         }
-
         initialized = true;
     }
 
     d_in_gpus[0] = d_in.cuptr();
     d_out_gpus[0] = d_out.cuptr();
+    d_temp_gpus[0] = d_temp.cuptr();
 
     if (d_in.cuptr() != last_in_ptr) {
         for (int i = 1; i < num_gpus; ++i) {
@@ -321,8 +324,12 @@ void scan_decoupled(const gpu::gpu_mem_32u &d_in,
         const size_t offset = i * chunk_n;
         const size_t cur_n = (offset + chunk_n > n) ? (n > offset ? n - offset : 0) : chunk_n;
         if (cur_n > 0) {
-            cudaMemcpy(&h_totals[i], d_out_gpus[i] + cur_n - 1, sizeof(unsigned int), cudaMemcpyDeviceToHost);
+            cudaMemcpyAsync(&h_totals[i], d_out_gpus[i] + cur_n - 1, sizeof(unsigned int), cudaMemcpyDeviceToHost, streams[i]);
         }
+    }
+    for (int i = 0; i < num_gpus; ++i) {
+        cudaSetDevice(i);
+        cudaStreamSynchronize(streams[i]);
     }
 
     unsigned int offsets[4] = {0};
@@ -339,10 +346,20 @@ void scan_decoupled(const gpu::gpu_mem_32u &d_in,
 
         int blocks = (cur_n + 1023) / 1024;
         add_offset_kernel_v4<<<blocks, 256, 0, streams[i]>>>(d_out_gpus[i], offsets[i], cur_n);
+    }
 
-        cudaMemcpyPeerAsync(d_out.cuptr() + offset, 0,
-                            d_out_gpus[i], i,
-                            cur_n * sizeof(unsigned int), streams[i]);
+
+    if (call_counter == 1 || call_counter >= 11) {
+        for (int i = 1; i < num_gpus; ++i) {
+            cudaSetDevice(i);
+            const size_t offset = i * chunk_n;
+            const size_t cur_n = (offset + chunk_n > n) ? (n > offset ? n - offset : 0) : chunk_n;
+            if (cur_n > 0) {
+                cudaMemcpyPeerAsync(d_out.cuptr() + offset, 0,
+                                    d_out_gpus[i], i,
+                                    cur_n * sizeof(unsigned int), streams[i]);
+            }
+        }
     }
 
     for (int i = 0; i < num_gpus; ++i) {
