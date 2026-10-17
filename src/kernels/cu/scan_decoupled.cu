@@ -215,9 +215,15 @@ void scan_decoupled(const gpu::gpu_mem_32u &d_in,
 
     int dev_count = 1;
     cudaGetDeviceCount(&dev_count);
-    int num_gpus = std::min(dev_count, 4);
 
-    if (num_gpus <= 1) {
+#ifdef IWANTNVLINK
+    constexpr int num_gpus = std::min(dev_count, 4);
+#else
+    constexpr int num_gpus = 1;
+#endif
+
+
+    if constexpr (num_gpus == 1) {
         const unsigned int num_tiles = (n + TILE_ITEMS - 1) / TILE_ITEMS;
         unsigned int* d_tile_counter = d_temp.cuptr();
         uint64_t* d_descriptors = reinterpret_cast<uint64_t*>(d_temp.cuptr() + DESCRIPTORS_OFFSET_U32);
