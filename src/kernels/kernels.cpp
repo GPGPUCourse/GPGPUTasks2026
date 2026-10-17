@@ -30,8 +30,8 @@ void prefix_sum_01_reduction(const gpu::WorkSize &workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
-void prefix_sum_02_prefix_accumulation(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32u &pow2_sum, gpu::gpu_mem_32u &prefix_sum_accum, unsigned int n, unsigned int pow2)
+void prefix_sum_02_prefix_accumulation(int num_devices, const ::std::vector<unsigned int>& counts,
+                                       const ::std::vector<unsigned int*>& inputs, const ::std::vector<unsigned int*>& outputs)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 546237686412414);
@@ -59,10 +59,10 @@ const ProgramBinaries& getPrefixSum02PrefixAccumulation()
 {
     return opencl_binaries_prefix_sum_02_prefix_accumulation;
 }
-} // namespace ocl
+}
 
 namespace avk2 {
-const ProgramBinaries& getAplusB()
+const avk2::ProgramBinaries& getAplusB()
 {
     return vulkan_binaries_aplusb_comp;
 }
@@ -81,4 +81,4 @@ const ProgramBinaries& getPrefixSum02PrefixAccumulation()
 {
     return vulkan_binaries_prefix_sum_02_prefix_accumulation_comp;
 }
-} // namespace avk2
+}
