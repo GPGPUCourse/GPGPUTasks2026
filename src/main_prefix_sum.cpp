@@ -4,12 +4,9 @@
 #include <libbase/timer.h>
 #include <libgpu/cuda/utils.h>
 #include <libgpu/vulkan/engine.h>
-#include <libgpu/vulkan/tests/test_utils.h>
 
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
-
-#include <fstream>
 
 void run(int argc, char** argv)
 {
@@ -48,10 +45,20 @@ void run(int argc, char** argv)
     unsigned int chunk_size = n / num_devices / 4 * 4;
     std::vector<unsigned int> counts(num_devices, chunk_size);
     counts.back() += n - chunk_size * num_devices;
+    std::vector<unsigned int*> inputs(num_devices);
     std::vector<unsigned int*> outputs(num_devices);
     for (int device = 0; device < num_devices; ++device) {
         CUDA_SAFE_CALL(cudaSetDevice(device));
+        CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&inputs[device]), sizeof(unsigned int) * counts[device]));
+        CUDA_SAFE_CALL(cudaMemcpy(inputs[device], as.data() + device * chunk_size, sizeof(unsigned int) * counts[device], cudaMemcpyHostToDevice));
         CUDA_SAFE_CALL(cudaMalloc(reinterpret_cast<void**>(&outputs[device]), sizeof(unsigned int) * counts[device]));
+    }
+
+    // Warmup and lazy initialization
+    cuda::prefix_sum_02_prefix_accumulation(num_devices, counts, inputs, outputs);
+    for (int device = 0; device < num_devices; ++device) {
+        CUDA_SAFE_CALL(cudaSetDevice(device));
+        CUDA_SAFE_CALL(cudaDeviceSynchronize());
     }
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
@@ -59,11 +66,8 @@ void run(int argc, char** argv)
     for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
-        for (int device = 0; device < num_devices; ++device) {
-            CUDA_SAFE_CALL(cudaSetDevice(device));
-            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(256, counts[device]),
-                outputs[device], counts[device], device * chunk_size, nullptr);
-        }
+        cuda::prefix_sum_02_prefix_accumulation(num_devices, counts, inputs, outputs);
+
         for (int device = 0; device < num_devices; ++device) {
             CUDA_SAFE_CALL(cudaSetDevice(device));
             CUDA_SAFE_CALL(cudaDeviceSynchronize());
@@ -85,6 +89,7 @@ void run(int argc, char** argv)
         CUDA_SAFE_CALL(cudaSetDevice(device));
         CUDA_SAFE_CALL(cudaMemcpy(gpu_prefix_sum.data() + device * chunk_size, outputs[device],
             sizeof(unsigned int) * counts[device], cudaMemcpyDeviceToHost));
+        CUDA_SAFE_CALL(cudaFree(inputs[device]));
         CUDA_SAFE_CALL(cudaFree(outputs[device]));
     }
 
