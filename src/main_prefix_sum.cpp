@@ -10,6 +10,11 @@
 
 #include <fstream>
 
+unsigned int blockCount(unsigned int n)
+{
+    return n / (2 * GROUP_SIZE) + (n % (2 * GROUP_SIZE) != 0);
+}
+
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -68,7 +73,16 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), prefix_sum_accum_gpu(n);
+    std::vector<unsigned int> level_sizes;
+    std::vector<gpu::gpu_mem_32u> block_sums;
+    for (unsigned int size = n; size > 0; size = blockCount(size)) {
+        level_sizes.push_back(size);
+        block_sums.emplace_back(blockCount(size));
+        if (blockCount(size) == 1) {
+            break;
+        }
+    }
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -81,8 +95,29 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            for (size_t level = 0; level < level_sizes.size(); ++level) {
+                const auto& input = level == 0 ? input_gpu : block_sums[level - 1];
+                auto& output = level == 0 ? prefix_sum_accum_gpu : block_sums[level - 1];
+
+                ocl_sum_reduction.execAsynchronized(
+                    gpu::WorkSize(GROUP_SIZE,
+                    size_t(blockCount(level_sizes[level])) * GROUP_SIZE),
+                    input,
+                    block_sums[level],
+                    output,
+                    level_sizes[level]);
+            }
+            for (size_t level = level_sizes.size(); level > 1; --level) {
+                const size_t index = level - 2;
+                auto& output = index == 0 ? prefix_sum_accum_gpu : block_sums[index - 1];
+
+                ocl_prefix_accumulation.execAsynchronized(
+                    gpu::WorkSize(GROUP_SIZE, size_t(level_sizes[index + 1] - 1) * GROUP_SIZE),
+                    block_sums[index],
+                    output,
+                    level_sizes[index]);
+            }
+            OCL_SAFE_CALL(clFinish(context.cl()->queue()));
             // ocl_fill_with_zeros.exec();
             // ocl_sum_reduction.exec();
             // ocl_prefix_accumulation.exec();
