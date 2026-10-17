@@ -25,7 +25,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -88,10 +88,54 @@ void run(int argc, char** argv)
             // ocl_prefix_accumulation.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            //throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
             // cuda::fill_buffer_with_zeros();
             // cuda::prefix_sum_01_reduction();
             // cuda::prefix_sum_02_prefix_accumulation();
+            if (n > 0) {
+                const unsigned int block_size = 256;
+                const gpu::WorkSize full_work_size(block_size, n);
+
+                // every repeat start with empty storage
+                cuda::fill_buffer_with_zeros(full_work_size, prefix_sum_accum_gpu, n);
+
+                // on zero level read initial massive
+                const gpu::gpu_mem_32u* current = &input_gpu;
+                gpu::gpu_mem_32u* next = &buffer1_pow2_sum_gpu;
+                unsigned int current_n = n;
+                unsigned int pow2 = 0;
+
+                while (true) {
+                    // add this level result
+                    cuda::prefix_sum_02_prefix_accumulation(full_work_size, *current, prefix_sum_accum_gpu, n, pow2);
+
+                    if ((n >> pow2) == 1) {
+                        break;
+                    }
+
+                    const unsigned int next_n = current_n / 2 + current_n % 2;
+                    const gpu::WorkSize reduction_work_size(block_size, next_n);
+
+                    // new result are enter of next level
+                    cuda::prefix_sum_01_reduction(reduction_work_size, *current, *next, current_n);
+
+                    // new result will enter for next level
+                    current = next;
+                    current_n = next_n;
+                    ++pow2;
+
+                    // alternate only work buffers, input gpu won't rewrite
+                    if (next == &buffer1_pow2_sum_gpu) {
+                        next = &buffer2_pow2_sum_gpu;
+                    }
+                    else {
+                        next = &buffer1_pow2_sum_gpu;
+                    }
+                }
+            }
+
+
+
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);

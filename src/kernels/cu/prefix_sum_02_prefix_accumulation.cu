@@ -16,6 +16,27 @@ __global__ void prefix_sum_02_prefix_accumulation(
     unsigned int pow2)
 {
     // TODO
+    // index elem from result massive 
+    const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // n - massive length
+    if (i >= n || pow2 >= 32) {
+        return;
+    }
+
+    // prefix with index i have i + 1 initial elements
+    const unsigned int prefix_length = i + 1;
+
+    // quantity full groups size 2^pow2 in this prefix
+    const unsigned int full_groups = prefix_length >> pow2;
+
+    // if groups are an odd number, add last group
+    // other groups will be taken into account on other levels
+    if (full_groups % 2 == 1) { 
+        const unsigned int group_index = full_groups - 1;
+        prefix_sum_accum[i] += pow2_sum[group_index];
+    }
+
 }
 
 namespace cuda {

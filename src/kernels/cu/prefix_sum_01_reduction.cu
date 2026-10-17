@@ -15,6 +15,24 @@ __global__ void prefix_sum_01_reduction(
     unsigned int n)
 {
     // TODO
+    // Глобальный индекс потока - индекс элемента выходного массва
+    const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+
+    // кол-во эл-ов после мержа соседних пар
+    const unsigned int next_n = n / 2 + n % 2;
+
+    // лишние потоки не обращаются к массивам
+    if (i >= next_n) { return;}
+
+    // Индекс первого элемента пары во входном массиве
+    const unsigned int left = 2 * i;
+    unsigned int sum = pow2_sum[left];
+
+    if (left + 1 < n) {sum += pow2_sum[left + 1];}
+
+    // записывае результат, не прибавляя к старому содержимому
+    next_pow2_sum[i] = sum;
+
 }
 
 namespace cuda {
