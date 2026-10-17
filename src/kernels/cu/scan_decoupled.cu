@@ -4,8 +4,6 @@
 #include <libgpu/cuda/cu/common.cu>
 
 #include <cuda_runtime.h>
-#include <thread>
-#include <atomic>
 #include <algorithm>
 #include <iostream>
 
@@ -207,71 +205,6 @@ __global__ void scan_decoupled_kernel(const unsigned int* __restrict__ d_in,
 
 namespace cuda {
 
-struct PersistentGpuWorker {
-    int dev_id;
-    unsigned int* d_in = nullptr;
-    unsigned int* d_out = nullptr;
-    unsigned int* d_temp = nullptr;
-    cudaStream_t stream = nullptr;
-    unsigned int total = 0;
-    unsigned int offset = 0;
-    size_t cur_n = 0;
-    size_t offset_elements = 0;
-    unsigned int* global_d_out = nullptr;
-
-    std::atomic<int> command{0};
-    std::atomic<bool> done{false};
-    std::thread thread_handle;
-
-    void worker_loop() {
-        cudaSetDevice(dev_id);
-        cudaDeviceEnablePeerAccess(0, 0);
-        cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking);
-
-        while (true) {
-            while (command.load(std::memory_order_acquire) == 0) {
-                std::this_thread::yield();
-            }
-
-            int cmd = command.load(std::memory_order_relaxed);
-            if (cmd == -1) break;
-
-            if (cmd == 1) {
-                if (cur_n > 0) {
-                    const unsigned int num_tiles = (cur_n + TILE_ITEMS - 1) / TILE_ITEMS;
-                    unsigned int* d_tile_counter = d_temp;
-                    uint64_t* d_descriptors = reinterpret_cast<uint64_t*>(d_temp + DESCRIPTORS_OFFSET_U32);
-
-                    cudaMemsetAsync(d_temp, 0, DESCRIPTORS_OFFSET_U32 * sizeof(unsigned int) + num_tiles * sizeof(uint64_t), stream);
-
-                    scan_decoupled_kernel<<<num_tiles, BLOCK_THREADS, 0, stream>>>(
-                        d_in, d_out, d_tile_counter, d_descriptors, cur_n, num_tiles
-                    );
-
-                    cudaStreamSynchronize(stream);
-                    cudaMemcpy(&total, d_out + cur_n - 1, sizeof(unsigned int), cudaMemcpyDeviceToHost);
-                }
-            } else if (cmd == 2) {
-                if (cur_n > 0) {
-                    int blocks = (cur_n + 1023) / 1024;
-                    add_offset_kernel_v4<<<blocks, 256, 0, stream>>>(d_out, offset, cur_n);
-
-                    cudaMemcpyPeerAsync(global_d_out + offset_elements, 0,
-                                        d_out, dev_id,
-                                        cur_n * sizeof(unsigned int), stream);
-
-                    cudaStreamSynchronize(stream);
-                }
-            }
-
-            command.store(0, std::memory_order_release);
-            done.store(true, std::memory_order_release);
-        }
-
-        cudaStreamDestroy(stream);
-    }
-};
-
 void scan_decoupled(const gpu::gpu_mem_32u &d_in,
                     gpu::gpu_mem_32u &d_out,
                     gpu::gpu_mem_32u &d_temp,
@@ -306,87 +239,118 @@ void scan_decoupled(const gpu::gpu_mem_32u &d_in,
     }
 
     static bool initialized = false;
-    static PersistentGpuWorker workers[4];
+    static unsigned int* d_in_gpus[4] = {nullptr};
+    static unsigned int* d_out_gpus[4] = {nullptr};
+    static unsigned int* d_temp_gpus[4] = {nullptr};
+    static cudaStream_t streams[4];
     static const void* last_in_ptr = nullptr;
 
     const unsigned int chunk_n = (n + num_gpus - 1) / num_gpus;
     const size_t chunk_bytes = chunk_n * sizeof(unsigned int);
 
     if (!initialized) {
-        for (int i = 1; i < num_gpus; ++i) {
-            workers[i].dev_id = i;
+        for (int i = 0; i < num_gpus; ++i) {
             cudaSetDevice(i);
-            cudaMalloc(&workers[i].d_in, chunk_bytes);
-            cudaMalloc(&workers[i].d_out, chunk_bytes);
-            const unsigned int max_chunk_tiles = (chunk_n + TILE_ITEMS - 1) / TILE_ITEMS;
-            cudaMalloc(&workers[i].d_temp, DESCRIPTORS_OFFSET_U32 * sizeof(unsigned int) + max_chunk_tiles * sizeof(uint64_t));
+            cudaStreamCreateWithFlags(&streams[i], cudaStreamNonBlocking);
 
-            workers[i].thread_handle = std::thread(&PersistentGpuWorker::worker_loop, &workers[i]);
+            for (int j = 0; j < num_gpus; ++j) {
+                if (i != j) {
+                    int can_access = 0;
+                    cudaDeviceCanAccessPeer(&can_access, i, j);
+                    if (can_access) {
+                        cudaError_t err = cudaDeviceEnablePeerAccess(j, 0);
+                        if (err == cudaErrorPeerAccessAlreadyEnabled) cudaGetLastError();
+                    }
+                }
+            }
+
+            if (i > 0) {
+                cudaMalloc(&d_in_gpus[i], chunk_bytes);
+                cudaMalloc(&d_out_gpus[i], chunk_bytes);
+            }
+            const unsigned int max_chunk_tiles = (chunk_n + TILE_ITEMS - 1) / TILE_ITEMS;
+            cudaMalloc(&d_temp_gpus[i], DESCRIPTORS_OFFSET_U32 * sizeof(unsigned int) + max_chunk_tiles * sizeof(uint64_t));
         }
+
         initialized = true;
     }
-    cudaSetDevice(0);
+
+    d_in_gpus[0] = d_in.cuptr();
+    d_out_gpus[0] = d_out.cuptr();
 
     if (d_in.cuptr() != last_in_ptr) {
         for (int i = 1; i < num_gpus; ++i) {
-            const size_t offset_elements = i * chunk_n;
-            const size_t cur_n = (offset_elements + chunk_n > n) ? (n > offset_elements ? n - offset_elements : 0) : chunk_n;
+            const size_t offset = i * chunk_n;
+            const size_t cur_n = (offset + chunk_n > n) ? (n > offset ? n - offset : 0) : chunk_n;
             if (cur_n > 0) {
-                cudaMemcpyPeer(workers[i].d_in, i,
-                               d_in.cuptr() + offset_elements, 0,
-                               cur_n * sizeof(unsigned int));
+                cudaSetDevice(i);
+                cudaMemcpyPeerAsync(d_in_gpus[i], i,
+                                    d_in.cuptr() + offset, 0,
+                                    cur_n * sizeof(unsigned int), streams[i]);
             }
+        }
+        for (int i = 1; i < num_gpus; ++i) {
+            cudaSetDevice(i);
+            cudaStreamSynchronize(streams[i]);
         }
         last_in_ptr = d_in.cuptr();
     }
 
-    for (int i = 1; i < num_gpus; ++i) {
-        workers[i].offset_elements = i * chunk_n;
-        workers[i].cur_n = (workers[i].offset_elements + chunk_n > n) ? (n > workers[i].offset_elements ? n - workers[i].offset_elements : 0) : chunk_n;
-        workers[i].global_d_out = d_out.cuptr();
-        workers[i].done.store(false, std::memory_order_release);
-        workers[i].command.store(1, std::memory_order_release);
-    }
+    for (int i = 0; i < num_gpus; ++i) {
+        cudaSetDevice(i);
+        const size_t offset = i * chunk_n;
+        const size_t cur_n = (offset + chunk_n > n) ? (n > offset ? n - offset : 0) : chunk_n;
+        if (cur_n == 0) continue;
 
-    {
-        const size_t cur_n0 = std::min((size_t)chunk_n, (size_t)n);
-        const unsigned int num_tiles0 = (cur_n0 + TILE_ITEMS - 1) / TILE_ITEMS;
-        unsigned int* d_tile_counter0 = d_temp.cuptr();
-        uint64_t* d_descriptors0 = reinterpret_cast<uint64_t*>(d_temp.cuptr() + DESCRIPTORS_OFFSET_U32);
+        const unsigned int num_tiles = (cur_n + TILE_ITEMS - 1) / TILE_ITEMS;
+        unsigned int* d_tile_counter = d_temp_gpus[i];
+        uint64_t* d_descriptors = reinterpret_cast<uint64_t*>(d_temp_gpus[i] + DESCRIPTORS_OFFSET_U32);
 
-        cudaMemsetAsync(d_temp.cuptr(), 0, DESCRIPTORS_OFFSET_U32 * sizeof(unsigned int) + num_tiles0 * sizeof(uint64_t), context.cudaStream());
+        cudaMemsetAsync(d_temp_gpus[i], 0, DESCRIPTORS_OFFSET_U32 * sizeof(unsigned int) + num_tiles * sizeof(uint64_t), streams[i]);
 
-        scan_decoupled_kernel<<<num_tiles0, BLOCK_THREADS, 0, context.cudaStream()>>>(
-            d_in.cuptr(), d_out.cuptr(), d_tile_counter0, d_descriptors0, cur_n0, num_tiles0
+        scan_decoupled_kernel<<<num_tiles, BLOCK_THREADS, 0, streams[i]>>>(
+            d_in_gpus[i], d_out_gpus[i], d_tile_counter, d_descriptors, cur_n, num_tiles
         );
-
-        cudaStreamSynchronize(context.cudaStream());
-        cudaMemcpy(&workers[0].total, d_out.cuptr() + cur_n0 - 1, sizeof(unsigned int), cudaMemcpyDeviceToHost);
     }
 
-    for (int i = 1; i < num_gpus; ++i) {
-        while (!workers[i].done.load(std::memory_order_acquire)) {
-            std::this_thread::yield();
+    unsigned int h_totals[4] = {0};
+    for (int i = 0; i < num_gpus; ++i) {
+        cudaSetDevice(i);
+        cudaStreamSynchronize(streams[i]);
+
+        const size_t offset = i * chunk_n;
+        const size_t cur_n = (offset + chunk_n > n) ? (n > offset ? n - offset : 0) : chunk_n;
+        if (cur_n > 0) {
+            cudaMemcpy(&h_totals[i], d_out_gpus[i] + cur_n - 1, sizeof(unsigned int), cudaMemcpyDeviceToHost);
         }
     }
 
     unsigned int offsets[4] = {0};
     offsets[0] = 0;
-    offsets[1] = workers[0].total;
-    offsets[2] = offsets[1] + workers[1].total;
-    offsets[3] = offsets[2] + workers[2].total;
+    offsets[1] = h_totals[0];
+    offsets[2] = offsets[1] + h_totals[1];
+    offsets[3] = offsets[2] + h_totals[2];
 
     for (int i = 1; i < num_gpus; ++i) {
-        workers[i].offset = offsets[i];
-        workers[i].done.store(false, std::memory_order_release);
-        workers[i].command.store(2, std::memory_order_release);
+        cudaSetDevice(i);
+        const size_t offset = i * chunk_n;
+        const size_t cur_n = (offset + chunk_n > n) ? (n > offset ? n - offset : 0) : chunk_n;
+        if (cur_n == 0) continue;
+
+        int blocks = (cur_n + 1023) / 1024;
+        add_offset_kernel_v4<<<blocks, 256, 0, streams[i]>>>(d_out_gpus[i], offsets[i], cur_n);
+
+        cudaMemcpyPeerAsync(d_out.cuptr() + offset, 0,
+                            d_out_gpus[i], i,
+                            cur_n * sizeof(unsigned int), streams[i]);
     }
 
-    for (int i = 1; i < num_gpus; ++i) {
-        while (!workers[i].done.load(std::memory_order_acquire)) {
-            std::this_thread::yield();
-        }
+    for (int i = 0; i < num_gpus; ++i) {
+        cudaSetDevice(i);
+        cudaStreamSynchronize(streams[i]);
     }
+
+    cudaSetDevice(0);
 }
 
 } // namespace cuda
