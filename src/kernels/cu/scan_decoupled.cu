@@ -186,26 +186,82 @@ void scan_decoupled(const gpu::gpu_mem_32u &d_in,
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
-    cudaStream_t stream = context.cudaStream();
+
+    int num_gpus = 1;
+    cudaGetDeviceCount(&num_gpus);
+    if (num_gpus > 4) num_gpus = 4;
 
     const unsigned int num_tiles = (n + TILE_ITEMS - 1) / TILE_ITEMS;
-
     unsigned int* d_tile_counter = d_temp.cuptr();
     uint64_t* d_descriptors = reinterpret_cast<uint64_t*>(d_temp.cuptr() + DESCRIPTORS_OFFSET_U32);
 
+    int base_dev = 0;
+    cudaGetDevice(&base_dev);
+
     const size_t total_clear_bytes = (DESCRIPTORS_OFFSET_U32 * sizeof(unsigned int)) +
                                      (num_tiles * sizeof(uint64_t));
-    cudaMemsetAsync(d_temp.cuptr(), 0, total_clear_bytes, stream);
+    cudaMemsetAsync(d_temp.cuptr(), 0, total_clear_bytes, context.cudaStream());
 
-    scan_decoupled_kernel<<<num_tiles, BLOCK_THREADS, 0, stream>>>(
-        d_in.cuptr(),
-        d_out.cuptr(),
-        d_tile_counter,
-        d_descriptors,
-        n,
-        num_tiles
-    );
+    if (num_gpus <= 1) {
+        scan_decoupled_kernel<<<num_tiles, BLOCK_THREADS, 0, context.cudaStream()>>>(
+            d_in.cuptr(),
+            d_out.cuptr(),
+            d_tile_counter,
+            d_descriptors,
+            n,
+            num_tiles
+        );
+        CUDA_CHECK_KERNEL(context.cudaStream());
+        return;
+    }
 
-    CUDA_CHECK_KERNEL(stream);
+
+    static bool p2p_initialized = false;
+    if (!p2p_initialized) {
+        for (int i = 0; i < num_gpus; ++i) {
+            cudaSetDevice(i);
+            for (int j = 0; j < num_gpus; ++j) {
+                if (i != j) {
+                    int can_access = 0;
+                    cudaDeviceCanAccessPeer(&can_access, i, j);
+                    if (can_access) {
+                        cudaDeviceEnablePeerAccess(j, 0);
+                    }
+                }
+            }
+        }
+        p2p_initialized = true;
+    }
+
+    unsigned int tiles_per_gpu = num_tiles / num_gpus;
+    unsigned int remainder = num_tiles % num_gpus;
+
+    cudaStream_t streams[4];
+
+    for (int i = 0; i < num_gpus; ++i) {
+        cudaSetDevice(i);
+        cudaStreamCreateWithFlags(&streams[i], cudaStreamNonBlocking);
+
+        unsigned int grid_size = tiles_per_gpu + (i < remainder ? 1 : 0);
+        if (grid_size == 0) continue;
+
+
+        scan_decoupled_kernel<<<grid_size, BLOCK_THREADS, 0, streams[i]>>>(
+            d_in.cuptr(),
+            d_out.cuptr(),
+            d_tile_counter,
+            d_descriptors,
+            n,
+            num_tiles
+        );
+    }
+
+    for (int i = 0; i < num_gpus; ++i) {
+        cudaSetDevice(i);
+        cudaStreamSynchronize(streams[i]);
+        cudaStreamDestroy(streams[i]);
+    }
+
+    cudaSetDevice(base_dev);
 }
 } // namespace cuda
