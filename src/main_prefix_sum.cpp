@@ -68,7 +68,8 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u pow2_sums_gpu(n + 32);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -87,16 +88,15 @@ void run(int argc, char** argv)
             // ocl_sum_reduction.exec();
             // ocl_prefix_accumulation.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            cuda::fill_buffer_with_zeros(gpu::WorkSize(GROUP_SIZE, n), prefix_sum_accum_gpu, n);
-            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), input_gpu, prefix_sum_accum_gpu, n, 0);
-            unsigned int cur_n = (n + 1) / 2;
-            cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, cur_n), input_gpu, buffer1_pow2_sum_gpu, n);
-            for (unsigned int pow2 = 1; (1u << pow2) <= n; ++pow2) {
-                cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), buffer1_pow2_sum_gpu, prefix_sum_accum_gpu, n, pow2);
-                cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, (cur_n + 1) / 2), buffer1_pow2_sum_gpu, buffer2_pow2_sum_gpu, cur_n);
-                cur_n = (cur_n + 1) / 2;
-                buffer1_pow2_sum_gpu.swap(buffer2_pow2_sum_gpu);
+            unsigned int size = (n + 1) / 2;
+            cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, size), input_gpu, 0, pow2_sums_gpu, 0, n);
+            unsigned int offset = 0;
+            for (unsigned int pow2 = 2; (1u << pow2) <= n; ++pow2) {
+                cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, (size + 1) / 2), pow2_sums_gpu, offset, pow2_sums_gpu, offset + size, size);
+                offset += size;
+                size = (size + 1) / 2;
             }
+            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), input_gpu, pow2_sums_gpu, prefix_sum_accum_gpu, n);
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
