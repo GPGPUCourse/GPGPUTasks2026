@@ -99,7 +99,8 @@ if (GPU_CUDA_SUPPORT)
             src/kernels/cu/aplusb.cu
             src/kernels/cu/fill_buffer_with_zeros.cu
             src/kernels/cu/prefix_sum_01_reduction.cu
-            src/kernels/cu/prefix_sum_02_prefix_accumulation.cu)
+            src/kernels/cu/prefix_sum_02_prefix_accumulation.cu
+            src/kernels/cu/scan_decoupled.cu)
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
@@ -119,4 +120,13 @@ target_link_libraries(main_prefix_sum ${PROJECT_NAME}_core)
 if (GPU_CUDA_SUPPORT)
     target_include_directories(main_aplusb     PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
     target_include_directories(main_prefix_sum PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+
+    if(MSVC)
+        target_link_options(main_aplusb PRIVATE "LINKER:/FORCE:MULTIPLE")
+        target_link_options(main_prefix_sum PRIVATE "LINKER:/FORCE:MULTIPLE")
+    else()
+        target_link_options(main_aplusb PRIVATE "-Wl,-z,muldefs")
+        target_link_options(main_prefix_sum PRIVATE "-Wl,-z,muldefs")
+    endif ()
+
 endif ()
