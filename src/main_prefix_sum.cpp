@@ -8,6 +8,7 @@
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
 
+#include <algorithm>
 #include <fstream>
 
 void run(int argc, char** argv)
@@ -34,7 +35,8 @@ void run(int argc, char** argv)
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
     ocl::KernelSource ocl_fill_with_zeros(ocl::getFillBufferWithZeros());
-    ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
+    ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction()); // кернел prefix_sum_01_reduction: уровень 1 из входа
+    ocl::KernelSource ocl_sum_reduction_levels(ocl::getPrefixSum01Reduction(), "prefix_sum_01_reduction_levels"); // второй кернел из того же .cl: уровень k из k-1
     ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
 
     avk2::KernelSource vk_fill_with_zeros(avk2::getFillBufferWithZeros());
@@ -68,7 +70,17 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), prefix_sum_accum_gpu(n);
+
+    unsigned int levels_total_size = 0;
+    {
+        unsigned int level_size = n;
+        for (unsigned int pow2 = 1; (size_t(1) << pow2) <= n; ++pow2) {
+            level_size = (level_size + 1) / 2;
+            levels_total_size += level_size;
+        }
+    }
+    gpu::gpu_mem_32u levels_gpu(std::max(levels_total_size, 1u));
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -81,11 +93,23 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            unsigned int level_n = n;
+            unsigned int level_offset = 0;
+            for (unsigned int pow2 = 1; (static_cast<size_t>(1) << pow2) <= n; ++pow2) {
+                const unsigned int next_level_n = (level_n + 1) / 2;
+                if (pow2 == 1) {
+                    ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, next_level_n), input_gpu, levels_gpu, level_n);
+                    level_n = next_level_n;
+                    continue;
+                }
+                const unsigned int next_level_offset = level_offset + level_n;
+                ocl_sum_reduction_levels.exec(gpu::WorkSize(GROUP_SIZE, next_level_n), levels_gpu, level_n, level_offset, next_level_offset);
+
+                level_offset = next_level_offset;
+                level_n = next_level_n;
+            }
+
+            ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, levels_gpu, prefix_sum_accum_gpu, n);
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -114,6 +138,9 @@ void run(int argc, char** argv)
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
     std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
+
+    // for (int i = 0; i < 8; ++i)
+    //     std::cout << "i=" << i << " a=" << as[i] << " cpu=" << cpu_prefix_sum[i] << " gpu=" << gpu_prefix_sum[i] << std::endl;
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
