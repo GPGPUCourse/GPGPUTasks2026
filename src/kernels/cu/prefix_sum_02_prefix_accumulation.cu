@@ -15,17 +15,32 @@ __global__ void prefix_sum_02_prefix_accumulation(
     unsigned int n,
     unsigned int pow2)
 {
-    // TODO
+    const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) {
+        return;
+    }
+    unsigned int j = i >> pow2;
+    if (pow2 == 0) {
+        unsigned int sum = pow2_sum[i];
+
+        if (j & 1u) {
+            sum += pow2_sum[j - 1];
+        }
+        prefix_sum_accum[i] = sum;
+    } else if (j & 1) {
+        prefix_sum_accum[i] += pow2_sum[j - 1];
+    }
+
 }
 
 namespace cuda {
 void prefix_sum_02_prefix_accumulation(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32u &pow2_sum, gpu::gpu_mem_32u &prefix_sum_accum, unsigned int n, unsigned int pow2)
+            const gpu::gpu_mem_32u &pow2_sum, gpu::gpu_mem_32u &prefix_sum_accum, unsigned int n, unsigned int pow2, size_t offset)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::prefix_sum_02_prefix_accumulation<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(pow2_sum.cuptr(), prefix_sum_accum.cuptr(), n, pow2);
+    ::prefix_sum_02_prefix_accumulation<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(pow2_sum.cuptr() + offset, prefix_sum_accum.cuptr(), n, pow2);
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda

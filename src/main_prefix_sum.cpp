@@ -25,7 +25,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -41,7 +41,7 @@ void run(int argc, char** argv)
     avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
     avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
 
-    unsigned int n = 100*1000*1000;
+    unsigned int n = 100 * 1000 * 1000;
     std::vector<unsigned int> as(n, 0);
     size_t total_sum = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -78,29 +78,52 @@ void run(int argc, char** argv)
     for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
+        struct Level {
+            gpu::gpu_mem_32u* buffer;
+            size_t offset;
+            unsigned int length;
+        };
+
+        std::vector<Level> levels;
+
+        levels.push_back({ &input_gpu, 0, n });
+
+        unsigned int len = n;
+        size_t offset = 0;
+
+        while (len > 1) {
+            unsigned int next_len = len / 2 + len % 2;
+
+            if (levels.size() == 1) {
+                levels.push_back({ &buffer1_pow2_sum_gpu, 0, next_len });
+            } else {
+                levels.push_back({ &buffer2_pow2_sum_gpu, offset, next_len });
+                offset += next_len;
+            }
+
+            len = next_len;
+        }
+
+        for (size_t k = 1; k < levels.size(); ++k) {
+            const auto& src = levels[k - 1];
+            const auto& dst = levels[k];
+
+            cuda::prefix_sum_01_reduction(gpu::WorkSize(256, dst.length),
+                *src.buffer,  *dst.buffer,  src.length,  src.offset, dst.offset);
+        }
+
+        for (size_t k = 0; k + 1 < levels.size(); ++k) {
+            const auto& src = levels[k];
+
+            cuda::prefix_sum_02_prefix_accumulation( gpu::WorkSize(256, n),  *src.buffer,
+                prefix_sum_accum_gpu,  n, static_cast<unsigned int>(k), src.offset);
+        }
+
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fill_with_zeros.exec();
-            // vk_sum_reduction.exec();
-            // vk_prefix_accumulation.exec();
-        } else {
-            rassert(false, 4531412341, context.type());
-        }
+        // cuda::fill_buffer_with_zeros();
+        // cuda::prefix_sum_01_reduction();
+        // cuda::prefix_sum_02_prefix_accumulation();
 
         times.push_back(t.elapsed());
     }
