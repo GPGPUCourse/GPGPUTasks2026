@@ -47,7 +47,7 @@ std::string get_param(cl_device_id device_id, cl_device_info param_name) {
 	size_t value_size = get_param_size(device_id, param_name);
 	std::vector<unsigned char> param_value(value_size, 0);
 	OCL_SAFE_CALL(clGetDeviceInfo(device_id, param_name, value_size, param_value.data(), &value_size));
-	std::string str(param_value.begin(), param_value.end());
+	std::string str(reinterpret_cast<const char*>(param_value.data()));
 	return str;
 }
 
