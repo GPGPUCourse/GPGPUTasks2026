@@ -5,7 +5,7 @@ project(GPGPUTasks)
 set(CMAKE_CXX_STANDARD 17)
 
 # Если вы установили CUDA SDK - можете включить поддержку CUDA
-option(GPU_CUDA_SUPPORT "CUDA support." OFF)
+option(GPU_CUDA_SUPPORT "CUDA support." ON)
 
 # GLSLC_BIN используйтся для компиляции Vulkan шейдеров (GLSL)
 if (NOT DEFINED GLSLC_BIN)
@@ -65,9 +65,9 @@ set(OPENCL_SOURCES
 
 set(OPENCL_INCLUDES src/kernels/defines.h src/kernels/cl/helpers/rassert.cl)
 set(OPENCL_DEFINES)
-foreach(CL_FILE IN LISTS OPENCL_SOURCES)
+foreach (CL_FILE IN LISTS OPENCL_SOURCES)
     compile_opencl(HEADERS ${CL_FILE} OPENCL_INCLUDES OPENCL_DEFINES)
-endforeach()
+endforeach ()
 
 # compile_vulkan CMake-функция объявлена в libs/gpu/libgpu/vulkan/CMakeLists.txt:97
 # Она считывает все байты из файла src/kernels/vk/aplusb.comp (т.е. весь исходный код кернела), компилирует с помощью glslc компилятора (в т.ч. выполняя все #include)
@@ -83,9 +83,9 @@ set(VULKAN_SOURCES
         src/kernels/vk/prefix_sum_02_prefix_accumulation.comp)
 
 set(VULKAN_DEFINES)
-foreach(VK_FILE IN LISTS VULKAN_SOURCES)
+foreach (VK_FILE IN LISTS VULKAN_SOURCES)
     compile_vulkan(HEADERS ${VK_FILE} VULKAN_DEFINES)
-endforeach()
+endforeach ()
 
 if (GPU_CUDA_SUPPORT)
     enable_language(CUDA)
@@ -99,24 +99,28 @@ if (GPU_CUDA_SUPPORT)
             src/kernels/cu/aplusb.cu
             src/kernels/cu/fill_buffer_with_zeros.cu
             src/kernels/cu/prefix_sum_01_reduction.cu
-            src/kernels/cu/prefix_sum_02_prefix_accumulation.cu)
+            src/kernels/cu/prefix_sum_02_prefix_accumulation.cu
+            src/kernels/cu/prefix_sum_01_reduction_blelloch.cu
+            src/kernels/cu/prefix_sum_02_prefix_accumulation_blelloch.cu
+    )
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
     target_include_directories(${PROJECT_NAME}_core PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_compile_options(${PROJECT_NAME}_core PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-lineinfo>)
 else ()
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${HEADERS})
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
 endif ()
 
-add_executable(main_aplusb     src/main_aplusb.cpp)
+add_executable(main_aplusb src/main_aplusb.cpp)
 add_executable(main_prefix_sum src/main_prefix_sum.cpp)
 
-target_link_libraries(main_aplusb     ${PROJECT_NAME}_core)
+target_link_libraries(main_aplusb ${PROJECT_NAME}_core)
 target_link_libraries(main_prefix_sum ${PROJECT_NAME}_core)
 
 if (GPU_CUDA_SUPPORT)
-    target_include_directories(main_aplusb     PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_include_directories(main_aplusb PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
     target_include_directories(main_prefix_sum PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 endif ()

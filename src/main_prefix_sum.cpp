@@ -67,21 +67,15 @@ void run(int argc, char** argv)
 
     gpu::gpu_mem_32u input_gpu(n), prefix_sum_accum_gpu(n);
     std::vector<gpu::gpu_mem_32u> reductors;
-    reductors.emplace_back(input_gpu);
-    for (unsigned int cur_size = (n + 1) / 2; cur_size >= 2; cur_size = (cur_size + 1) / 2) {
-        reductors.emplace_back(cur_size);
-    }
+    reductors.push_back(prefix_sum_accum_gpu);
 
-    gpu::shared_device_buffer_typed<uint32_t*> pow2_sum(reductors.size());
-    std::vector<uint32_t*> reductors_pointers_tmp;
-    for (auto& reductor : reductors) {
-        reductors_pointers_tmp.emplace_back(reductor.cuptr());
+    for (unsigned int size = n; size > 1;) {
+        size = size / DATA_SIZE + (size % DATA_SIZE != 0);
+        reductors.emplace_back(size);
     }
-
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
-    pow2_sum.writeN(reductors_pointers_tmp.data(), reductors.size());
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
 
@@ -98,15 +92,23 @@ void run(int argc, char** argv)
             // ocl_sum_reduction.exec();
             // ocl_prefix_accumulation.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            {
-                auto work_size = n;
-                for (size_t i = 1; i < reductors.size(); i++) {
-                    cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, 1, work_size, 1), reductors[i - 1], reductors[i], work_size);
-                    work_size = (work_size + 1) / 2;
-                }
+
+            for (unsigned int i = 1; i < reductors.size(); ++i) {
+                const unsigned int size = reductors[i - 1].size() / reductors[i - 1].elementSize();
+                const unsigned int threads = size / 2 + size % 2;
+                gpu::gpu_mem_32u& data =
+                    (i == 1) ? input_gpu : reductors[i - 1];
+
+
+                cuda::prefix_sum_01_reduction_blelloch(gpu::WorkSize(GROUP_SIZE, 1, threads, 1), data, reductors[i - 1], reductors[i], size);
             }
-            {
-                cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, 1, n, 1), pow2_sum, prefix_sum_accum_gpu, n, reductors.size());
+
+            for (int i = static_cast<int>(reductors.size()) - 2; i >= 0; --i) {
+                unsigned int size = reductors[i].size() / reductors[i].elementSize();
+                const unsigned int threads = size / 2 + size % 2;
+
+
+                cuda::prefix_sum_02_prefix_accumulation_blelloch(gpu::WorkSize(GROUP_SIZE, 1, threads, 1), reductors[i], reductors[i + 1], size);
             }
 
         } else if (context.type() == gpu::Context::TypeVulkan) {
