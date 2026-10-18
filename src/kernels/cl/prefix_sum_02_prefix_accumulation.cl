@@ -8,17 +8,34 @@
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void
 prefix_sum_02_prefix_accumulation(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* pow2_sum, // pow2_sum[i] = sum[i*2^pow2; (i+1)*2^pow2)
-    __global uint* prefix_sum_accum, // we want to make it finally so that prefix_sum_accum[i] = sum[0, i]
-    unsigned int n,
-    unsigned int pow2)
+    __global const uint* in,
+    __global uint* out,
+    __global const uint* block_offsets)
 {
-    const uint i = get_global_id(0);
-    if (i >= n)
-        return;
-    const uint k = (i + 1) >> pow2;
-    if (k & 1)
-        prefix_sum_accum[i] += pow2_sum[k - 1];
+    const uint lid = get_local_id(0);
+    const uint g = get_group_id(0);
+    const uint first = g * SCAN_BLOCK + lid * ELEMS_PER_THREAD;
+    __local uint sums[GROUP_SIZE];
+
+    uint sum = 0;
+    for (uint j = 0; j < ELEMS_PER_THREAD; ++j)
+        sum += in[first + j];
+    sums[lid] = sum;
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    if (lid == 0) {
+        uint s = block_offsets[g];
+        for (uint i = 0; i < GROUP_SIZE; ++i) {
+            const uint t = sums[i];
+            sums[i] = s;
+            s += t;
+        }
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    uint s = sums[lid];
+    for (uint j = 0; j < ELEMS_PER_THREAD; ++j) {
+        s += in[first + j];
+        out[first + j] = s;
+    }
 }

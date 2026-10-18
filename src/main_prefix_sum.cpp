@@ -1,6 +1,7 @@
 #include <libbase/stats.h>
 #include <libutils/misc.h>
 
+#include <libbase/math.h>
 #include <libbase/timer.h>
 #include <libgpu/vulkan/engine.h>
 #include <libgpu/vulkan/tests/test_utils.h>
@@ -68,11 +69,25 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+
+    // уровни: n элементов -> n1 сумм блоков -> n2 сумм блоков (больше в uint не влезает)
+    unsigned int n1 = div_ceil(n, (unsigned int)SCAN_BLOCK);
+    unsigned int n2 = div_ceil(n1 + 1, (unsigned int)SCAN_BLOCK);
+    unsigned int padded0 = n1 * SCAN_BLOCK;
+    unsigned int padded1 = n2 * SCAN_BLOCK;
+    unsigned int padded2 = SCAN_BLOCK;
+    gpu::gpu_mem_32u input_gpu(padded0), prefix_sum_accum_gpu(padded0);
+    gpu::gpu_mem_32u sums1(padded1), sums2(padded2);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
+    ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, padded0), input_gpu, padded0);
+    ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, padded1), sums1, padded1);
+    ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, padded2), sums2, padded2);
     input_gpu.writeN(as.data(), n);
-    gpu::WorkSize ws(GROUP_SIZE, n);
+
+    gpu::WorkSize ws0(GROUP_SIZE, n1 * GROUP_SIZE);
+    gpu::WorkSize ws1(GROUP_SIZE, n2 * GROUP_SIZE);
+    gpu::WorkSize ws2(GROUP_SIZE, GROUP_SIZE);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
@@ -82,19 +97,12 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            ocl_fill_with_zeros.exec(ws, prefix_sum_accum_gpu, n);
-            gpu::gpu_mem_32u* cur = &input_gpu;
-            gpu::gpu_mem_32u* next = &buffer1_pow2_sum_gpu;
-            unsigned int cur_n = n;
-            for (unsigned int pow2 = 0; (1u << pow2) <= n; ++pow2) {
-                ocl_prefix_accumulation.exec(ws, *cur, prefix_sum_accum_gpu, n, pow2);
-                if (cur_n == 1)
-                    break;
-                ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, (cur_n + 1) / 2), *cur, *next, cur_n);
-                cur_n = (cur_n + 1) / 2;
-                cur = next;
-                next = (next == &buffer1_pow2_sum_gpu) ? &buffer2_pow2_sum_gpu : &buffer1_pow2_sum_gpu;
-            }
+            ocl_sum_reduction.exec(ws0, input_gpu, sums1);
+            ocl_sum_reduction.exec(ws1, sums1, sums2);
+
+            ocl_prefix_accumulation.exec(ws2, sums2, sums2, sums2);
+            ocl_prefix_accumulation.exec(ws1, sums1, sums1, sums2);
+            ocl_prefix_accumulation.exec(ws0, input_gpu, prefix_sum_accum_gpu, sums1);
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
