@@ -41,7 +41,7 @@ void run(int argc, char** argv)
     avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
     avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
 
-    unsigned int n = 100*1000*1000;
+    unsigned int n = 100 * 1000 * 1000;
     std::vector<unsigned int> as(n, 0);
     size_t total_sum = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -72,6 +72,7 @@ void run(int argc, char** argv)
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
+    gpu::WorkSize ws(GROUP_SIZE, n);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
@@ -81,11 +82,19 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            ocl_fill_with_zeros.exec(ws, prefix_sum_accum_gpu, n);
+            gpu::gpu_mem_32u* cur = &input_gpu;
+            gpu::gpu_mem_32u* next = &buffer1_pow2_sum_gpu;
+            unsigned int cur_n = n;
+            for (unsigned int pow2 = 0; (1u << pow2) <= n; ++pow2) {
+                ocl_prefix_accumulation.exec(ws, *cur, prefix_sum_accum_gpu, n, pow2);
+                if (cur_n == 1)
+                    break;
+                ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, (cur_n + 1) / 2), *cur, *next, cur_n);
+                cur_n = (cur_n + 1) / 2;
+                cur = next;
+                next = (next == &buffer1_pow2_sum_gpu) ? &buffer2_pow2_sum_gpu : &buffer1_pow2_sum_gpu;
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
