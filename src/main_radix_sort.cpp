@@ -13,6 +13,8 @@
 
 #include <fstream>
 
+#include "libgpu/cuda/cuda_api.h"
+
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -22,19 +24,15 @@ void run(int argc, char** argv)
     //   - Если аргументов запуска нет или переданное число не находится в диапазоне от 0 до N-1 - кинет ошибку
     //   - Если аргумент запуска есть и он от 0 до N-1 - вернет устройство под указанным номером
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
+    int cudaDevice;
+    cudaError_t err = cudaGetDevice(&cudaDevice);
+    rassert(err == cudaSuccess, 123456001, cudaGetErrorString(err));
 
-    // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
-    // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
-    // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
-    // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
+    int smCount;
+    err = cudaDeviceGetAttribute(&smCount, cudaDevAttrMultiProcessorCount, cudaDevice);
+    rassert(err == cudaSuccess, 123456002, cudaGetErrorString(err));
+
     gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
-    // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
-    // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
-    // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
-    //          если же вас это не останавливает - профилировщик (nsight-systems) при запуске на NVIDIA тоже работает (хоть и менее мощный чем nsight-compute)
-    //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
-    //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
     ocl::KernelSource ocl_fillBufferWithZeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_radixSort01LocalCounting(ocl::getRadixSort01LocalCounting());
@@ -91,7 +89,8 @@ void run(int argc, char** argv)
     constexpr size_t NUM_PASSES = 4;
     constexpr size_t NUM_PACKS = 4;
     constexpr size_t NUM_BINS = 256;
-    constexpr size_t HISTOGRAM_BLOCKS = 46 * 4;
+    constexpr size_t BLOCKS_PER_SM = 4;
+    const size_t HISTOGRAM_BLOCKS = static_cast<size_t>(smCount) * BLOCKS_PER_SM;
 
     const size_t numTiles = (n + TILE_SIZE - 1) / TILE_SIZE;
     const size_t statesPerPass = NUM_BINS * numTiles;
