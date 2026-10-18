@@ -81,8 +81,6 @@ void run(int argc, char** argv)
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, padded0), input_gpu, padded0);
-    ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, padded1), sums1, padded1);
-    ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, padded2), sums2, padded2);
     input_gpu.writeN(as.data(), n);
 
     gpu::WorkSize ws0(GROUP_SIZE, n1 * GROUP_SIZE);
@@ -97,6 +95,8 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
+            ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, padded1), sums1, padded1);
+            ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, padded2), sums2, padded2);
             ocl_sum_reduction.exec(ws0, input_gpu, sums1);
             ocl_sum_reduction.exec(ws1, sums1, sums2);
 
