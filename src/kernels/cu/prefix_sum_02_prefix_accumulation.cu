@@ -7,25 +7,39 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+// Наложение сумм предыдущих тайлов:
+//   dst[i] = src[i] + (tile == 0 ? 0 : offsets[tile - 1]),  tile = i / SCAN_TILE
+// где src - inclusive-скан внутри тайла (шаг 1), а offsets[j] - полная префиксная сумма
+// сумм тайлов 0..j, т.е. скан массива totals (шаг 2, рекурсивный).
+// После этого dst[i] = sum in[0 .. i] - финальная префиксная сумма по всему массиву.
+//
+// offsets читаются только, src и dst могут совпадать (in-place): каждый поток читает
+// свой элемент src[i] до записи в dst[i], а offsets - только читается.
 __global__ void prefix_sum_02_prefix_accumulation(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* pow2_sum, // pow2_sum[i] = sum[i*2^pow2; (i+1)*2^pow2)
-          unsigned int* prefix_sum_accum, // we want to make it finally so that prefix_sum_accum[i] = sum[0, i]
-    unsigned int n,
-    unsigned int pow2)
+    const unsigned int* src,     // n элементов: скан внутри тайла
+    const unsigned int* offsets, // ceil(n/SCAN_TILE) элементов: полные префиксные суммы сумм тайлов
+          unsigned int* dst,     // n элементов: результат (можно тот же буфер что и src)
+    unsigned int n)
 {
-    // TODO
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (index >= n)
+        return;
+
+    const unsigned int tile = index / SCAN_TILE;
+    const unsigned int offset = (tile == 0) ? 0u : offsets[tile - 1];
+    dst[index] = src[index] + offset;
 }
 
 namespace cuda {
-void prefix_sum_02_prefix_accumulation(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32u &pow2_sum, gpu::gpu_mem_32u &prefix_sum_accum, unsigned int n, unsigned int pow2)
+void prefix_sum_02_prefix_accumulation(const gpu::gpu_mem_32u &src,
+            const gpu::gpu_mem_32u &offsets, gpu::gpu_mem_32u &dst, unsigned int n)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::prefix_sum_02_prefix_accumulation<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(pow2_sum.cuptr(), prefix_sum_accum.cuptr(), n, pow2);
+    const gpu::WorkSize workSize(GROUP_SIZE, n);
+    ::prefix_sum_02_prefix_accumulation<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(src.cuptr(), offsets.cuptr(), dst.cuptr(), n);
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda
