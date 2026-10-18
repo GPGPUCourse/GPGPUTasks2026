@@ -28,7 +28,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -86,9 +86,23 @@ void run(int argc, char** argv)
         std::cout << "CPU std::sort effective RAM bandwidth: " << memory_size_gb / elapsed << " GB/s (" << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
+    constexpr size_t ITEMS_PER_THREAD = 8;
+    constexpr size_t TILE_SIZE = GROUP_SIZE * ITEMS_PER_THREAD;
+    constexpr size_t NUM_PASSES = 4;
+    constexpr size_t NUM_PACKS = 4;
+    constexpr size_t NUM_BINS = 256;
+    constexpr size_t HISTOGRAM_BLOCKS = 46 * 4;
+
+    const size_t numTiles = (n + TILE_SIZE - 1) / TILE_SIZE;
+    const size_t statesPerPass = NUM_BINS * numTiles;
+
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u states_gpu(NUM_PASSES * statesPerPass);
+    gpu::gpu_mem_32u tile_counters_gpu(NUM_PASSES);
+    gpu::gpu_mem_32u global_histogram_gpu(NUM_PACKS * NUM_BINS);
+    gpu::gpu_mem_32u global_offsets_gpu(NUM_PACKS * NUM_BINS);
+    gpu::gpu_mem_32u additional_buffer_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -96,15 +110,14 @@ void run(int argc, char** argv)
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
-    buffer_output_gpu.fill(255);
+    buffer_output_gpu.fill(0xFFFFFFFFu);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
+    for (int iter = 0; iter < 10; ++iter) {
+        cuda::fill_buffer_with_zeros(gpu::WorkSize(GROUP_SIZE, NUM_PASSES * statesPerPass), states_gpu, NUM_PASSES * statesPerPass);
+        cuda::fill_buffer_with_zeros(gpu::WorkSize(1, 4), tile_counters_gpu, 4);
+        cuda::fill_buffer_with_zeros(gpu::WorkSize(GROUP_SIZE, NUM_PACKS * NUM_BINS), global_histogram_gpu, NUM_PACKS * NUM_BINS);
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
@@ -118,13 +131,22 @@ void run(int argc, char** argv)
             // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
             // ocl_radixSort04Scatter.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::radix_sort_01_local_counting();
-            // cuda::radix_sort_02_global_prefixes_scan_sum_reduction();
-            // cuda::radix_sort_03_global_prefixes_scan_accumulation();
-            // cuda::radix_sort_04_scatter();
+            cuda::radix_sort_01_local_counting(gpu::WorkSize(GROUP_SIZE, HISTOGRAM_BLOCKS * GROUP_SIZE), input_gpu.cuptr(), global_histogram_gpu.cuptr(), n);
+            cuda::radix_sort_02_global_prefixes_scan_sum_reduction(gpu::WorkSize(32, 32 * NUM_PACKS), global_histogram_gpu.cuptr(), global_offsets_gpu.cuptr());
+
+            uint32_t *input = input_gpu.cuptr();
+            for (size_t i = 0; i < 4; ++i)
+            {
+                uint32_t *states = states_gpu.cuptr() + i * statesPerPass;
+                uint32_t *tileCounter = tile_counters_gpu.cuptr() + i;
+                uint32_t pack_mask = 0xFFu << (i * 8);
+
+                uint32_t *output = i % 2 ? buffer_output_gpu.cuptr() : additional_buffer_gpu.cuptr();
+
+                cuda::radix_sort_03_global_prefixes_scan_accumulation(gpu::WorkSize(GROUP_SIZE, numTiles * GROUP_SIZE), input, states, tileCounter, global_offsets_gpu.cuptr(), output, pack_mask, n);
+
+                input = output;
+            }
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -139,6 +161,7 @@ void run(int argc, char** argv)
 
         times.push_back(t.elapsed());
     }
+
     std::cout << "GPU radix-sort times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 
     // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили его переупорядоченным)
