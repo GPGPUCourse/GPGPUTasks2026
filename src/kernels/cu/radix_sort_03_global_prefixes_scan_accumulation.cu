@@ -212,7 +212,7 @@ __global__ void radix_sort_03_global_prefixes_scan_accumulation(const uint32_t *
 
     const size_t numTiles = (n + TILE_SIZE - 1) / TILE_SIZE;
 
-    const size_t stateIdx = static_cast<size_t>(pack) * numTiles + tileIdx;
+    const size_t stateIdx = static_cast<size_t>(tileIdx) * NUM_BINS + pack;
 
     const uint32_t count = block_histogram[pack];
 
@@ -225,7 +225,7 @@ __global__ void radix_sort_03_global_prefixes_scan_accumulation(const uint32_t *
     uint32_t l_count = 0;
     for (int i = static_cast<int>(tileIdx) - 1; i >= 0; --i)
     {
-        const size_t prevIdx = static_cast<size_t>(pack) * numTiles + static_cast<size_t>(i);
+        const size_t prevIdx = static_cast<size_t>(i) * NUM_BINS + pack;
 
         cuda::atomic_ref<uint32_t, cuda::thread_scope_device> prevState(states[prevIdx]);
 
