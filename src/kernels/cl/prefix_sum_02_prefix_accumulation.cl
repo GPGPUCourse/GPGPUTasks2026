@@ -5,6 +5,11 @@
 #include "../defines.h"
 #include "helpers/rassert.cl"
 
+inline uint pad(uint i)
+{
+    return i + i / 32;
+}
+
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void
 prefix_sum_02_prefix_accumulation(
@@ -14,12 +19,18 @@ prefix_sum_02_prefix_accumulation(
 {
     const uint lid = get_local_id(0);
     const uint g = get_group_id(0);
-    const uint first = g * SCAN_BLOCK + lid * ELEMS_PER_THREAD;
+    const uint base = g * SCAN_BLOCK;
+    const uint first = lid * ELEMS_PER_THREAD;
+    __local uint data[SCAN_BLOCK + SCAN_BLOCK / 32];
     __local uint sums[GROUP_SIZE];
+
+    for (uint j = 0; j < ELEMS_PER_THREAD; ++j)
+        data[pad(j * GROUP_SIZE + lid)] = in[base + j * GROUP_SIZE + lid];
+    barrier(CLK_LOCAL_MEM_FENCE);
 
     uint sum = 0;
     for (uint j = 0; j < ELEMS_PER_THREAD; ++j)
-        sum += in[first + j];
+        sum += data[pad(first + j)];
     sums[lid] = sum;
     barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -35,7 +46,11 @@ prefix_sum_02_prefix_accumulation(
 
     uint s = sums[lid];
     for (uint j = 0; j < ELEMS_PER_THREAD; ++j) {
-        s += in[first + j];
-        out[first + j] = s;
+        s += data[pad(first + j)];
+        data[pad(first + j)] = s;
     }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    for (uint j = 0; j < ELEMS_PER_THREAD; ++j)
+        out[base + j * GROUP_SIZE + lid] = data[pad(j * GROUP_SIZE + lid)];
 }

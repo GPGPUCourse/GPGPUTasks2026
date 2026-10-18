@@ -11,9 +11,9 @@ prefix_sum_01_reduction(
     __global const uint* in,
     __global uint* block_sums)
 {
-    const uint first = get_group_id(0) * SCAN_BLOCK + get_local_id(0) * ELEMS_PER_THREAD;
+    const uint first = get_group_id(0) * SCAN_BLOCK + get_local_id(0);
     uint sum = 0;
     for (uint j = 0; j < ELEMS_PER_THREAD; ++j)
-        sum += in[first + j];
+        sum += in[first + j * GROUP_SIZE];
     atomic_add(&block_sums[get_group_id(0) + 1], sum);
 }
