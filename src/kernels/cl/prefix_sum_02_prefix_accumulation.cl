@@ -2,17 +2,24 @@
 #include <libgpu/opencl/cl/clion_defines.cl> // This file helps CLion IDE to know what additional functions exists in OpenCL's extended C99
 #endif
 
-#include "helpers/rassert.cl"
 #include "../defines.h"
+#include "helpers/rassert.cl"
 
-__attribute__((reqd_work_group_size(1, 1, 1)))
-__kernel void prefix_sum_02_prefix_accumulation(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* pow2_sum, // pow2_sum[i] = sum[i*2^pow2; (i+1)*2^pow2)
-    __global       uint* prefix_sum_accum, // we want to make it finally so that prefix_sum_accum[i] = sum[0, i]
-    unsigned int n,
-    unsigned int pow2)
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__kernel void
+prefix_sum_02_prefix_accumulation(
+    __global const uint* pow2_sum,
+    __global uint* prefix_sum_accum,
+    const uint n,
+    const uint pow2)
 {
-    // TODO
+    const uint i = get_global_id(0);
+
+    const uint block = i >> pow2;
+    const uint offset = i & ((1u << pow2) - 1u);
+    const uint k = (((block << 1u) | 1u) << pow2) + offset - 1u;
+
+    if (k < n) {
+        prefix_sum_accum[k] += pow2_sum[block << 1u];
+    }
 }
