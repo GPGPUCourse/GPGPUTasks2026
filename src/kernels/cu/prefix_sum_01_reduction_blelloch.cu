@@ -11,7 +11,12 @@
 
 #define NUM_BANKS 32
 #define LOG_NUM_BANKS 5
-#define CONFLICT_FREE_OFFSET(n) ((n) >> NUM_BANKS + (n) >> (2 * LOG_NUM_BANKS))
+
+//#define compute_index(n) (((n / NUM_BANKS) % NUM_BANKS + n % NUM_BANKS >= NUM_BANKS) ? n / NUM_BANKS : n + (n / NUM_BANKS) % NUM_BANKS)
+
+__device__ __forceinline__ unsigned int compute_index(unsigned int n) {
+    return n + n / NUM_BANKS;
+}
 
 __global__ void prefix_sum_01_reduction_blelloch(
     unsigned int* data, // contains n values
@@ -20,41 +25,41 @@ __global__ void prefix_sum_01_reduction_blelloch(
     unsigned int n)
 {
     const unsigned int index = blockIdx.x * blockDim.x * 2 + threadIdx.x;
-    __shared__ unsigned int temp[DATA_SIZE];
+    __shared__ unsigned int temp[DATA_SIZE +  (DATA_SIZE - 1) / NUM_BANKS];
 
     if (index < n) {
-        temp[threadIdx.x + CONFLICT_FREE_OFFSET(threadIdx.x)] = data[index];
+        temp[compute_index(threadIdx.x)] = data[index];
     } else {
-        temp[threadIdx.x + CONFLICT_FREE_OFFSET(threadIdx.x)] = 0;
+        temp[compute_index(threadIdx.x)] = 0;
     }
     const unsigned int extra_undex = index + GROUP_SIZE;
     if (extra_undex < n) {
-        temp[threadIdx.x + GROUP_SIZE + CONFLICT_FREE_OFFSET(threadIdx.x + GROUP_SIZE)] = data[extra_undex];
+        temp[compute_index(threadIdx.x + GROUP_SIZE)] = data[extra_undex];
     } else {
-        temp[threadIdx.x + GROUP_SIZE + CONFLICT_FREE_OFFSET(threadIdx.x + GROUP_SIZE)] = 0;
+        temp[compute_index(threadIdx.x + GROUP_SIZE)] = 0;
     }
 
     unsigned int offset = 1;
 
-    #pragma unroll
+#pragma unroll
     for (unsigned int d = DATA_SIZE >> 1; d > 0; d >>= 1) {
         __syncthreads();
         if (threadIdx.x < d) {
             unsigned int ai = offset * (2 * threadIdx.x + 1) - 1;
             unsigned int bi = ai + offset;
-            ai = ai + CONFLICT_FREE_OFFSET(ai);
-            bi = bi + CONFLICT_FREE_OFFSET(bi);
+            ai = compute_index(ai);
+            bi = compute_index(bi);
             temp[bi] += temp[ai];
         }
         offset *= 2;
     }
     __syncthreads();
 
-    const unsigned int sum = temp[DATA_SIZE - 1 + CONFLICT_FREE_OFFSET(DATA_SIZE - 1)];
+    const unsigned int sum = temp[compute_index(DATA_SIZE - 1)];
     __syncthreads();
     if (threadIdx.x == 0) {
         partial_sums[blockIdx.x] = sum;
-        temp[DATA_SIZE - 1 + CONFLICT_FREE_OFFSET(DATA_SIZE - 1)] = 0;
+        temp[compute_index(DATA_SIZE - 1)] = 0;
     }
 
 #pragma unroll
@@ -66,8 +71,8 @@ __global__ void prefix_sum_01_reduction_blelloch(
 
             unsigned int first = (2 * threadIdx.x + 1) * offset - 1;
             unsigned int second = first + offset;
-            first = first + CONFLICT_FREE_OFFSET(first);
-            second = second + CONFLICT_FREE_OFFSET(second);
+            first = compute_index(first);
+            second = compute_index(second);
 
             unsigned int first_buf = temp[first];
             temp[first] = temp[second];
@@ -78,14 +83,14 @@ __global__ void prefix_sum_01_reduction_blelloch(
     __syncthreads();
 
     if (index < n) {
-        res[index] = temp[threadIdx.x + 1 + CONFLICT_FREE_OFFSET(threadIdx.x + 1)];
+        res[index] = temp[compute_index(threadIdx.x + 1)];
     }
     if (index + GROUP_SIZE < n) {
         if (threadIdx.x + 1 + GROUP_SIZE >= DATA_SIZE) {
             res[index + GROUP_SIZE] = sum;
 
         } else {
-            res[index + GROUP_SIZE] = temp[threadIdx.x + 1 + GROUP_SIZE + CONFLICT_FREE_OFFSET(threadIdx.x + 1 + GROUP_SIZE)];
+            res[index + GROUP_SIZE] = temp[compute_index(threadIdx.x + 1 + GROUP_SIZE)];
         }
     }
 }
