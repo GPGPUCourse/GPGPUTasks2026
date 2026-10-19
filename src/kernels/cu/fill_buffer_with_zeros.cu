@@ -108,9 +108,11 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
     __shared__ unsigned int b[1024+16];
     __shared__ unsigned int d[1024+16];
     __shared__ unsigned int valsum;
+    unsigned int maxtwo=1;
+    while (maxtwo<1024 && threadIdx.x%(2*maxtwo)==0) maxtwo*=2;
     for (int startid0=0;startid0<n;startid0+=2*80*1024*9)
     {
-        unsigned int uu=2*((startid0/(2*80*1024*9))%2);
+        unsigned int uu=3*((startid0/(2*80*1024*9))%2);
         unsigned int startid=startid0+blockIdx.x*1024*9;
         unsigned int threadid=threadIdx.x;
         unsigned int sumbefore=start[0];
@@ -143,8 +145,16 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         a[9*threadid+8]=b[threadid];
         __syncthreads();
         unsigned int totalsum=a[9*1023+8];
-        if (threadid<=2*80 && threadid>blockIdx.x)//
+        /*if (startid==1760256-9*1024 && threadIdx.x==31)
         {
+            printf("blockIdx.x = %d \n , totalsum = %d \n,  maxtwo = %d \n",blockIdx.x,totalsum,maxtwo);
+        }*/
+        if (threadid<2*80 && threadid>blockIdx.x && threadid-maxtwo<=blockIdx.x)//
+        {
+            /*if (startid==1760256-9*1024 && threadIdx.x==31)
+            {
+                printf("rgerweq \n");
+            }*/
             atomicAdd(sums+threadid,totalsum);
         } //
         if (threadIdx.x==0)
@@ -168,7 +178,16 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         __syncthreads();
         if (threadIdx.x==0)
         {
-            valsum=atomicAdd(sums+blockIdx.x,0);
+            valsum=0;
+        }
+        __syncthreads();
+        if (threadid<=blockIdx.x && threadid+maxtwo>blockIdx.x)
+        {
+            /*if (startid==2055168)
+            {
+                printf("threadid = %d \n sums[threadid] = %d \n",threadid,sums[threadid]);
+            }*/
+            atomicAdd(&valsum,atomicAdd(sums+threadid,0));
         }
         __syncthreads();
         if (threadIdx.x==1023)
@@ -194,6 +213,16 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
             }
         }
         __syncthreads();
+       /* if (threadIdx.x==0)
+        {
+            atomicAdd(ended+2+uu,1);
+            unsigned int uselessiterations=0;
+            while (atomicAdd(ended+2+uu,0)!=(endedwas+2*80)) ///странный цикл
+            {
+                uselessiterations+=1;
+            }
+        }
+        __syncthreads();*/
         if (threadIdx.x==0)
         {
             sums[blockIdx.x]=0;

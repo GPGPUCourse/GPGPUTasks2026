@@ -9,7 +9,7 @@
 #include "kernels/kernels.h"
 
 #include <fstream>
-//#define MAKSIM
+#define MAKSIM
 //#define MAKSIM
 //
 void run(int argc, char** argv)
@@ -129,7 +129,7 @@ void run(int argc, char** argv)
         std::vector<unsigned int> zero(1000,0);
         gpu::gpu_mem_32u sums(200);
         gpu::gpu_mem_32u sumbefore(1000);
-        gpu::gpu_mem_32u ended(4);
+        gpu::gpu_mem_32u ended(6);
         unsigned int numberofSMs=80;
         for (int iter = 0; iter < 10; ++iter) {
             cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,n),prefix_sum_accum_gpu,n);
@@ -141,7 +141,7 @@ void run(int argc, char** argv)
             //cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,n),buffer1_pow2_sum_gpu,n);
             //int step=numberofSMs*2*9*1024;
             sumbefore.writeN(zero.data(),1000);
-            ended.writeN(zero.data(),4);
+            ended.writeN(zero.data(),6);
             sums.writeN(zero.data(),200);
             /*for (int start=0;start<n;start+=step)
             {
