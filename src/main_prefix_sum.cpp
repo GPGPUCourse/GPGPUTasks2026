@@ -99,14 +99,8 @@ void run(int argc, char** argv)
             GROUP_SIZE,
             n);
 
-        pos = 0;
-        size = n;
-        cuda::prefix_sum_02_prefix_accumulation(workSize, input_gpu, prefix_sum_accum_gpu, n, 0, 0);
-        // for (int i = 1; i < 32; ++i) {
-        //     size = (size + 1) / 2;
-        //     cuda::prefix_sum_02_prefix_accumulation(workSize, buffer1_pow2_sum_gpu, prefix_sum_accum_gpu, n, i, pos);
-        //     pos += size;
-        // }
+        cuda::prefix_sum_02_prefix_accumulation(
+            workSize, input_gpu, buffer1_pow2_sum_gpu, prefix_sum_accum_gpu, n);
 
         times.push_back(t.elapsed());
     }
