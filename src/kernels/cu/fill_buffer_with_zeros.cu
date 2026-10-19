@@ -156,16 +156,14 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
-            while (atomicAdd(sums+blockIdx.x,0)%256<blockIdx.x) ///странный цикл
+            while (true) ///странный цикл
             {
+                valsum=atomicAdd(sums+blockIdx.x,0);
+                if (valsum%256==blockIdx.x) {valsum/=256;break;}
                 uselessiterations+=1;
             }
         }
         __syncthreads();
-        if (threadIdx.x==0)
-        {
-            valsum=atomicAdd(sums+blockIdx.x,0)/256;
-        }
         if (threadIdx.x==1023)
         {
             atomicAdd(start,totalsum);
