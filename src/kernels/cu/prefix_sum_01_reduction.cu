@@ -15,6 +15,15 @@ __global__ void prefix_sum_01_reduction(
     unsigned int n)
 {
     // TODO
+    const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n / 2 + n % 2)
+        return;
+
+    const unsigned int first = 2 * i;
+    unsigned int sum = pow2_sum[first];
+    if (first + 1 < n)
+        sum += pow2_sum[first + 1];
+    next_pow2_sum[i] = sum;
 }
 
 namespace cuda {

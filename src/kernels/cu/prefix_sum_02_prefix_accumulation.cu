@@ -16,6 +16,14 @@ __global__ void prefix_sum_02_prefix_accumulation(
     unsigned int pow2)
 {
     // TODO
+    const unsigned long long i = 2ull * (blockIdx.x * blockDim.x + threadIdx.x);
+    const unsigned long long step = 1ull << pow2;
+    const unsigned long long end = (i + 1) * step - 1;
+    if (end >= n)
+        return;
+
+    const unsigned int before = i == 0 ? 0 : prefix_sum_accum[i * step - 1];
+    prefix_sum_accum[end] = before + pow2_sum[i];
 }
 
 namespace cuda {
