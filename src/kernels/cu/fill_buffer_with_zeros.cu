@@ -173,6 +173,12 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
             while (atomicAdd(ended+0+uu,0)<endedwas+2*80) ///странный цикл
             {
                 uselessiterations+=1;
+                for (int dumb=0;dumb<10;++dumb)
+                {
+                    uselessiterations+=4.0/3.0;
+                    uselessiterations/=3;
+                    uselessiterations+=25;
+                }
             }
         }
         __syncthreads();
@@ -237,6 +243,12 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
             while (atomicAdd(ended+1+uu,0)!=(endedwas+2*80)) ///странный цикл
             {
                 uselessiterations+=1;
+                for (int dumb=0;dumb<10;++dumb)
+                {
+                    uselessiterations+=4.0/3.0;
+                    uselessiterations/=3;
+                    uselessiterations+=25;
+                }
             }
         }
         /*if (threadIdx.x==0)
