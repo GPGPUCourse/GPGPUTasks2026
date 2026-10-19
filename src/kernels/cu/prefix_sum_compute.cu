@@ -85,9 +85,6 @@ void prefix_sum_compute(const gpu::WorkSize &workSize,
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
 
-    // суммы блоков пишем попеременно в две непересекающиеся части sum_buffer:
-    // [0, sums_count) и [sums_count, ...), где sums_count - число сумм первого уровня (дальше их только меньше)
-    // input никогда не перезаписываем, и на одном уровне никогда не читаем и пишем один и тот же буфер
     const unsigned int sums_count = (n + GROUP_SIZE * 2 - 1) / (GROUP_SIZE * 2);
     gpu::gpu_mem_32u cur_buffer = sum_buffer;
     gpu::gpu_mem_32u next_buffer(sum_buffer, sums_count);
@@ -95,10 +92,8 @@ void prefix_sum_compute(const gpu::WorkSize &workSize,
     gpu::gpu_mem_32u cur_input = input;
     unsigned int input_size = n;
 
-    // первый уровень нужен всегда (даже при n == 1), следующие - пока блоков больше одного
     size_t block_size = 1;
     do {
-        // каждый поток сканирует 2 элемента, поэтому сетку считаем от размера входа текущего уровня
         gpu::WorkSize scan_worksize(GROUP_SIZE, (input_size + 1) / 2);
         blelloch_iteration<<<scan_worksize.cuGridSize(), scan_worksize.cuBlockSize(), 0, stream>>>(cur_input.cuptr(), cur_buffer.cuptr(), block_additives.cuptr(), block_size, input_size);
         CUDA_CHECK_KERNEL_SYNC(stream);
@@ -107,7 +102,6 @@ void prefix_sum_compute(const gpu::WorkSize &workSize,
         per_block_additive<<<sum_worksize.cuGridSize(), sum_worksize.cuBlockSize(), 0, stream>>>(block_additives.cuptr(), output.cuptr(), block_size, n);
         CUDA_CHECK_KERNEL_SYNC(stream);
 
-        // суммы блоков этого уровня - вход следующего
         cur_input = cur_buffer;
         cur_buffer.swap(next_buffer);
         input_size = (input_size + GROUP_SIZE * 2 - 1) / (GROUP_SIZE * 2);
