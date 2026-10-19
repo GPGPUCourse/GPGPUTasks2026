@@ -2,17 +2,67 @@
 #include <libgpu/opencl/cl/clion_defines.cl> // This file helps CLion IDE to know what additional functions exists in OpenCL's extended C99
 #endif
 
-#include "helpers/rassert.cl"
 #include "../defines.h"
 
-__attribute__((reqd_work_group_size(1, 1, 1)))
+__attribute__((reqd_work_group_size(SCAN_GROUP_SIZE, 1, 1)))
 __kernel void prefix_sum_02_prefix_accumulation(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* pow2_sum, // pow2_sum[i] = sum[i*2^pow2; (i+1)*2^pow2)
-    __global       uint* prefix_sum_accum, // we want to make it finally so that prefix_sum_accum[i] = sum[0, i]
+    __global const uint* input,
+    __global const uint* block_prefixes,
+    __global uint* output,
     unsigned int n,
-    unsigned int pow2)
+    unsigned int data_offset,
+    unsigned int prefixes_offset)
 {
-    // TODO
+    input += data_offset;
+    output += data_offset;
+    // With a single block no block prefix is read (including the top level).
+    if (get_num_groups(0) > 1)
+        block_prefixes += prefixes_offset;
+    const uint lid = get_local_id(0);
+    const size_t block = get_group_id(0);
+    const size_t base = block * SCAN_BLOCK_SIZE + 4 * lid;
+    uint4 values = (uint4)(0);
+    if (base + 3 < n) {
+        values = vload4(0, input + base);
+    } else {
+        for (uint i = 0; i < 4; ++i)
+            if (base + i < n)
+                values[i] = input[base + i];
+    }
+
+    values.y += values.x;
+    values.z += values.y;
+    values.w += values.z;
+
+    __local uint sums[SCAN_GROUP_SIZE];
+    sums[lid] = values.w;
+    barrier(CLK_LOCAL_MEM_FENCE);
+    for (uint stride = 1; stride < SCAN_GROUP_SIZE; stride <<= 1) {
+        const uint index = (lid + 1) * 2 * stride - 1;
+        if (index < SCAN_GROUP_SIZE)
+            sums[index] += sums[index - stride];
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+    if (lid == 0)
+        sums[SCAN_GROUP_SIZE - 1] = 0;
+    barrier(CLK_LOCAL_MEM_FENCE);
+    for (uint stride = SCAN_GROUP_SIZE / 2; stride > 0; stride >>= 1) {
+        const uint index = (lid + 1) * 2 * stride - 1;
+        if (index < SCAN_GROUP_SIZE) {
+            const uint left = sums[index - stride];
+            sums[index - stride] = sums[index];
+            sums[index] += left;
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+    const uint offset = sums[lid] + (block == 0 ? 0 : block_prefixes[block - 1]);
+    values += (uint4)(offset);
+    if (base + 3 < n) {
+        vstore4(values, 0, output + base);
+    } else {
+        for (uint i = 0; i < 4; ++i)
+            if (base + i < n)
+                output[base + i] = values[i];
+    }
 }
