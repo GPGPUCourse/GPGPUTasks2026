@@ -141,7 +141,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         unsigned int totalsum=a[9*1023+8];
         if (threadid<=2*80 && threadid>blockIdx.x)
         {
-            atomicAdd(sums+threadid,totalsum);
+            atomicAdd(sums+threadid,256*totalsum+1);
         } //
         if (threadIdx.x==0)
         {
@@ -156,7 +156,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
-            while (atomicCAS(ended,endedwas+2*80,endedwas+2*80)!=(endedwas+2*80)) ///странный цикл
+            while (atomicAdd(sums+blockIdx.x,0)%256<blockIdx.x) ///странный цикл
             {
                 uselessiterations+=1;
             }
@@ -164,7 +164,11 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         __syncthreads();
         if (threadIdx.x==0)
         {
-            valsum=atomicAdd(sums+blockIdx.x,0);
+            valsum=atomicAdd(sums+blockIdx.x,0)/256;
+        }
+        if (threadIdx.x==1023)
+        {
+            atomicAdd(start,totalsum);
         }
         __syncthreads();
         unsigned int who0=sumbefore+valsum;
@@ -184,7 +188,6 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
                 pr[startid+1024*c+threadid]=a[1024*c+threadid];
             }
         }
-        start[0]=sums[160];
         if (threadIdx.x==0)
         {
             sums[blockIdx.x]=0;
