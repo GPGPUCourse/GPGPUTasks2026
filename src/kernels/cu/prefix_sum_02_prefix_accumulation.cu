@@ -21,7 +21,7 @@ __global__ void prefix_sum_02_prefix_accumulation(
         return;
     unsigned int length = i + 1;
 
-    if (FIRST_LEVEL) {
+    if constexpr (FIRST_LEVEL) {
         prefix_sum_accum[i] = (length & 1u) ? pow2_sum[i] : 0u;
     } else {
         unsigned int segment_size = 1 << pow2;
