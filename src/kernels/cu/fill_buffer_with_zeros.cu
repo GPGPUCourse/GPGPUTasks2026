@@ -120,6 +120,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         {
             if (startid+1024*c+threadid<n)
             {
+                //rassert(1024*c+threadid>=0 && 1024*c+thre)
                 a[1024*c+threadid]=A[startid+1024*c+threadid];
             }
         }
@@ -158,7 +159,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
-            while (atomicAdd(ended,0)<endedwas+2*80) ///странный цикл
+            while (atomicAdd(sums+blockIdx.x,0)%256<blockIdx.x) ///странный цикл
             {
                 uselessiterations+=1;
             }
