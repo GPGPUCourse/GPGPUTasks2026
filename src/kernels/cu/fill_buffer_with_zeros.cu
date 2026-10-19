@@ -120,7 +120,8 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         {
             if (startid+1024*c+threadid<n)
             {
-                //rassert(1024*c+threadid>=0 && 1024*c+thre)
+                //curassert(1024*c+threadid>=0 && 1024*c+threadid<9*1024,1);
+                //curassert(startid+1024*c+threadid>=0 && startid+1024*c+threadid<n,2);
                 a[1024*c+threadid]=A[startid+1024*c+threadid];
             }
         }
@@ -128,6 +129,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
 #pragma unroll(8)
         for (int c=0;c<=7;++c)
         {
+            //curassert(9*threadid+c>=0 && 9*threadid+8<9*1024,3);
             a[9*threadid+8]+=a[9*threadid+c];
         }
         b[threadid]=a[9*threadid+8];
