@@ -108,10 +108,8 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
     __shared__ unsigned int b[1024];
     __shared__ unsigned int d[1024];
     __shared__ unsigned int valsum;
-    __shared__ bool mistake;
     for (int startid0=0;startid0<n;startid0+=2*80*1024*9)
     {
-        mistake=false;
         unsigned int startid=startid0+blockIdx.x*1024*9;
         unsigned int threadid=threadIdx.x;
         unsigned int sumbefore=start[0];
@@ -150,7 +148,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         } //
         if (threadIdx.x==0)
         {
-            //int o=atomicAdd(ended,1);
+            int o=atomicAdd(ended+0,1);
         }
         __syncthreads();
         //if (startid0==2*80*1024*9 && o+1==6*1024*80) printf("blockIdx.x = %d, threadIdx.x= %d, o = %d \n, sums[31] = %d \n",blockIdx.x,threadIdx.x,o,sums[31]);
@@ -161,7 +159,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
-            while (atomicAdd(sums+blockIdx.x,0)%256<blockIdx.x) ///странный цикл
+            while (atomicAdd(ended+0,0)<endedwas+2*80) ///странный цикл
             {
                 uselessiterations+=1;
             }
@@ -201,12 +199,12 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         }
         if (threadIdx.x==0)
         {
-            atomicAdd(ended,1);
+            atomicAdd(ended+1,1);
         }
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
-            while (atomicAdd(ended,0)!=(endedwas+2*80)) ///странный цикл
+            while (atomicAdd(ended+1,0)!=(endedwas+2*80)) ///странный цикл
             {
                 uselessiterations+=1;
             }

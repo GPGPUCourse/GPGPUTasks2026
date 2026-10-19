@@ -129,7 +129,7 @@ void run(int argc, char** argv)
         std::vector<unsigned int> zero(1001,0);
         gpu::gpu_mem_32u sums(161);
         gpu::gpu_mem_32u sumbefore(1001);
-        gpu::gpu_mem_32u ended(1);
+        gpu::gpu_mem_32u ended(2);
         unsigned int numberofSMs=80;
         for (int iter = 0; iter < 10; ++iter) {
             cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,n),prefix_sum_accum_gpu,n);
@@ -141,7 +141,7 @@ void run(int argc, char** argv)
             //cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,n),buffer1_pow2_sum_gpu,n);
             //int step=numberofSMs*2*9*1024;
             sumbefore.writeN(zero.data(),1001);
-            ended.writeN(zero.data(),1);
+            ended.writeN(zero.data(),2);
             sums.writeN(zero.data(),161);
             /*for (int start=0;start<n;start+=step)
             {
