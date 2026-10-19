@@ -68,39 +68,47 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), prefix_sum_accum_gpu(n);
+    std::vector<gpu::gpu_mem_32u> block_sums;
+    unsigned int level_size = n;
+    do {
+        level_size = (level_size + GROUP_SIZE - 1) / GROUP_SIZE;
+        block_sums.emplace_back(level_size);
+    } while (level_size > 1);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
+    const gpu::WorkSize work_size(GROUP_SIZE, n);
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
-        // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-        // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fill_with_zeros.exec();
-            // vk_sum_reduction.exec();
-            // vk_prefix_accumulation.exec();
-        } else {
-            rassert(false, 4531412341, context.type());
+        ocl_sum_reduction.exec(work_size, input_gpu, prefix_sum_accum_gpu, block_sums[0], n);
+
+        for (size_t level = 1; level < block_sums.size(); ++level) {
+            unsigned int cnt = block_sums[level - 1].number();
+            ocl_sum_reduction.exec(
+                gpu::WorkSize(GROUP_SIZE, cnt),
+                block_sums[level - 1],
+                block_sums[level - 1],
+                block_sums[level],
+                cnt
+            );
         }
+
+        for (size_t level = block_sums.size() - 1; level > 0; --level) {
+            unsigned int cnt = block_sums[level - 1].number();
+            ocl_prefix_accumulation.exec(
+                gpu::WorkSize(GROUP_SIZE, cnt),
+                block_sums[level],
+                block_sums[level - 1],
+                cnt
+            );
+        }
+
+        ocl_prefix_accumulation.exec(work_size, block_sums[0], prefix_sum_accum_gpu, n);
 
         times.push_back(t.elapsed());
     }

@@ -5,13 +5,44 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-__attribute__((reqd_work_group_size(1, 1, 1)))
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void prefix_sum_01_reduction(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* pow2_sum, // contains n values
-    __global       uint* next_pow2_sum, // will contain (n+1)/2 values
+    __global const uint* input,
+    __global       uint* output,
+    __global       uint* block_sums,
     unsigned int n)
 {
-    // TODO
+    const uint local_id = get_local_id(0);
+    const uint block_id = get_group_id(0);
+    const uint global_id = get_global_id(0); // в нашем случае это blockid * groupsize + localid, просто удобнее так получить
+
+    __local uint local_prefixes[GROUP_SIZE];
+
+    local_prefixes[local_id] = 
+        global_id < n
+            ? input[global_id]
+            : 0;
+
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    for (uint offset = 1; offset < GROUP_SIZE; offset *= 2) {
+        const uint left_sum =
+            local_id >= offset 
+                ? local_prefixes[local_id - offset]
+                : 0;
+
+        barrier(CLK_LOCAL_MEM_FENCE);
+        local_prefixes[local_id] += left_sum;
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+    if (global_id < n) {
+        output[global_id] = local_prefixes[local_id];
+    }
+
+    if (local_id == GROUP_SIZE - 1) {
+        block_sums[block_id] = local_prefixes[local_id];
+    }
 }
