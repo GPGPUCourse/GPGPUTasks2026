@@ -23,4 +23,6 @@ const ProgramBinaries& getAplusB();
 const ProgramBinaries& getFillBufferWithZeros();
 const ProgramBinaries& getPrefixSum01Reduction();
 const ProgramBinaries& getPrefixSum02PrefixAccumulation();
+const ProgramBinaries& getPrefixSum03BlockScan();
+const ProgramBinaries& getPrefixSum04AddOffsets();
 }

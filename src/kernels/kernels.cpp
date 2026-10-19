@@ -9,6 +9,8 @@
 #include "vk/generated_kernels/fill_buffer_with_zeros_comp.h"
 #include "vk/generated_kernels/prefix_sum_01_reduction_comp.h"
 #include "vk/generated_kernels/prefix_sum_02_prefix_accumulation_comp.h"
+#include "vk/generated_kernels/prefix_sum_03_block_scan_comp.h"
+#include "vk/generated_kernels/prefix_sum_04_add_offsets_comp.h"
 
 #ifndef CUDA_SUPPORT
 namespace cuda {
@@ -80,5 +82,15 @@ const ProgramBinaries& getPrefixSum01Reduction()
 const ProgramBinaries& getPrefixSum02PrefixAccumulation()
 {
     return vulkan_binaries_prefix_sum_02_prefix_accumulation_comp;
+}
+
+const ProgramBinaries& getPrefixSum03BlockScan()
+{
+    return vulkan_binaries_prefix_sum_03_block_scan_comp;
+}
+
+const ProgramBinaries& getPrefixSum04AddOffsets()
+{
+    return vulkan_binaries_prefix_sum_04_add_offsets_comp;
 }
 } // namespace avk2

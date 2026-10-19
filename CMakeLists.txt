@@ -80,7 +80,9 @@ set(VULKAN_SOURCES
         src/kernels/vk/aplusb.comp
         src/kernels/vk/fill_buffer_with_zeros.comp
         src/kernels/vk/prefix_sum_01_reduction.comp
-        src/kernels/vk/prefix_sum_02_prefix_accumulation.comp)
+        src/kernels/vk/prefix_sum_02_prefix_accumulation.comp
+        src/kernels/vk/prefix_sum_03_block_scan.comp
+        src/kernels/vk/prefix_sum_04_add_offsets.comp)
 
 set(VULKAN_DEFINES)
 foreach(VK_FILE IN LISTS VULKAN_SOURCES)

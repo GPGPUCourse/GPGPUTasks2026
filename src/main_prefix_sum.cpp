@@ -24,6 +24,8 @@ void run(int argc, char** argv)
     avk2::KernelSource vk_fill_with_zeros(avk2::getFillBufferWithZeros());
     avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
     avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
+    avk2::KernelSource vk_block_scan(avk2::getPrefixSum03BlockScan());
+    avk2::KernelSource vk_add_offsets(avk2::getPrefixSum04AddOffsets());
 
     unsigned int n = 100*1000*1000;
     std::vector<unsigned int> as(n, 0);
@@ -54,6 +56,10 @@ void run(int argc, char** argv)
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
 
+    const unsigned int b = div_ceil(n, static_cast<unsigned int>(GROUP_SIZE));
+    gpu::gpu_mem_32u block_prefixes_gpu(n), block_totals_gpu(b), totals_accum_gpu(b), result_gpu(b);
+
+
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
 
@@ -77,30 +83,41 @@ void run(int argc, char** argv)
         } else if (context.type() == gpu::Context::TypeVulkan) {
             vk_fill_with_zeros.exec(n, gpu::WorkSize(GROUP_SIZE, n), prefix_sum_accum_gpu);
 
+
+
+            vk_block_scan.exec(n, gpu::WorkSize(GROUP_SIZE, n), input_gpu, block_prefixes_gpu, block_totals_gpu);
+
+            vk_fill_with_zeros.exec(b, gpu::WorkSize(GROUP_SIZE, b), totals_accum_gpu);
             struct Params {
                 uint n;
                 uint pow2;
-            } params = { n, 0};
-            vk_prefix_accumulation.exec(params, gpu::WorkSize(GROUP_SIZE, n),  input_gpu, prefix_sum_accum_gpu);
-            vk_sum_reduction.exec(n, gpu::WorkSize(GROUP_SIZE, n), input_gpu, buffer1_pow2_sum_gpu);
+            } params = { b, 0};
+            vk_prefix_accumulation.exec(params, gpu::WorkSize(GROUP_SIZE, b), block_totals_gpu, totals_accum_gpu);
+            vk_sum_reduction.exec(b, gpu::WorkSize(GROUP_SIZE, b), block_totals_gpu, buffer1_pow2_sum_gpu);
 
-            unsigned int size = n;
+            unsigned int size = b;
             unsigned int pow2 = 1;
             bool ping = true;
-            params = { n, pow2};
-            vk_prefix_accumulation.exec(params, gpu::WorkSize(GROUP_SIZE, n),  buffer1_pow2_sum_gpu, prefix_sum_accum_gpu);
+            params = { b, 1 };
+            vk_prefix_accumulation.exec(params, gpu::WorkSize(GROUP_SIZE, b), buffer1_pow2_sum_gpu, totals_accum_gpu);
             while (size > 2) {
                 size = (size + 1) / 2;
                 vk_sum_reduction.exec(size, gpu::WorkSize(GROUP_SIZE, size),
-                        ping ? buffer1_pow2_sum_gpu : buffer2_pow2_sum_gpu,
-                        ping ? buffer2_pow2_sum_gpu : buffer1_pow2_sum_gpu);
+                                      ping ? buffer1_pow2_sum_gpu : buffer2_pow2_sum_gpu,
+                                      ping ? buffer2_pow2_sum_gpu : buffer1_pow2_sum_gpu);
                 ping = !ping;
                 pow2++;
-                params = { n, pow2};
-                vk_prefix_accumulation.exec(params, gpu::WorkSize(GROUP_SIZE, n),
-                        ping ? buffer1_pow2_sum_gpu : buffer2_pow2_sum_gpu, prefix_sum_accum_gpu);
+                params = { b, pow2 };
+                vk_prefix_accumulation.exec(params, gpu::WorkSize(GROUP_SIZE, b),
+                                            ping ? buffer1_pow2_sum_gpu : buffer2_pow2_sum_gpu, totals_accum_gpu);
             }
 
+            vk_add_offsets.exec(n, gpu::WorkSize(GROUP_SIZE, n),
+                                block_prefixes_gpu, totals_accum_gpu, block_totals_gpu, prefix_sum_accum_gpu);
+
+
+            vk_prefix_accumulation.exec(params, gpu::WorkSize(GROUP_SIZE, n),  input_gpu, prefix_sum_accum_gpu);
+            vk_sum_reduction.exec(n, gpu::WorkSize(GROUP_SIZE, n), input_gpu, buffer1_pow2_sum_gpu);
         } else {
             rassert(false, 4531412341, context.type());
         }
