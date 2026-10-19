@@ -169,7 +169,6 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         __syncthreads();
         unsigned int who0=sumbefore+valsum;
         unsigned int who=who0+(threadid==0 ? 0 : a[9*threadid-1]);
-        __syncthreads();
         for (int c=0;c<=7;++c)
         {
             who+=a[9*threadid+c];
@@ -190,12 +189,10 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         {
             sums[blockIdx.x]=0;
         }
-        __syncthreads();
         if (threadIdx.x==0)
         {
             atomicAdd(ended,1);
         }
-        __syncthreads();
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
