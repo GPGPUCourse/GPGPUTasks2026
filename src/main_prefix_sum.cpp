@@ -36,6 +36,8 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_fill_with_zeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
     ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
+    ocl::KernelSource ocl_fast_block_sums(ocl::getPrefixSumFast01BlockSums());
+    ocl::KernelSource ocl_fast_block_scan(ocl::getPrefixSumFast02BlockScan());
 
     avk2::KernelSource vk_fill_with_zeros(avk2::getFillBufferWithZeros());
     avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
@@ -70,6 +72,27 @@ void run(int argc, char** argv)
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
 
+    const unsigned int groups0 = (n + SCAN_BLOCK - 1) / SCAN_BLOCK;
+    const unsigned int padded0 = groups0 * SCAN_BLOCK;
+
+    const unsigned int groups1 = (groups0 + SCAN_BLOCK - 1) / SCAN_BLOCK;
+    const unsigned int padded1 = groups1 * SCAN_BLOCK;
+
+    const unsigned int groups2 = (groups1 + SCAN_BLOCK - 1) / SCAN_BLOCK;
+    const unsigned int padded2 = groups2 * SCAN_BLOCK;
+
+    gpu::gpu_mem_32u fast_input_gpu(padded0), fast_output_gpu(padded0);
+    gpu::gpu_mem_32u fast_sums1_gpu(padded1), fast_prefix1_gpu(padded1);
+    gpu::gpu_mem_32u fast_sums2_gpu(padded2), fast_prefix2_gpu(padded2);
+
+    ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, padded0), fast_input_gpu, padded0);
+    ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, padded1), fast_sums1_gpu, padded1);
+    ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, padded2), fast_sums2_gpu, padded2);
+
+    bool fast_version = true;
+
+    fast_input_gpu.writeN(as.data(), n);
+
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
 
@@ -81,26 +104,35 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, n), prefix_sum_accum_gpu, n);
+            if (fast_version) {
+                ocl_fast_block_sums.exec(gpu::WorkSize(GROUP_SIZE, groups0 * GROUP_SIZE), fast_input_gpu, fast_sums1_gpu);
+                ocl_fast_block_sums.exec(gpu::WorkSize(GROUP_SIZE, groups1 * GROUP_SIZE), fast_sums1_gpu, fast_sums2_gpu);
 
-            unsigned int cur_n = (n + 1) / 2, pow2 = 2, buf_num = 1;
+                ocl_fast_block_scan.exec(gpu::WorkSize(GROUP_SIZE, GROUP_SIZE), fast_sums2_gpu, fast_prefix2_gpu, fast_sums2_gpu);
+                ocl_fast_block_scan.exec(gpu::WorkSize(GROUP_SIZE, groups1 * GROUP_SIZE), fast_sums1_gpu, fast_prefix1_gpu, fast_prefix2_gpu);
+                ocl_fast_block_scan.exec(gpu::WorkSize(GROUP_SIZE, groups0 * GROUP_SIZE), fast_input_gpu, fast_output_gpu, fast_prefix1_gpu);
+            } else {
+                ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, n), prefix_sum_accum_gpu, n);
 
-            ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, prefix_sum_accum_gpu, n, 0u);
-            ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, cur_n), input_gpu, buffer1_pow2_sum_gpu, n);
-            ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), buffer1_pow2_sum_gpu, prefix_sum_accum_gpu, n, 1u);
+                unsigned int cur_n = (n + 1) / 2, pow2 = 2, buf_num = 1;
 
-            while (cur_n > 1 && (1ull << pow2) <= n) {
-                unsigned int next_n = (cur_n + 1) / 2;
-                if (buf_num == 1) {
-                    ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, next_n), buffer1_pow2_sum_gpu, buffer2_pow2_sum_gpu, cur_n);
-                    ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), buffer2_pow2_sum_gpu, prefix_sum_accum_gpu, n, pow2);
-                } else {
-                    ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, next_n), buffer2_pow2_sum_gpu, buffer1_pow2_sum_gpu, cur_n);
-                    ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), buffer1_pow2_sum_gpu, prefix_sum_accum_gpu, n, pow2);
+                ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, prefix_sum_accum_gpu, n, 0u);
+                ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, cur_n), input_gpu, buffer1_pow2_sum_gpu, n);
+                ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), buffer1_pow2_sum_gpu, prefix_sum_accum_gpu, n, 1u);
+
+                while (cur_n > 1 && (1ull << pow2) <= n) {
+                    unsigned int next_n = (cur_n + 1) / 2;
+                    if (buf_num == 1) {
+                        ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, next_n), buffer1_pow2_sum_gpu, buffer2_pow2_sum_gpu, cur_n);
+                        ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), buffer2_pow2_sum_gpu, prefix_sum_accum_gpu, n, pow2);
+                    } else {
+                        ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, next_n), buffer2_pow2_sum_gpu, buffer1_pow2_sum_gpu, cur_n);
+                        ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), buffer1_pow2_sum_gpu, prefix_sum_accum_gpu, n, pow2);
+                    }
+                    cur_n = next_n;
+                    ++pow2;
+                    buf_num ^= 1;
                 }
-                cur_n = next_n;
-                ++pow2;
-                buf_num ^= 1;
             }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -127,7 +159,13 @@ void run(int argc, char** argv)
               << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
+    std::vector<unsigned int> gpu_prefix_sum;
+
+    if (fast_version) {
+        gpu_prefix_sum = fast_output_gpu.readVector();
+    } else {
+        gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
+    }
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
@@ -135,7 +173,13 @@ void run(int argc, char** argv)
     }
 
     // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
-    std::vector<unsigned int> input_values = input_gpu.readVector();
+    std::vector<unsigned int> input_values;
+
+    if (fast_version) {
+        input_values = fast_input_gpu.readVector();
+    } else {
+        input_values = input_gpu.readVector();
+    }
     for (size_t i = 0; i < n; ++i) {
         rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
     }
