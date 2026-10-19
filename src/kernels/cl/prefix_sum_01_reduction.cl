@@ -5,13 +5,50 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-__attribute__((reqd_work_group_size(1, 1, 1)))
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void prefix_sum_01_reduction(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* pow2_sum, // contains n values
-    __global       uint* next_pow2_sum, // will contain (n+1)/2 values
+    __global const uint* input,
+    __global       uint* block_prefix,
+    __global       uint* block_sums,
     unsigned int n)
 {
-    // TODO
+    __local uint values[SCAN_BLOCK_SIZE];
+    const uint lid = get_local_id(0);
+    const size_t first = get_group_id(0) * SCAN_BLOCK_SIZE + lid;
+    const size_t second = first + GROUP_SIZE;
+    const uint a = first < n ? input[first] : 0;
+    const uint b = second < n ? input[second] : 0;
+    values[lid] = a;
+    values[lid + GROUP_SIZE] = b;
+
+    // Blelloch up-sweep: build a tree of partial sums.
+    for (uint stride = 1; stride < SCAN_BLOCK_SIZE; stride *= 2) {
+        barrier(CLK_LOCAL_MEM_FENCE);
+        const uint right = (lid + 1) * 2 * stride - 1;
+        if (right < SCAN_BLOCK_SIZE)
+            values[right] += values[right - stride];
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+    if (lid == 0) {
+        block_sums[get_group_id(0)] = values[SCAN_BLOCK_SIZE - 1];
+        values[SCAN_BLOCK_SIZE - 1] = 0;
+    }
+
+    // Down-sweep: propagate the sum preceding each subtree.
+    for (uint stride = SCAN_BLOCK_SIZE / 2; stride > 0; stride /= 2) {
+        barrier(CLK_LOCAL_MEM_FENCE);
+        const uint right = (lid + 1) * 2 * stride - 1;
+        if (right < SCAN_BLOCK_SIZE) {
+            const uint left_sum = values[right - stride];
+            values[right - stride] = values[right];
+            values[right] += left_sum;
+        }
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    // The tree produced an exclusive scan; add the original values for inclusive scan.
+    if (first < n)
+        block_prefix[first] = values[lid] + a;
+    if (second < n)
+        block_prefix[second] = values[lid + GROUP_SIZE] + b;
 }

@@ -33,7 +33,6 @@ void run(int argc, char** argv)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
-    ocl::KernelSource ocl_fill_with_zeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
     ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
 
@@ -42,6 +41,7 @@ void run(int argc, char** argv)
     avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
 
     unsigned int n = 100*1000*1000;
+    std::cout << "Input size: " << n << " uint values" << std::endl;
     std::vector<unsigned int> as(n, 0);
     size_t total_sum = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -68,7 +68,19 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n);
+    std::vector<unsigned int> level_sizes;
+    std::vector<gpu::gpu_mem_32u> level_prefixes, block_sums;
+    for (unsigned int count = n; ; ) {
+        level_sizes.push_back(count);
+        level_prefixes.emplace_back(count);
+        const unsigned int blocks = count / SCAN_BLOCK_SIZE + (count % SCAN_BLOCK_SIZE != 0);
+        block_sums.emplace_back(blocks);
+        if (blocks == 1)
+            break;
+        count = blocks;
+    }
+    gpu::gpu_mem_32u& prefix_sum_accum_gpu = level_prefixes.front();
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -81,11 +93,17 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            // Scan each block, then recursively scan the smaller array of block sums.
+            for (size_t level = 0; level < level_sizes.size(); ++level) {
+                const auto& input = level == 0 ? input_gpu : block_sums[level - 1];
+                ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, block_sums[level].number() * GROUP_SIZE),
+                                      input, level_prefixes[level], block_sums[level], level_sizes[level]);
+            }
+            // Propagate global offsets from the top level back to the original array.
+            for (size_t level = level_sizes.size() - 1; level > 0; --level) {
+                ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, level_sizes[level - 1]),
+                                            level_prefixes[level], level_prefixes[level - 1], level_sizes[level - 1]);
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -108,7 +126,7 @@ void run(int argc, char** argv)
 
     // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили префиксные суммы)
     double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
-    std::cout << "GPU prefix sum median effective VRAM bandwidth: "
+    std::cout << "Parallel prefix sum median effective bandwidth: "
               << memory_size_gb / stats::median(times) << " GB/s ("
               << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
@@ -125,6 +143,7 @@ void run(int argc, char** argv)
     for (size_t i = 0; i < n; ++i) {
         rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
     }
+    std::cout << "All prefix sums verified, total sum: " << gpu_prefix_sum.back() << std::endl;
 }
 
 int main(int argc, char** argv)
@@ -136,9 +155,6 @@ int main(int argc, char** argv)
         std::cerr << "Error: " << e.what() << std::endl;
         if (e.what() == DEVICE_NOT_SUPPORT_API) {
             // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за выбора CUDA API (его нет на процессоре - т.е. в случае CI на GitHub Actions)
-            exit_code = 0;
-        } else if (e.what() == CODE_IS_NOT_IMPLEMENTED) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за того что задание еще не выполнено
             exit_code = 0;
         } else {
             // Выставляем ненулевой exit code, чтобы сообщить, что случилась ошибка
