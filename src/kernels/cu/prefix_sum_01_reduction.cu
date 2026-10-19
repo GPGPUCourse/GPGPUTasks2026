@@ -6,6 +6,21 @@
 #include "../defines.h"
 #include "helpers/rassert.cu"
 
+__device__ __forceinline__ uint4 prefix_sum_load_four(
+    const unsigned int* input,
+    unsigned int i,
+    unsigned int n)
+{
+    if (i < n && n - i >= 4)
+        return *reinterpret_cast<const uint4*>(input + i);
+
+    return make_uint4(
+        i < n ? input[i] : 0u,
+        i + 1 < n ? input[i + 1] : 0u,
+        i + 2 < n ? input[i + 2] : 0u,
+        i + 3 < n ? input[i + 3] : 0u);
+}
+
 __global__ void prefix_sum_reduce_blocks_kernel(
     const unsigned int* __restrict__ input,
     unsigned int* __restrict__ block_sums,
@@ -16,9 +31,10 @@ __global__ void prefix_sum_reduce_blocks_kernel(
     unsigned int tx = threadIdx.x;
     unsigned int lane = tx & 31u;
     unsigned int warp = tx >> 5;
-    unsigned int i = blockIdx.x * 256u + tx;
+    unsigned int i = blockIdx.x * 1024u + 4u * tx;
 
-    unsigned int value = i < n ? input[i] : 0u;
+    uint4 data = prefix_sum_load_four(input, i, n);
+    unsigned int value = data.x + data.y + data.z + data.w;
 
     for (unsigned int offset = 16; offset > 0; offset >>= 1)
         value += __shfl_down_sync(0xffffffffu, value, offset);
@@ -64,9 +80,15 @@ __global__ void prefix_sum_scan_blocks_kernel(
     unsigned int tx = threadIdx.x;
     unsigned int lane = tx & 31u;
     unsigned int warp = tx >> 5;
-    unsigned int i = blockIdx.x * 256u + tx;
+    unsigned int i = blockIdx.x * 1024u + 4u * tx;
 
-    unsigned int value = i < n ? input[i] : 0u;
+    uint4 data = prefix_sum_load_four(input, i, n);
+    data.y += data.x;
+    data.z += data.y;
+    data.w += data.z;
+
+    unsigned int thread_sum = data.w;
+    unsigned int value = thread_sum;
 
     value = warp_inclusive_scan(value, lane);
 
@@ -92,8 +114,24 @@ __global__ void prefix_sum_scan_blocks_kernel(
     if (block_prefix != nullptr && blockIdx.x > 0)
         value += block_prefix[blockIdx.x - 1];
 
-    if (i < n)
-        output[i] = value;
+    unsigned int offset = value - thread_sum;
+    data.x += offset;
+    data.y += offset;
+    data.z += offset;
+    data.w += offset;
+
+    if (i < n && n - i >= 4) {
+        *reinterpret_cast<uint4*>(output + i) = data;
+    } else {
+        if (i < n)
+            output[i] = data.x;
+        if (i + 1 < n)
+            output[i + 1] = data.y;
+        if (i + 2 < n)
+            output[i + 2] = data.z;
+        if (i + 3 < n)
+            output[i + 3] = data.w;
+    }
 }
 
 namespace cuda {
@@ -144,3 +182,4 @@ void prefix_sum_scan_blocks(
 }
 
 }
+

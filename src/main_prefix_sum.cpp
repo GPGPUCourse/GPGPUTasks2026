@@ -74,11 +74,13 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u prefix_sum_accum_gpu(n);
 
     constexpr unsigned int BLOCK = 256;
+    constexpr unsigned int ITEMS = 4;
+    constexpr unsigned int TILE = BLOCK * ITEMS;
     std::vector<unsigned int> level_sizes { n };
 
-    while (level_sizes.back() > BLOCK) {
+    while (level_sizes.back() > TILE) {
         unsigned int count = level_sizes.back();
-        level_sizes.push_back(count / BLOCK + (count % BLOCK != 0));
+        level_sizes.push_back(count / TILE + (count % TILE != 0));
     }
 
     std::vector<gpu::gpu_mem_32u> sums;
@@ -90,7 +92,9 @@ void run(int argc, char** argv)
     work_sizes.reserve(level_sizes.size());
 
     for (size_t level = 0; level < level_sizes.size(); ++level) {
-        work_sizes.emplace_back(BLOCK, level_sizes[level]);
+        unsigned int threads = level_sizes[level] / ITEMS
+            + (level_sizes[level] % ITEMS != 0);
+        work_sizes.emplace_back(BLOCK, threads);
         if (level > 0) {
             sums.emplace_back(level_sizes[level]);
             prefixes.emplace_back(level_sizes[level]);
@@ -192,3 +196,4 @@ int main(int argc, char** argv)
 
     return exit_code;
 }
+
