@@ -29,4 +29,3 @@ void fill_buffer_with_zeros(const gpu::WorkSize& workSize,
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda
-
