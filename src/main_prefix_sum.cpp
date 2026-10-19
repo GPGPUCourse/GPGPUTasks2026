@@ -10,6 +10,7 @@
 
 #include <fstream>
 //#define MAKSIM
+//
 void run(int argc, char** argv)
 {
     //
@@ -124,7 +125,7 @@ void run(int argc, char** argv)
     {
         std::cout<<" Running bonus task : "<<std::endl;
         std::vector<double> times;
-        std::vector<unsigned int> zero={0};
+        std::vector<unsigned int> zero(161,0);
         gpu::gpu_mem_32u sums(161);
         gpu::gpu_mem_32u sumbefore(1);
         gpu::gpu_mem_32u ended(1);
@@ -137,10 +138,10 @@ void run(int argc, char** argv)
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             //
             //cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,n),buffer1_pow2_sum_gpu,n);
-            int step=numberofSMs*2*9*1024;
+            //int step=numberofSMs*2*9*1024;
             sumbefore.writeN(zero.data(),1);
             ended.writeN(zero.data(),1);
-            cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,161),sums,161);
+            sums.writeN(zero.data(),161);
             /*for (int start=0;start<n;start+=step)
             {
                 std::cout<<" start = "<<start<<'\n';
