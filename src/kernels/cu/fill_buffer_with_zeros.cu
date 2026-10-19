@@ -104,12 +104,13 @@ __global__ void __launch_bounds__(1024,2) makesums(unsigned int* A,unsigned int*
 }
 __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int* pr,unsigned int* sums,unsigned int* start,unsigned int* ended,unsigned int n)
 {
-    __shared__ unsigned int a[1024*9]; ///9 чтобы не было bank conflicts и в память влезает
-    __shared__ unsigned int b[1024];
-    __shared__ unsigned int d[1024];
+    __shared__ unsigned int a[1024*9+16]; ///9 чтобы не было bank conflicts и в память влезает
+    __shared__ unsigned int b[1024+16];
+    __shared__ unsigned int d[1024+16];
     __shared__ unsigned int valsum;
     for (int startid0=0;startid0<n;startid0+=2*80*1024*9)
     {
+        unsigned int uu=2*((startid0/(2*80*1024*9))%2);
         unsigned int startid=startid0+blockIdx.x*1024*9;
         unsigned int threadid=threadIdx.x;
         unsigned int sumbefore=start[0];
@@ -148,18 +149,18 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         } //
         if (threadIdx.x==0)
         {
-            int o=atomicAdd(ended+0,1);
+            int o=atomicAdd(ended+0+uu,1);
         }
         __syncthreads();
         //if (startid0==2*80*1024*9 && o+1==6*1024*80) printf("blockIdx.x = %d, threadIdx.x= %d, o = %d \n, sums[31] = %d \n",blockIdx.x,threadIdx.x,o,sums[31]);
         //return;
         //if (o==2*1024*80-1) {printf("blockIdx.x = %d, threadIdx.x= %d, o = %d \n",blockIdx.x,threadIdx.x,o);}
         //return;
-        unsigned int endedwas=startid0/(9*1024);
+        unsigned int endedwas=(startid0/(2*80*1024*9*2))*2*80;
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
-            while (atomicAdd(ended+0,0)<endedwas+2*80) ///странный цикл
+            while (atomicAdd(ended+0+uu,0)<endedwas+2*80) ///странный цикл
             {
                 uselessiterations+=1;
             }
@@ -199,12 +200,12 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         }
         if (threadIdx.x==0)
         {
-            atomicAdd(ended+1,1);
+            atomicAdd(ended+1+uu,1);
         }
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
-            while (atomicAdd(ended+1,0)!=(endedwas+2*80)) ///странный цикл
+            while (atomicAdd(ended+1+uu,0)!=(endedwas+2*80)) ///странный цикл
             {
                 uselessiterations+=1;
             }
