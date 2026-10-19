@@ -64,14 +64,16 @@ __device__ __forceinline__ unsigned int prefix_sum_look_back(
             unsigned int empty = __ballot_sync(0xffffffffu, status == 0);
             last = ready_prefix != 0 ? __ffs(ready_prefix) - 1 : 31u;
             unsigned int needed = last == 31
-                ? 0xffffffffu : (1u << (last + 1)) - 1u;
+                ? 0xffffffffu
+                : (1u << (last + 1)) - 1u;
 
             if ((empty & needed) == 0)
                 break;
         }
 
         unsigned int value = lane <= last
-            ? static_cast<unsigned int>(state) : 0u;
+            ? static_cast<unsigned int>(state)
+            : 0u;
 
         for (unsigned int offset = 16; offset > 0; offset >>= 1)
             value += __shfl_down_sync(0xffffffffu, value, offset);
@@ -85,6 +87,7 @@ __device__ __forceinline__ unsigned int prefix_sum_look_back(
     }
 }
 
+template <unsigned int BLOCK>
 __global__ void prefix_sum_lookback_kernel(
     const unsigned int* __restrict__ input,
     unsigned int* __restrict__ output,
@@ -92,6 +95,11 @@ __global__ void prefix_sum_lookback_kernel(
     unsigned int* next_tile,
     unsigned int n)
 {
+    static_assert(BLOCK == 256 || BLOCK == 128 || BLOCK == 64,
+        "unsupported block size");
+    constexpr unsigned int WARPS = BLOCK / 32;
+    constexpr unsigned int STRIPS = 256 / BLOCK;
+
     __shared__ unsigned int tile;
     __shared__ unsigned int warp_prefix[8];
     __shared__ unsigned int tile_prefix;
@@ -105,17 +113,22 @@ __global__ void prefix_sum_lookback_kernel(
 
     __syncthreads();
 
-    unsigned int i = tile * 1024u + 4u * tx;
-    uint4 data = prefix_sum_load_four(input, i, n);
-    data.y += data.x;
-    data.z += data.y;
-    data.w += data.z;
+    uint4 data[STRIPS];
+    unsigned int value[STRIPS];
 
-    unsigned int thread_sum = data.w;
-    unsigned int value = prefix_sum_warp_scan(thread_sum, lane);
+#pragma unroll
+    for (unsigned int strip = 0; strip < STRIPS; ++strip) {
+        unsigned int i = tile * 1024u + strip * BLOCK * 4u + 4u * tx;
+        data[strip] = prefix_sum_load_four(input, i, n);
+        data[strip].y += data[strip].x;
+        data[strip].z += data[strip].y;
+        data[strip].w += data[strip].z;
 
-    if (lane == 31)
-        warp_prefix[warp] = value;
+        value[strip] = prefix_sum_warp_scan(data[strip].w, lane);
+
+        if (lane == 31)
+            warp_prefix[strip * WARPS + warp] = value[strip];
+    }
 
     __syncthreads();
 
@@ -130,9 +143,7 @@ __global__ void prefix_sum_lookback_kernel(
 
         if (lane == 0) {
             PrefixState status = tile == 0 ? 2 : 1;
-            PrefixAtomic(states[tile]).store(
-                (status << 32) | PrefixState(tile_sum),
-                cuda::memory_order_relaxed);
+            PrefixAtomic(states[tile]).store((status << 32) | PrefixState(tile_sum), cuda::memory_order_relaxed);
         }
 
         unsigned int prefix = prefix_sum_look_back(states, tile, lane);
@@ -141,35 +152,38 @@ __global__ void prefix_sum_lookback_kernel(
             tile_prefix = prefix;
             if (tile != 0) {
                 unsigned int inclusive = prefix + tile_sum;
-                PrefixAtomic(states[tile]).store(
-                    (PrefixState(2) << 32) | PrefixState(inclusive),
-                    cuda::memory_order_relaxed);
+                PrefixAtomic(states[tile]).store((PrefixState(2) << 32) | PrefixState(inclusive), cuda::memory_order_relaxed);
             }
         }
     }
 
     __syncthreads();
 
-    if (warp > 0)
-        value += warp_prefix[warp - 1];
+#pragma unroll
+    for (unsigned int strip = 0; strip < STRIPS; ++strip) {
+        unsigned int segment = strip * WARPS + warp;
+        unsigned int offset = value[strip] - data[strip].w + tile_prefix;
+        if (segment > 0)
+            offset += warp_prefix[segment - 1];
 
-    unsigned int offset = value - thread_sum + tile_prefix;
-    data.x += offset;
-    data.y += offset;
-    data.z += offset;
-    data.w += offset;
+        data[strip].x += offset;
+        data[strip].y += offset;
+        data[strip].z += offset;
+        data[strip].w += offset;
 
-    if (i < n && n - i >= 4) {
-        *reinterpret_cast<uint4*>(output + i) = data;
-    } else {
-        if (i < n)
-            output[i] = data.x;
-        if (i + 1 < n)
-            output[i + 1] = data.y;
-        if (i + 2 < n)
-            output[i + 2] = data.z;
-        if (i + 3 < n)
-            output[i + 3] = data.w;
+        unsigned int i = tile * 1024u + strip * BLOCK * 4u + 4u * tx;
+        if (i < n && n - i >= 4) {
+            *reinterpret_cast<uint4*>(output + i) = data[strip];
+        } else {
+            if (i < n)
+                output[i] = data[strip].x;
+            if (i + 1 < n)
+                output[i + 1] = data[strip].y;
+            if (i + 2 < n)
+                output[i + 2] = data[strip].z;
+            if (i + 3 < n)
+                output[i + 3] = data[strip].w;
+        }
     }
 }
 
@@ -193,7 +207,9 @@ void prefix_sum_lookback(
     size_t workspace_size = size_t(tiles) * 2 + 1;
     rassert(workspace.number() >= workspace_size,
         7104202610, workspace.number(), workspace_size);
-    rassert(workSize.cuBlockSize().x == 256
+    rassert((workSize.cuBlockSize().x == 256
+                || workSize.cuBlockSize().x == 128
+                || workSize.cuBlockSize().x == 64)
             && workSize.cuBlockSize().y == 1
             && workSize.cuBlockSize().z == 1,
         7104202611, workSize.cuBlockSize().x);
@@ -209,9 +225,23 @@ void prefix_sum_lookback(
     PrefixState* states = reinterpret_cast<PrefixState*>(workspace.cuptr());
     unsigned int* next_tile = workspace.cuptr() + size_t(tiles) * 2;
 
-    ::prefix_sum_lookback_kernel
-        <<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-            input.cuptr(), output.cuptr(), states, next_tile, n);
+    switch (workSize.cuBlockSize().x) {
+    case 256:
+        ::prefix_sum_lookback_kernel<256>
+            <<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+                input.cuptr(), output.cuptr(), states, next_tile, n);
+        break;
+    case 128:
+        ::prefix_sum_lookback_kernel<128>
+            <<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+                input.cuptr(), output.cuptr(), states, next_tile, n);
+        break;
+    case 64:
+        ::prefix_sum_lookback_kernel<64>
+            <<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+                input.cuptr(), output.cuptr(), states, next_tile, n);
+        break;
+    }
 
     CUDA_CHECK_KERNEL_SYNC(stream);
 }
