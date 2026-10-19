@@ -10,21 +10,31 @@
 __global__ void prefix_sum_01_reduction(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* pow2_sum, // contains n values
-          unsigned int* next_pow2_sum, // will contain (n+1)/2 values
-    unsigned int n)
+    const unsigned int* a, unsigned int* pow2_sum, unsigned int st,unsigned int n // contains n values
+          )
 {
-    // TODO
+    unsigned int i=blockDim.x*blockIdx.x+threadIdx.x+1;
+    if ((((long long) i)<<st)<n)
+    {
+        if (st==0)
+        {
+            pow2_sum[i]=a[i];
+        }
+        else
+        {
+            pow2_sum[i<<st]+=pow2_sum[(2*i-1)<<(st-1)];
+        }
+    }
 }
 
 namespace cuda {
 void prefix_sum_01_reduction(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32u &pow2_sum, gpu::gpu_mem_32u &next_pow2_sum, unsigned int n)
+            const gpu::gpu_mem_32u &a, gpu::gpu_mem_32u &pow2_sum,unsigned int st,unsigned int n)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::prefix_sum_01_reduction<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(pow2_sum.cuptr(), next_pow2_sum.cuptr(), n);
+    ::prefix_sum_01_reduction<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(a.cuptr(),pow2_sum.cuptr(),st,n);
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda

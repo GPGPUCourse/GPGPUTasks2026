@@ -9,23 +9,27 @@
 #include "kernels/kernels.h"
 
 #include <fstream>
-
+#define MAKSIM
 void run(int argc, char** argv)
 {
+    //
     // chooseGPUVkDevices:
     // - Если не доступо ни одного устройства - кинет ошибку
     // - Если доступно ровно одно устройство - вернет это устройство
     // - Если доступно N>1 устройства:
     //   - Если аргументов запуска нет или переданное число не находится в диапазоне от 0 до N-1 - кинет ошибку
     //   - Если аргумент запуска есть и он от 0 до N-1 - вернет устройство под указанным номером
+#ifdef MAKSIM
+    argc=2;argv[1]="3";
+#endif
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
-    // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
-    // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
-    // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
-    // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    //  000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
+    //  000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
+    //  000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
+    //  010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
+    //  010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -76,32 +80,24 @@ void run(int argc, char** argv)
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) {
+        cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,n),prefix_sum_accum_gpu,n);
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fill_with_zeros.exec();
-            // vk_sum_reduction.exec();
-            // vk_prefix_accumulation.exec();
-        } else {
-            rassert(false, 4531412341, context.type());
+            //
+        //cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,n),buffer1_pow2_sum_gpu,n);
+        buffer1_pow2_sum_gpu.writeN(as.data(),1);
+        prefix_sum_accum_gpu.writeN(as.data(),1);
+        for (unsigned int st=0;(1<<st)<n;++st)
+        {
+            cuda::prefix_sum_01_reduction(gpu::WorkSize(1024,(n-1)/(1<<st)),input_gpu,buffer1_pow2_sum_gpu,st,n);
         }
-
+        for (int st=32-__builtin_clz(n-1);st>=0;--st)
+        {
+            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(1024,(n-1-(1<<st))/(1<<(st+1))+1),buffer1_pow2_sum_gpu,prefix_sum_accum_gpu,st,n);
+        }
+        ///оно не coalesced тут, но я быстрее напишу
         times.push_back(t.elapsed());
     }
     std::cout << "prefix sum times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
@@ -124,6 +120,57 @@ void run(int argc, char** argv)
     std::vector<unsigned int> input_values = input_gpu.readVector();
     for (size_t i = 0; i < n; ++i) {
         rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
+    }
+    {
+        std::cout<<" Running bonus task : "<<std::endl;
+        std::vector<double> times;
+        std::vector<unsigned int> zero={0};
+        gpu::gpu_mem_32u sums(161);
+        gpu::gpu_mem_32u sumbefore(1);
+        gpu::gpu_mem_32u ended(1);
+        unsigned int numberofSMs=80;
+        for (int iter = 0; iter < 10; ++iter) {
+            cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,n),prefix_sum_accum_gpu,n);
+            timer t;
+
+            // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
+            // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
+            //
+            //cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,n),buffer1_pow2_sum_gpu,n);
+            int step=numberofSMs*2*9*1024;
+            sumbefore.writeN(zero.data(),1);
+            ended.writeN(zero.data(),1);
+            cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,161),sums,161);
+            /*for (int start=0;start<n;start+=step)
+            {
+                std::cout<<" start = "<<start<<'\n';
+                cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,161),sums,161);
+                cuda::makesums(gpu::WorkSize(1024,1024*numberofSMs*2),input_gpu,prefix_sum_accum_gpu,sums,sumbefore,ended,start,n);
+            }*/
+            cuda::makesums2(gpu::WorkSize(1024,1024*numberofSMs*2),input_gpu,prefix_sum_accum_gpu,sums,sumbefore,ended,n);
+            times.push_back(t.elapsed());
+        }
+        std::cout << "prefix sum times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+
+        // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили префиксные суммы)
+        double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
+        std::cout << "GPU prefix sum median effective VRAM bandwidth: "
+                  << memory_size_gb / stats::median(times) << " GB/s ("
+                  << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
+
+        // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
+        std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
+
+        // Сверяем результат
+        for (size_t i = 0; i < n; ++i) {
+            rassert(cpu_prefix_sum[i] == gpu_prefix_sum[i], 566324523452323, cpu_prefix_sum[i], gpu_prefix_sum[i], i);
+        }
+
+        // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
+        std::vector<unsigned int> input_values = input_gpu.readVector();
+        for (size_t i = 0; i < n; ++i) {
+            rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
+        }
     }
 }
 
