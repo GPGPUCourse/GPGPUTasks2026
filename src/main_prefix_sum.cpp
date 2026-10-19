@@ -89,7 +89,6 @@ void run(int argc, char** argv)
             // ocl_prefix_accumulation.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
             constexpr unsigned int BLOCK = 256;
-            cuda::fill_buffer_with_zeros(gpu::WorkSize(BLOCK, n), prefix_sum_accum_gpu, n);
             const gpu::gpu_mem_32u* current = &input_gpu;
             gpu::gpu_mem_32u* next = &buffer1_pow2_sum_gpu;
 
