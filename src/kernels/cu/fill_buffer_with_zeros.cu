@@ -110,13 +110,14 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
     __shared__ unsigned int valsum;
     unsigned int maxtwo=1;
     while (maxtwo<1024 && threadIdx.x%(2*maxtwo)==0) maxtwo*=2;
-    for (int startid0=0;startid0<n;startid0+=2*80*1024*9)
+    unsigned int jj=0;
+    for (int startid0=0;startid0<n;startid0+=2*80*1024*9,jj++)
     {
-        unsigned int uu=3*((startid0/(2*80*1024*9))%2);
+        unsigned int uu=3*(jj%2);
         unsigned int startid=startid0+blockIdx.x*1024*9;
         unsigned int threadid=threadIdx.x;
         unsigned int sumbefore=start[0];
-#pragma unroll(9)
+//#pragma unroll(9)
         for (int c=0;c<9;++c)
         {
             if (startid+1024*c+threadid<n)
@@ -127,7 +128,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
             }
         }
         __syncthreads();
-#pragma unroll(8)
+//#pragma unroll(8)
         for (int c=0;c<=7;++c)
         {
             //curassert(9*threadid+c>=0 && 9*threadid+8<9*1024,3);
@@ -169,16 +170,8 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         unsigned int endedwas=(startid0/(2*80*1024*9*2))*2*80;
         if (threadIdx.x==0)
         {
-            unsigned int uselessiterations=0;
             while (atomicAdd(ended+0+uu,0)<endedwas+2*80) ///странный цикл
             {
-                uselessiterations+=1;
-                for (int dumb=0;dumb<10;++dumb)
-                {
-                    uselessiterations+=4.0/3.0;
-                    uselessiterations/=3;
-                    uselessiterations+=25;
-                }
             }
         }
         __syncthreads();
@@ -203,6 +196,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         __syncthreads();
         unsigned int who0=sumbefore+valsum;
         unsigned int who=who0+(threadid==0 ? 0 : a[9*threadid-1]);
+//#pragma unroll(8)
         for (int c=0;c<=7;++c)
         {
             who+=a[9*threadid+c];
@@ -210,7 +204,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         }
         a[9*threadid+8]+=who0;
         __syncthreads();
-#pragma unroll(9)
+//#pragma unroll(9)
         for (int c=0;c<9;++c)
         {
             if (startid+1024*c+threadid<n)
@@ -239,16 +233,8 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         }
         if (threadIdx.x==0)
         {
-            unsigned int uselessiterations=0;
             while (atomicAdd(ended+1+uu,0)!=(endedwas+2*80)) ///странный цикл
             {
-                uselessiterations+=1;
-                for (int dumb=0;dumb<10;++dumb)
-                {
-                    uselessiterations+=4.0/3.0;
-                    uselessiterations/=3;
-                    uselessiterations+=25;
-                }
             }
         }
         /*if (threadIdx.x==0)
