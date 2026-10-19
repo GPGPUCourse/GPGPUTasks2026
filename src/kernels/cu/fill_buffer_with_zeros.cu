@@ -181,7 +181,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         unsigned int who=who0+(threadid==0 ? 0 : a[9*threadid-1]);
         for (int c=0;c<=7;++c)
         {
-            who+=a[9*threadid+c];
+            who+=a[9*threadid+c];//
             a[9*threadid+c]=who;
         }
         a[9*threadid+8]+=who0;
