@@ -108,12 +108,13 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
     __shared__ unsigned int b[1024];
     __shared__ unsigned int d[1024];
     __shared__ unsigned int valsum;
-    int jj=0;
-    for (int startid0=0;startid0<n;startid0+=2*80*1024*9,jj++)
+    __shared__ bool mistake;
+    for (int startid0=0;startid0<n;startid0+=2*80*1024*9)
     {
+        mistake=false;
         unsigned int startid=startid0+blockIdx.x*1024*9;
         unsigned int threadid=threadIdx.x;
-        unsigned int sumbefore=start[jj];
+        unsigned int sumbefore=start[0];
 #pragma unroll(9)
         for (int c=0;c<9;++c)
         {
@@ -170,18 +171,14 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         __syncthreads();
         if (threadIdx.x==1023)
         {
-            atomicAdd(start+jj+1,totalsum);
-            if (blockIdx.x==0)
-            {
-                atomicAdd(start+jj+1,sumbefore);
-            }
+            atomicAdd(start,totalsum);
         }
         __syncthreads();
         unsigned int who0=sumbefore+valsum;
         unsigned int who=who0+(threadid==0 ? 0 : a[9*threadid-1]);
         for (int c=0;c<=7;++c)
         {
-            who+=a[9*threadid+c];//
+            who+=a[9*threadid+c];
             a[9*threadid+c]=who;
         }
         a[9*threadid+8]+=who0;
@@ -211,7 +208,30 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
                 uselessiterations+=1;
             }
         }
+        if (threadIdx.x==0)
+        {
+            if (startid>0 && startid<n && pr[startid]-pr[startid-1]!=A[startid])
+            {
+                mistake=true;
+            }
+        }
         __syncthreads();
+        if (mistake)
+        {
+            if (threadIdx.x==0)
+            {
+                valsum=pr[startid-1]-valsum;
+            }
+            __syncthreads();
+            for (int c=0;c<9;++c)
+            {
+                if (startid+1024*c+threadid<n)
+                {
+                    pr[startid+1024*c+threadid]=a[1024*c+threadid]+valsum-sumbefore;
+                }
+            }
+            __syncthreads();
+        }
         /*if (blockIdx.x==0 && threadIdx.x==0 && startid0==0)
         {
             printf("start[0] = %d",start[0]);
