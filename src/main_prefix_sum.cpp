@@ -10,6 +10,7 @@
 #include "libgpu/work_size.h"
 
 #include <fstream>
+#include <vector>
 
 void run(int argc, char** argv)
 {
@@ -69,7 +70,32 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n);
+    gpu::gpu_mem_32u prefix_sum_accum_gpu(n);
+
+    constexpr unsigned int BLOCK = 256;
+    std::vector<unsigned int> level_sizes { n };
+
+    while (level_sizes.back() > BLOCK) {
+        unsigned int count = level_sizes.back();
+        level_sizes.push_back(count / BLOCK + (count % BLOCK != 0));
+    }
+
+    std::vector<gpu::gpu_mem_32u> sums;
+    std::vector<gpu::gpu_mem_32u> prefixes;
+    std::vector<gpu::WorkSize> work_sizes;
+
+    sums.reserve(level_sizes.size() - 1);
+    prefixes.reserve(level_sizes.size() - 1);
+    work_sizes.reserve(level_sizes.size());
+
+    for (size_t level = 0; level < level_sizes.size(); ++level) {
+        work_sizes.emplace_back(BLOCK, level_sizes[level]);
+        if (level > 0) {
+            sums.emplace_back(level_sizes[level]);
+            prefixes.emplace_back(level_sizes[level]);
+        }
+    }
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -88,40 +114,24 @@ void run(int argc, char** argv)
             // ocl_sum_reduction.exec();
             // ocl_prefix_accumulation.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            constexpr unsigned int BLOCK = 256;
-            const gpu::gpu_mem_32u* current = &input_gpu;
-            gpu::gpu_mem_32u* next = &buffer1_pow2_sum_gpu;
+            for (size_t level = 0; level + 1 < level_sizes.size(); ++level) {
+                const gpu::gpu_mem_32u& input = level == 0 ? input_gpu : sums[level - 1];
 
-            unsigned int current_n = n;
-            unsigned int level = 0;
+                cuda::prefix_sum_reduce_blocks(
+                    work_sizes[level], input, sums[level], level_sizes[level]);
+            }
 
-            while (current_n > 0) {
-                cuda::prefix_sum_02_prefix_accumulation(
-                    gpu::WorkSize(BLOCK, n),
-                    *current,
-                    prefix_sum_accum_gpu,
-                    n,
-                    level);
+            for (size_t reverse = level_sizes.size(); reverse > 0; --reverse) {
+                size_t level = reverse - 1;
 
-                if (current_n == 1)
-                    break;
+                const gpu::gpu_mem_32u& input = level == 0 ? input_gpu : sums[level - 1];
 
-                unsigned int next_n = current_n / 2 + current_n % 2;
+                gpu::gpu_mem_32u& output = level == 0 ? prefix_sum_accum_gpu : prefixes[level - 1];
 
-                cuda::prefix_sum_01_reduction(
-                    gpu::WorkSize(BLOCK, next_n),
-                    *current,
-                    *next,
-                    current_n);
+                const gpu::gpu_mem_32u* block_prefix = level + 1 < level_sizes.size() ? &prefixes[level] : nullptr;
 
-                current = next;
-
-                next = (next == &buffer1_pow2_sum_gpu)
-                    ? &buffer2_pow2_sum_gpu
-                    : &buffer1_pow2_sum_gpu;
-
-                current_n = next_n;
-                ++level;
+                cuda::prefix_sum_scan_blocks(
+                    work_sizes[level], input, output, block_prefix, level_sizes[level]);
             }
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
