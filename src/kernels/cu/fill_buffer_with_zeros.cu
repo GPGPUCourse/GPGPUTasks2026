@@ -13,7 +13,12 @@ __global__ void fill_buffer_with_zeros(
     unsigned int* buffer,
     unsigned int n)
 {
-    // TODO
+    // На самом деле мне не нужно заполнять массив нулями
+    const unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) {
+        return;
+    }
+    buffer[idx] = 0;
 }
 
 namespace cuda {
