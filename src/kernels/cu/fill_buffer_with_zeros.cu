@@ -118,13 +118,78 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         unsigned int threadid=threadIdx.x;
         unsigned int sumbefore=start[0];
 //#pragma unroll(9)
-        for (int c=0;c<9;++c)
         {
-            if (startid+1024*c+threadid<n)
+            if (startid+4*threadid<n)
             {
-                //curassert(1024*c+threadid>=0 && 1024*c+threadid<9*1024,1);
-                //curassert(startid+1024*c+threadid>=0 && startid+1024*c+threadid<n,2);
-                a[1024*c+threadid]=A[startid+1024*c+threadid];
+                uint4 what=((uint4*) A)[(startid/4+threadid)];
+                if ((threadid>>3) & 4 ==0)
+                {
+                    a[4*threadid]=what.x;
+                    a[4*threadid+1]=what.y;
+                    a[4*threadid+2]=what.z;
+                    a[4*threadid+3]=what.w;
+                }
+                else if ((threadid>>3) & 4 ==1)
+                {
+                    a[4*threadid+3]=what.w;
+                    a[4*threadid]=what.x;
+                    a[4*threadid+1]=what.y;
+                    a[4*threadid+2]=what.z;
+                }
+                else if ((threadid>>3) & 4 ==1)
+                {
+                    a[4*threadid+2]=what.z;
+                    a[4*threadid+3]=what.w;
+                    a[4*threadid]=what.x;
+                    a[4*threadid+1]=what.y;
+                }
+                else
+                {
+                    a[4*threadid+3]=what.w;
+                    a[4*threadid]=what.x;
+                    a[4*threadid+1]=what.y;
+                    a[4*threadid+2]=what.z;
+                }
+            }
+        }
+        {
+            if (startid+4*threadid+4096<n)
+            {
+                uint4 what=((uint4*) A)[(startid/4+threadid+1024)];
+                if ((threadid>>3) & 4 ==0)
+                {
+                    a[4*threadid+4096]=what.x;
+                    a[4*threadid+1+4096]=what.y;
+                    a[4*threadid+2+4096]=what.z;
+                    a[4*threadid+3+4096]=what.w;
+                }
+                else if ((threadid>>3) & 4 ==1)
+                {
+                    a[4*threadid+3+4096]=what.w;
+                    a[4*threadid+4096]=what.x;
+                    a[4*threadid+1+4096]=what.y;
+                    a[4*threadid+2+4096]=what.z;
+                }
+                else if ((threadid>>3) & 4 ==1)
+                {
+                    a[4*threadid+2+4096]=what.z;
+                    a[4*threadid+3+4096]=what.w;
+                    a[4*threadid+4096]=what.x;
+                    a[4*threadid+1+4096]=what.y;
+                }
+                else
+                {
+                    a[4*threadid+3+4096]=what.w;
+                    a[4*threadid+4096]=what.x;
+                    a[4*threadid+1+4096]=what.y;
+                    a[4*threadid+2+4096]=what.z;
+                }
+            }
+        }
+        {
+            if (startid+threadid+8*1024<n)
+            {
+                a[threadid+8*1024]=A[startid+threadid+8*1024];
             }
         }
         __syncthreads();
@@ -174,6 +239,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
             {
             }
         }
+        __syncthreads();
         if (threadIdx.x==0)
         {
             valsum=0;
@@ -187,10 +253,12 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
             }*/
             atomicAdd(&valsum,atomicAdd(sums+threadid,0));
         }
+        __syncthreads();
         if (threadIdx.x==1023)
         {
             atomicAdd(start,totalsum);
         }
+        __syncthreads();
         unsigned int who0=sumbefore+valsum;
         unsigned int who=who0+(threadid==0 ? 0 : a[9*threadid-1]);
 //#pragma unroll(8)
