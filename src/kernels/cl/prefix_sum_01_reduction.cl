@@ -18,9 +18,12 @@ __kernel void prefix_sum_01_reduction(
     const uint block_id = get_group_id(0);
     const uint global_id = get_global_id(0); // в нашем случае это blockid * groupsize + localid, просто удобнее так получить
 
-    __local uint local_prefixes[GROUP_SIZE];
+    __local uint local_prefixes[2][GROUP_SIZE];
 
-    local_prefixes[local_id] = 
+    __local uint* current = local_prefixes[0];
+    __local uint* next = local_prefixes[1];
+
+    current[local_id] =
         global_id < n
             ? input[global_id]
             : 0;
@@ -29,20 +32,23 @@ __kernel void prefix_sum_01_reduction(
 
     for (uint offset = 1; offset < GROUP_SIZE; offset *= 2) {
         const uint left_sum =
-            local_id >= offset 
-                ? local_prefixes[local_id - offset]
+            local_id >= offset
+                ? current[local_id - offset]
                 : 0;
 
+        next[local_id] = current[local_id] + left_sum;
         barrier(CLK_LOCAL_MEM_FENCE);
-        local_prefixes[local_id] += left_sum;
-        barrier(CLK_LOCAL_MEM_FENCE);
+
+        __local uint* temp = current;
+        current = next;
+        next = temp;
     }
 
     if (global_id < n) {
-        output[global_id] = local_prefixes[local_id];
+        output[global_id] = current[local_id];
     }
 
     if (local_id == GROUP_SIZE - 1) {
-        block_sums[block_id] = local_prefixes[local_id];
+        block_sums[block_id] = current[local_id];
     }
 }
