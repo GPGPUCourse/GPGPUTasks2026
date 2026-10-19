@@ -36,6 +36,8 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_fill_with_zeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
     ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
+    ocl::KernelSource ocl_compress(ocl::compress());
+    ocl::KernelSource ocl_decompress(ocl::decompress());
 
     avk2::KernelSource vk_fill_with_zeros(avk2::getFillBufferWithZeros());
     avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
@@ -69,13 +71,10 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     unsigned int pow2 = 1;
-    while (pow2 < n) pow2 <<= 1;
-    gpu::gpu_mem_32u input_gpu(n), pref_sum(pow2);
+    while (pow2 < n / 256 + 1) pow2 <<= 1;
+    gpu::gpu_mem_32u input_gpu(n), pref_sum(n), block(pow2);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
-    input_gpu.fill(0);
-    pref_sum.writeN(as.data(), n);
-
     input_gpu.writeN(as.data(), n);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
@@ -86,17 +85,16 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            pref_sum.fill(0);
-            pref_sum.writeN(as.data(), n);
-            // TODO
+            ocl_compress.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, pref_sum, block, n);
             for (unsigned int step = 2; step <= pow2; step <<= 1) {
-                gpu::WorkSize workSize(GROUP_SIZE, std::max(256U, pow2 / step));
-                ocl_sum_reduction.exec(workSize, pref_sum, step, pow2);
+                gpu::WorkSize workSize(GROUP_SIZE, pow2 / step);
+                ocl_sum_reduction.exec(workSize, block, step, pow2);
             }
             for (unsigned int step = pow2 / 2; step > 1; step >>= 1) {
-                gpu::WorkSize workSize(GROUP_SIZE, std::max(256U, pow2 / step));
-                ocl_prefix_accumulation.exec(workSize, pref_sum, step, pow2);
+                gpu::WorkSize workSize(GROUP_SIZE, pow2 / step);
+                ocl_prefix_accumulation.exec(workSize, block, step, pow2);
             }
+            ocl_decompress.exec(gpu::WorkSize(GROUP_SIZE, n), pref_sum, block, n);
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
