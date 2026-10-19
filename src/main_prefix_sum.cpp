@@ -33,7 +33,7 @@ void run(int argc, char** argv)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
-    ocl::KernelSource ocl_fill_with_zeros(ocl::getFillBufferWithZeros());
+    ocl::KernelSource ocl_sum_initialization(ocl::getPrefixSum00Initialization());
     ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
     ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
 
@@ -67,25 +67,75 @@ void run(int argc, char** argv)
                   << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
+    const unsigned min_precomputed_pow2 = 5; // 2^5 = 32
+
+    size_t buffer_size = 0;
+#if RASSERT_ENABLED
+    std::vector<unsigned int> buffer_level_sizes;
+    std::vector<unsigned int> buffer_level_coverages;
+#endif
+    for (unsigned pow2 = min_precomputed_pow2; (n >> pow2) > 0; ++pow2) {
+        unsigned num_values_on_level = n >> pow2;
+        buffer_size += num_values_on_level;
+#if RASSERT_ENABLED
+        buffer_level_sizes.push_back(num_values_on_level);
+        buffer_level_coverages.push_back((1 << pow2) * num_values_on_level);
+        std::cout << (1 << pow2) << " * " << num_values_on_level << " = " << (1 << pow2) * num_values_on_level << std::endl;
+#endif
+}
+
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), buffer_pow2_sum_gpu(buffer_size), prefix_sum_accum_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    for (int iter = 0; iter < 10; ++iter) {
+    for (int iter = 0; iter < 1; ++iter) {
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            ocl_sum_initialization.exec({GROUP_SIZE, n}, input_gpu, buffer_pow2_sum_gpu, min_precomputed_pow2, n);
+
+#if RASSERT_ENABLED
+            {
+                std::vector<unsigned int> test = buffer_pow2_sum_gpu.readVector();
+                test.resize(buffer_level_sizes[0]);
+                std::cout << stats::sum(test) << " == " << stats::sum(as) << std::endl;
+            }
+#endif
+
+            for (unsigned pow2 = min_precomputed_pow2, offset = 0; (n >> (pow2 + 1)) > 0; ++pow2) {
+                unsigned num_input_values = n >> pow2;
+                unsigned num_output_values = n >> (pow2 + 1);
+
+#if RASSERT_ENABLED
+                std::cout
+                    << "Building " << num_output_values << " output sums of " << (1 << (pow2 + 1)) << " elements"
+                    << " from " << num_input_values << " input sums of " << (1 << pow2) << " elements" << std::endl;
+#endif
+                unsigned input_begin = offset;
+                unsigned output_begin = input_begin + num_input_values;
+                ocl_sum_reduction.exec({GROUP_SIZE, num_input_values}, buffer_pow2_sum_gpu, input_begin, output_begin);
+
+#if RASSERT_ENABLED
+                {
+                    std::vector<unsigned int> test = buffer_pow2_sum_gpu.readVector();
+                    test = std::vector<unsigned int>(test.begin() + output_begin, test.begin() + output_begin + num_output_values);
+                    std::vector<unsigned int> as_copy = as;
+                    as_copy.resize(buffer_level_coverages[pow2 - min_precomputed_pow2 + 1]);
+                    std::cout << stats::sum(test) << " == " << stats::sum(as_copy) << std::endl;
+                    rassert(stats::sum(test) == stats::sum(as_copy), 5462345234523, stats::sum(test), stats::sum(as_copy));
+                }
+#endif
+
+                offset += num_input_values;
+            }
+
+            ocl_prefix_accumulation.exec({GROUP_SIZE, n}, input_gpu, buffer_pow2_sum_gpu, prefix_sum_accum_gpu, min_precomputed_pow2, n);
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);

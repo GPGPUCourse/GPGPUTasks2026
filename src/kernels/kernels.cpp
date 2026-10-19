@@ -1,7 +1,7 @@
 #include "kernels.h"
 
 #include "cl/generated_kernels/aplusb.h"
-#include "cl/generated_kernels/fill_buffer_with_zeros.h"
+#include "cl/generated_kernels/prefix_sum_00_initialization.h"
 #include "cl/generated_kernels/prefix_sum_01_reduction.h"
 #include "cl/generated_kernels/prefix_sum_02_prefix_accumulation.h"
 
@@ -45,9 +45,9 @@ const ocl::ProgramBinaries& getAplusB()
     return opencl_binaries_aplusb;
 }
 
-const ProgramBinaries& getFillBufferWithZeros()
+const ProgramBinaries& getPrefixSum00Initialization()
 {
-    return opencl_binaries_fill_buffer_with_zeros;
+    return opencl_binaries_prefix_sum_00_initialization;
 }
 
 const ProgramBinaries& getPrefixSum01Reduction()
