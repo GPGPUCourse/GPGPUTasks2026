@@ -156,7 +156,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
-            while (atomicAdd(sums+blockIdx.x,0)%256<blockIdx.x) ///странный цикл
+            while (atomicAdd(ended,0)<endedwas+160) ///странный цикл
             {
                 uselessiterations+=1;
             }
@@ -200,7 +200,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
-            while (atomicCAS(ended,endedwas+2*2*80,endedwas+2*2*80)!=(endedwas+2*2*80)) ///странный цикл
+            while (atomicAdd(ended,0)<(endedwas+320)) ///странный цикл
             {
                 uselessiterations+=1;
             }
