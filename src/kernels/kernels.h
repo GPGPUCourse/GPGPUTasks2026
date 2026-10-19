@@ -28,4 +28,3 @@ const ProgramBinaries& getFillBufferWithZeros();
 const ProgramBinaries& getPrefixSum01Reduction();
 const ProgramBinaries& getPrefixSum02PrefixAccumulation();
 }
-

@@ -64,14 +64,16 @@ __device__ __forceinline__ unsigned int prefix_sum_look_back(
             unsigned int empty = __ballot_sync(0xffffffffu, status == 0);
             last = ready_prefix != 0 ? __ffs(ready_prefix) - 1 : 31u;
             unsigned int needed = last == 31
-                ? 0xffffffffu : (1u << (last + 1)) - 1u;
+                ? 0xffffffffu
+                : (1u << (last + 1)) - 1u;
 
             if ((empty & needed) == 0)
                 break;
         }
 
         unsigned int value = lane <= last
-            ? static_cast<unsigned int>(state) : 0u;
+            ? static_cast<unsigned int>(state)
+            : 0u;
 
         for (unsigned int offset = 16; offset > 0; offset >>= 1)
             value += __shfl_down_sync(0xffffffffu, value, offset);
@@ -140,9 +142,7 @@ __global__ void prefix_sum_lookback_kernel(
 
         if (lane == 0) {
             PrefixState status = tile == 0 ? 2 : 1;
-            PrefixAtomic(states[tile]).store(
-                (status << 32) | PrefixState(tile_sum),
-                cuda::memory_order_relaxed);
+            PrefixAtomic(states[tile]).store((status << 32) | PrefixState(tile_sum), cuda::memory_order_relaxed);
         }
 
         unsigned int prefix = prefix_sum_look_back(states, tile, lane);
@@ -151,9 +151,7 @@ __global__ void prefix_sum_lookback_kernel(
             tile_prefix = prefix;
             if (tile != 0) {
                 unsigned int inclusive = prefix + tile_sum;
-                PrefixAtomic(states[tile]).store(
-                    (PrefixState(2) << 32) | PrefixState(inclusive),
-                    cuda::memory_order_relaxed);
+                PrefixAtomic(states[tile]).store((PrefixState(2) << 32) | PrefixState(inclusive), cuda::memory_order_relaxed);
             }
         }
     }
@@ -224,9 +222,8 @@ void prefix_sum_lookback(
     PrefixState* states = reinterpret_cast<PrefixState*>(workspace.cuptr());
     unsigned int* next_tile = workspace.cuptr() + size_t(tiles) * 2;
 
-    ::prefix_sum_lookback_kernel
-        <<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-            input.cuptr(), output.cuptr(), states, next_tile, n);
+    ::prefix_sum_lookback_kernel<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+        input.cuptr(), output.cuptr(), states, next_tile, n);
 
     CUDA_CHECK_KERNEL_SYNC(stream);
 }
