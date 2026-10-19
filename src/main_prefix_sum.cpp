@@ -10,6 +10,47 @@
 
 #include <fstream>
 
+void scan_gpu(
+    const gpu::gpu_mem_32u& input_gpu,
+    gpu::gpu_mem_32u& output_gpu,
+    unsigned int n,
+    ocl::KernelSource& scan_blocks,
+    ocl::KernelSource& add_offsets)
+{
+    if (n == 0)
+        return;
+
+    const unsigned int blocks = (n - 1) / GROUP_SIZE + 1;
+
+    gpu::gpu_mem_32u block_sums_gpu(blocks);
+    gpu::WorkSize work_size(GROUP_SIZE, n);
+
+    scan_blocks.exec(
+        work_size,
+        input_gpu,
+        output_gpu,
+        block_sums_gpu,
+        n);
+
+    if (blocks == 1)
+        return;
+
+    gpu::gpu_mem_32u block_prefixes_gpu(blocks);
+
+    scan_gpu(
+        block_sums_gpu,
+        block_prefixes_gpu,
+        blocks,
+        scan_blocks,
+        add_offsets);
+
+    add_offsets.exec(
+        work_size,
+        output_gpu,
+        block_prefixes_gpu,
+        n);
+}
+
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -68,7 +109,7 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), prefix_sum_accum_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -82,7 +123,12 @@ void run(int argc, char** argv)
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
             // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            scan_gpu(
+                input_gpu,
+                prefix_sum_accum_gpu,
+                n,
+                ocl_sum_reduction,
+                ocl_prefix_accumulation);
             // ocl_fill_with_zeros.exec();
             // ocl_sum_reduction.exec();
             // ocl_prefix_accumulation.exec();
