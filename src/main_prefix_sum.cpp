@@ -9,6 +9,9 @@
 #include "kernels/kernels.h"
 
 #include <fstream>
+#include <limits>
+#include <stdexcept>
+#include <string>
 
 void run(int argc, char** argv)
 {
@@ -41,7 +44,7 @@ void run(int argc, char** argv)
     avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
     avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
 
-    unsigned int n = 100*1000*1000;
+    unsigned int n = 100 * 1000 * 1000;
     std::vector<unsigned int> as(n, 0);
     size_t total_sum = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -68,7 +71,11 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    const unsigned int half_n = n / 2 + n % 2;
+    const unsigned int quarter_n = half_n / 2 + half_n % 2;
+    gpu::gpu_mem_32u input_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u buffer1_pow2_sum_gpu(n >= 2 ? half_n : 0);
+    gpu::gpu_mem_32u buffer2_pow2_sum_gpu(n >= 4 ? quarter_n : 0);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -81,11 +88,20 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            const gpu::WorkSize work_size(GROUP_SIZE, n);
+            ocl_fill_with_zeros.exec(work_size, prefix_sum_accum_gpu, n);
+            ocl_prefix_accumulation.exec(work_size, input_gpu, prefix_sum_accum_gpu, n, 0u);
+
+            const gpu::gpu_mem_32u* current = &input_gpu;
+            unsigned int current_size = n;
+            for (unsigned int power = 1; (uint64_t { 1 } << power) <= n; ++power) {
+                const unsigned int next_size = current_size / 2 + current_size % 2;
+                auto& next = (power & 1u) ? buffer1_pow2_sum_gpu : buffer2_pow2_sum_gpu;
+                ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, next_size), *current, next, current_size);
+                ocl_prefix_accumulation.exec(work_size, next, prefix_sum_accum_gpu, n, power);
+                current = &next;
+                current_size = next_size;
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
