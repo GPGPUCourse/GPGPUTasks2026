@@ -10,6 +10,26 @@
 
 #include <fstream>
 
+// Каждый запуск считает префиксы внутри блоков и суммы блоков. Суммы блоков
+// сканируются тем же способом, после чего их префиксы добавляются к блокам.
+void scanOpenCL(const gpu::gpu_mem_32u& input,
+                gpu::gpu_mem_32u& output,
+                unsigned int n,
+                ocl::KernelSource& scan_blocks,
+                ocl::KernelSource& add_group_prefixes)
+{
+    const unsigned int groups = (n + GROUP_SIZE - 1) / GROUP_SIZE;
+    gpu::gpu_mem_32u group_sums(groups);
+    const gpu::WorkSize work_size(GROUP_SIZE, n);
+
+    scan_blocks.exec(work_size, input, output, group_sums, n);
+    if (groups > 1) {
+        gpu::gpu_mem_32u group_prefixes(groups);
+        scanOpenCL(group_sums, group_prefixes, groups, scan_blocks, add_group_prefixes);
+        add_group_prefixes.exec(work_size, output, group_prefixes, n);
+    }
+}
+
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -81,11 +101,8 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            scanOpenCL(input_gpu, prefix_sum_accum_gpu, n,
+                       ocl_sum_reduction, ocl_prefix_accumulation);
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
