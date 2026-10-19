@@ -145,18 +145,18 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         } //
         if (threadIdx.x==0)
         {
-            int o=atomicAdd(ended,1);
+            //int o=atomicAdd(ended,1);
         }
         __syncthreads();
         //if (startid0==2*80*1024*9 && o+1==6*1024*80) printf("blockIdx.x = %d, threadIdx.x= %d, o = %d \n, sums[31] = %d \n",blockIdx.x,threadIdx.x,o,sums[31]);
         //return;
         //if (o==2*1024*80-1) {printf("blockIdx.x = %d, threadIdx.x= %d, o = %d \n",blockIdx.x,threadIdx.x,o);}
         //return;
-        unsigned int endedwas=2*startid0/(9*1024);
+        unsigned int endedwas=startid0/(9*1024);
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
-            while (atomicAdd(ended,0)<endedwas+160) ///странный цикл
+            while (atomicAdd(sums+blockIdx.x,0)%256<blockIdx.x) ///странный цикл
             {
                 uselessiterations+=1;
             }
@@ -200,7 +200,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
-            while (atomicAdd(ended,0)<(endedwas+320)) ///странный цикл
+            while (atomicAdd(ended,0)<endedwas+160) ///странный цикл
             {
                 uselessiterations+=1;
             }
