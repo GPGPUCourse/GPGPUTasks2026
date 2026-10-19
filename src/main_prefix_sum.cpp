@@ -81,11 +81,46 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            std::vector<uint> counts;
+            std::vector<uint> offsets;
+            const gpu::gpu_mem_32u* input = &input_gpu;
+            gpu::gpu_mem_32u* output = &prefix_sum_accum_gpu;
+            uint count = n, offset = 0, sums_offset = 0;
+            
+            while (count > 0) {
+                counts.push_back(count);
+                offsets.push_back(offset);
+                const uint blocks = count / (2 * GROUP_SIZE) + (count % (2 * GROUP_SIZE) != 0);
+                ocl_sum_reduction.exec(
+                    gpu::WorkSize(GROUP_SIZE, size_t(blocks) * GROUP_SIZE),
+                    *input, buffer1_pow2_sum_gpu,
+                    *output,
+                    count,
+                    offset,
+                    sums_offset);
+
+                if (blocks == 1) {
+                    break;
+                }
+
+                input = &buffer1_pow2_sum_gpu;
+                output = &buffer2_pow2_sum_gpu;
+                offset = sums_offset;
+                sums_offset += blocks;
+                count = blocks;
+            }
+
+            for (size_t level = counts.size(); level > 1; --level) {
+                const size_t child = level - 2;
+                gpu::gpu_mem_32u& result = child == 0 ? prefix_sum_accum_gpu : buffer2_pow2_sum_gpu;
+                ocl_prefix_accumulation.exec(
+                    gpu::WorkSize(GROUP_SIZE, counts[child]),
+                    buffer2_pow2_sum_gpu,
+                    result,
+                    counts[child],
+                    offsets[child + 1],
+                    offsets[child]);
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
