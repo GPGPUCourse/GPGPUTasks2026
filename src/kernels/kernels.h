@@ -6,7 +6,7 @@ namespace cuda {
 void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n);
 void fill_buffer_with_zeros(const gpu::WorkSize &workSize, gpu::gpu_mem_32u &buffer, unsigned int n);
 void prefix_sum_01_reduction(const gpu::WorkSize &workSize, const unsigned int*  pow2_sum, unsigned int* next_pow2_sum, unsigned int n);
-void prefix_sum_02_prefix_accumulation(const gpu::WorkSize &workSize, const unsigned int* prev_incl_scan, const unsigned int* cur_level, unsigned int*prefix_sum_accum, unsigned int n);
+void prefix_sum_02_prefix_accumulation(const gpu::WorkSize &workSize, const unsigned int* prev_incl_scan, unsigned int* cur_level, unsigned int*prefix_sum_accum, unsigned int n);
 }
 
 namespace ocl {
