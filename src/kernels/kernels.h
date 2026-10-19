@@ -7,17 +7,11 @@ void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu:
 void fill_buffer_with_zeros(const gpu::WorkSize& workSize, gpu::gpu_mem_32u& buffer, unsigned int n);
 void prefix_sum_02_prefix_accumulation(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& pow2_sum, gpu::gpu_mem_32u& prefix_sum_accum, unsigned int n, unsigned int pow2);
 
-void prefix_sum_reduce_blocks(
-    const gpu::WorkSize& workSize,
-    const gpu::gpu_mem_32u& input,
-    gpu::gpu_mem_32u& block_sums,
-    unsigned int n);
-
-void prefix_sum_scan_blocks(
+void prefix_sum_lookback(
     const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32u& input,
     gpu::gpu_mem_32u& output,
-    const gpu::gpu_mem_32u* block_prefix,
+    gpu::gpu_mem_32u& workspace,
     unsigned int n);
 }
 
@@ -34,3 +28,4 @@ const ProgramBinaries& getFillBufferWithZeros();
 const ProgramBinaries& getPrefixSum01Reduction();
 const ProgramBinaries& getPrefixSum02PrefixAccumulation();
 }
+
