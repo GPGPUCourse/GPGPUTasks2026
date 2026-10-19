@@ -4,17 +4,21 @@
 
 #include "../defines.h"
 
-// это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-// НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-layout (std430, binding = 0) readonly buffer Pow2SumIn      { uint pow2_sum[]; }; // contains n values
-layout (std430, binding = 1)          buffer NextPow2SumOut { uint next_pow2_sum[]; }; // will contain (n+1)/2 values
+layout (std430, binding = 0) readonly  buffer Pow2SumIn      { uint pow2_sum[]; }; // contains n values
+layout (std430, binding = 1)           buffer NextPow2SumOut { uint next_pow2_sum[]; }; // will contain (n+1)/2 values
 
 layout (push_constant) uniform PushConstants {
     uint n;
 } params;
 
-layout (local_size_x = 1) in;
+layout (local_size_x = GROUP_SIZE) in;
 void main()
 {
-    // TODO
+    const uint i = gl_GlobalInvocationID.x;
+    if (i < (params.n+1)/2) {
+        next_pow2_sum[i] = pow2_sum[2*i];
+        if (2*i + 1 < params.n) {
+            next_pow2_sum[i] += pow2_sum[2*i + 1];
+        }
+    }
 }
