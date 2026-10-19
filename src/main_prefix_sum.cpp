@@ -10,8 +10,6 @@
 
 #include <fstream>
 
-// Каждый запуск считает префиксы внутри блоков и суммы блоков. Суммы блоков
-// сканируются тем же способом, после чего их префиксы добавляются к блокам.
 void scanOpenCL(const gpu::gpu_mem_32u& input,
                 gpu::gpu_mem_32u& output,
                 unsigned int n,
