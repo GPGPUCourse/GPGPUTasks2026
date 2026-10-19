@@ -10,6 +10,28 @@
 
 #include <fstream>
 
+void prefixSum(ocl::KernelSource &sum_reduction, ocl::KernelSource &prefix_accumulation,
+               const gpu::gpu_mem_32u &input, gpu::gpu_mem_32u &pow2_sums, gpu::gpu_mem_32u &output)
+{
+    rassert(input.number() <= std::numeric_limits<unsigned int>::max(), 2634523462345, input.number());
+    unsigned int n = (unsigned int) input.number();
+    if (n == 0) {
+        return;
+    }
+
+    const gpu::gpu_mem_32u *level_input = &input;
+    unsigned int input_offset = 0;
+    unsigned int output_offset = 0;
+    for (unsigned int level_size = n; level_size > 1; level_size /= 2) {
+        unsigned int next_level_size = level_size / 2;
+        sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, next_level_size), *level_input, pow2_sums, level_size, input_offset, output_offset);
+        level_input = &pow2_sums;
+        input_offset = output_offset;
+        output_offset += next_level_size;
+    }
+    prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), input, pow2_sums, output, n);
+}
+
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -33,13 +55,8 @@ void run(int argc, char** argv)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
-    ocl::KernelSource ocl_fill_with_zeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
     ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
-
-    avk2::KernelSource vk_fill_with_zeros(avk2::getFillBufferWithZeros());
-    avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
-    avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
 
     unsigned int n = 100*1000*1000;
     std::vector<unsigned int> as(n, 0);
@@ -68,7 +85,7 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), pow2_sums_gpu(n), prefix_sum_accum_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -80,27 +97,7 @@ void run(int argc, char** argv)
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fill_with_zeros.exec();
-            // vk_sum_reduction.exec();
-            // vk_prefix_accumulation.exec();
-        } else {
-            rassert(false, 4531412341, context.type());
-        }
+        prefixSum(ocl_sum_reduction, ocl_prefix_accumulation, input_gpu, pow2_sums_gpu, prefix_sum_accum_gpu);
 
         times.push_back(t.elapsed());
     }
