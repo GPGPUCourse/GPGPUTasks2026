@@ -144,7 +144,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         a[9*threadid+8]=b[threadid];
         __syncthreads();
         unsigned int totalsum=a[9*1023+8];
-        if (threadid<=2*80 && threadid>blockIdx.x)
+        if (threadid<=2*80 && threadid>blockIdx.x)//
         {
             atomicAdd(sums+threadid,256*totalsum+1);
         } //
