@@ -108,11 +108,12 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
     __shared__ unsigned int b[1024];
     __shared__ unsigned int d[1024];
     __shared__ unsigned int valsum;
-    for (int startid0=0;startid0<n;startid0+=2*80*1024*9)
+    int jj=0;
+    for (int startid0=0;startid0<n;startid0+=2*80*1024*9,jj++)
     {
         unsigned int startid=startid0+blockIdx.x*1024*9;
         unsigned int threadid=threadIdx.x;
-        unsigned int sumbefore=start[0];
+        unsigned int sumbefore=start[jj];
 #pragma unroll(9)
         for (int c=0;c<9;++c)
         {
@@ -162,7 +163,6 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
             }
         }
         __syncthreads();
-        __syncthreads();
         if (threadIdx.x==0)
         {
             valsum=atomicAdd(sums+blockIdx.x,0)/256;
@@ -170,12 +170,15 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         __syncthreads();
         if (threadIdx.x==1023)
         {
-            atomicAdd(start,totalsum);
+            atomicAdd(start+jj+1,totalsum);
+            if (blockIdx.x==0)
+            {
+                atomicAdd(start+jj+1,sumbefore);
+            }
         }
         __syncthreads();
         unsigned int who0=sumbefore+valsum;
         unsigned int who=who0+(threadid==0 ? 0 : a[9*threadid-1]);
-        __syncthreads();
         for (int c=0;c<=7;++c)
         {
             who+=a[9*threadid+c];
