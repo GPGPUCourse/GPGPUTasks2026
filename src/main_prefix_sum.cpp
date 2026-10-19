@@ -82,11 +82,9 @@ void run(int argc, char** argv)
             // ocl_sum_reduction.exec();
             // ocl_prefix_accumulation.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            cuda::fill_buffer_with_zeros(gpu::WorkSize(GROUP_SIZE, n), prefix_sum_accum_gpu, n);
-            unsigned int size = n, pow2 = 0;
-            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), input_gpu, prefix_sum_accum_gpu, n, pow2);
-            cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, size), input_gpu, buffer1_pow2_sum_gpu, size);
-            size = (size + 1) / 2, ++pow2;
+            // как на лекции через локальную память просто считаем маленькие отрезки
+            cuda::prefix_sum_00_block_scan(gpu::WorkSize(GROUP_SIZE, n), input_gpu, prefix_sum_accum_gpu, buffer1_pow2_sum_gpu, n);
+            unsigned int size = (n + GROUP_SIZE - 1) / GROUP_SIZE, pow2 = 8;
             while (size > 1) {
                 cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), buffer1_pow2_sum_gpu, prefix_sum_accum_gpu, n, pow2);
                 cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, size), buffer1_pow2_sum_gpu, buffer2_pow2_sum_gpu, size);
