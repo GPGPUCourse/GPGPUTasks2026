@@ -84,24 +84,29 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            ocl_fill_buffer_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, N), input_gpu, prefix_buffer, n, N);
-            unsigned int pow2[28];
-            for (int i = 0; i < 28; ++i) {
-                pow2[i] = 1u << i;
+            ocl_fill_buffer_with_zeros.execAsynchronized(gpu::WorkSize(GROUP_SIZE, (N + 1) / 2), input_gpu, prefix_buffer, n, N);
+
+            // Первую редукцию делаем в ocl_fill_buffer_with_zeros.
+            size_t last = N > 1 ? 1 : 0;
+            for (uint32_t i = 2 * GROUP_SIZE; i < N; i *= 2 * GROUP_SIZE) {
+                uint32_t is_last = N / i <= 2 * GROUP_SIZE;
+                ocl_prefix_sum_up_scan.execAsynchronized(
+                    gpu::WorkSize(GROUP_SIZE, N / i / 2),
+                    prefix_buffer, i, N, is_last);
+                last = i;
             }
-
-            for (int i = 0; i < 27; ++i) {
-                ocl_prefix_sum_up_scan.exec(gpu::WorkSize(GROUP_SIZE, N / pow2[i + 1]),
-                    prefix_buffer, pow2[i] - 1, pow2[i], pow2[i + 1], N);
+            
+            for (uint32_t i = last; i > 1; i /= 2 * GROUP_SIZE) {
+                ocl_prefix_sum_down_scan.execAsynchronized(
+                    gpu::WorkSize(GROUP_SIZE, N / i / 2),
+                    prefix_buffer, i, N
+                );
             }
-
-            uint32_t zero = 0;
-            gpu::gpu_mem_32u last(prefix_buffer, N - 1);
-            last.writeN(&zero, 1);
-
-            for (int i = 26; i >= 0; --i) {
-                ocl_prefix_sum_down_scan.exec(gpu::WorkSize(GROUP_SIZE, N / pow2[i + 1]),
-                    prefix_buffer, pow2[i] - 1, pow2[i], pow2[i + 1], N);
+            if (last > 0) {
+                ocl_prefix_sum_down_scan.exec(
+                    gpu::WorkSize(GROUP_SIZE, N / 2),
+                    prefix_buffer, 1u, N
+                );
             }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
