@@ -170,7 +170,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
                     a[4*threadid+1+4096]=what.y;
                     a[4*threadid+2+4096]=what.z;
                 }
-                else if ((threadid>>3) & 4 ==1)
+                else if ((threadid>>3) & 4 ==2)
                 {
                     a[4*threadid+2+4096]=what.z;
                     a[4*threadid+3+4096]=what.w;
@@ -179,10 +179,10 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
                 }
                 else
                 {
-                    a[4*threadid+3+4096]=what.w;
-                    a[4*threadid+4096]=what.x;
                     a[4*threadid+1+4096]=what.y;
                     a[4*threadid+2+4096]=what.z;
+                    a[4*threadid+3+4096]=what.w;
+                    a[4*threadid+4096]=what.x;
                 }
             }
         }
@@ -270,11 +270,80 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         a[9*threadid+8]+=who0;
         __syncthreads();
 //#pragma unroll(9)
-        for (int c=0;c<9;++c)
         {
-            if (startid+1024*c+threadid<n)
+            if (startid+4*threadid<n)
             {
-                pr[startid+1024*c+threadid]=a[1024*c+threadid];
+                uint4 what=((uint4*) A)[(startid/4+threadid)];
+                if ((threadid>>3) & 4 ==0)
+                {
+                    what.x=a[4*threadid];
+                    what.y=a[4*threadid+1];
+                    what.z=a[4*threadid+2];
+                    what.w=a[4*threadid+3];
+                }
+                else if ((threadid>>3) & 4 ==1)
+                {
+                    what.w=a[4*threadid+3];
+                    what.x=a[4*threadid];
+                    what.y=a[4*threadid+1];
+                    what.z=a[4*threadid+2];
+                }
+                else if ((threadid>>3) & 4 ==2)
+                {
+                    what.z=a[4*threadid+2];
+                    what.w=a[4*threadid+3];
+                    what.x=a[4*threadid];
+                    what.y=a[4*threadid+1];
+                }
+                else
+                {
+                    what.y=a[4*threadid+1];
+                    what.z=a[4*threadid+2];
+                    what.w=a[4*threadid+3];
+                    what.x=a[4*threadid];
+                }
+                ((uint4*) pr)[startid/4+threadid]=what;
+            }
+        }
+        {
+            if (startid+4*threadid<n)
+            {
+                uint4 what=((uint4*) A)[(startid/4+threadid)];
+                if ((threadid>>3) & 4 ==0)
+                {
+                    what.x=a[4*threadid+4096];
+                    what.y=a[4*threadid+1+4096];
+                    what.z=a[4*threadid+2+4096];
+                    what.w=a[4*threadid+3+4096];
+                }
+                else if ((threadid>>3) & 4 ==1)
+                {
+                    what.w=a[4*threadid+3+4096];
+                    what.x=a[4*threadid+4096];
+                    what.y=a[4*threadid+1+4096];
+                    what.z=a[4*threadid+2+4096];
+                }
+                else if ((threadid>>3) & 4 ==2)
+                {
+                    what.z=a[4*threadid+2+4096];
+                    what.w=a[4*threadid+3+4096];
+                    what.x=a[4*threadid+4096];
+                    what.y=a[4*threadid+1+4096];
+                }
+                else
+                {
+                    what.y=a[4*threadid+1+4096];
+                    what.z=a[4*threadid+2+4096];
+                    what.w=a[4*threadid+3+4096];
+                    what.x=a[4*threadid+4096];
+                }
+                ((uint4*) pr)[startid/4+threadid+1024]=what;
+            }
+        }
+        {
+            if (startid+threadid+8*1024<n)
+            {
+                pr[startid+threadid+8*1024]=a[threadid+8*1024];
             }
         }
         __syncthreads();
