@@ -1,0 +1,26 @@
+#ifdef __CLION_IDE__
+#include <libgpu/opencl/cl/clion_defines.cl> // This file helps CLion IDE to know what additional functions exists in OpenCL's extended C99
+#endif
+
+#include "helpers/rassert.cl"
+#include "../defines.h"
+
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__kernel void prefix_sum_up_scan(
+    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
+    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
+    __global uint* pow2_sum, // pow2_sum[i] = sum[i*2^pow2; (i+1)*2^pow2)
+    unsigned int bias,
+    unsigned int cur_pow2,
+    unsigned int greater_pow2,
+    unsigned int n
+    )
+{
+    size_t x1 = get_global_id(0) * greater_pow2 + bias;
+    size_t x2 = x1 + cur_pow2;
+    if (x1 < 0 || x1 >= n || x2 < 0 || x2 >= n) {
+        return;
+    }
+
+    pow2_sum[x2] += pow2_sum[x1];
+}

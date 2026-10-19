@@ -33,9 +33,11 @@ void run(int argc, char** argv)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
-    ocl::KernelSource ocl_fill_with_zeros(ocl::getFillBufferWithZeros());
+    ocl::KernelSource ocl_fill_buffer_with_zeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
     ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
+    ocl::KernelSource ocl_prefix_sum_up_scan(ocl::getPrefixSumUpScan());
+    ocl::KernelSource ocl_prefix_sum_down_scan(ocl::getPrefixSumDownScan());
 
     avk2::KernelSource vk_fill_with_zeros(avk2::getFillBufferWithZeros());
     avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
@@ -67,8 +69,9 @@ void run(int argc, char** argv)
                   << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
+    uint32_t N = 1 << 27; // > n
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), prefix_buffer(N);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -81,11 +84,25 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            ocl_fill_buffer_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, N), input_gpu, prefix_buffer, n, N);
+            unsigned int pow2[28];
+            for (int i = 0; i < 28; ++i) {
+                pow2[i] = 1u << i;
+            }
+
+            for (int i = 0; i < 27; ++i) {
+                ocl_prefix_sum_up_scan.exec(gpu::WorkSize(GROUP_SIZE, N / pow2[i + 1]),
+                    prefix_buffer, pow2[i] - 1, pow2[i], pow2[i + 1], N);
+            }
+
+            uint32_t zero = 0;
+            gpu::gpu_mem_32u last(prefix_buffer, N - 1);
+            last.writeN(&zero, 1);
+
+            for (int i = 26; i >= 0; --i) {
+                ocl_prefix_sum_down_scan.exec(gpu::WorkSize(GROUP_SIZE, N / pow2[i + 1]),
+                    prefix_buffer, pow2[i] - 1, pow2[i], pow2[i + 1], N);
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -113,11 +130,11 @@ void run(int argc, char** argv)
               << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
+    std::vector<unsigned int> gpu_prefix_sum = prefix_buffer.readVector();
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
-        rassert(cpu_prefix_sum[i] == gpu_prefix_sum[i], 566324523452323, cpu_prefix_sum[i], gpu_prefix_sum[i], i);
+        rassert(cpu_prefix_sum[i] == gpu_prefix_sum[i+1], 566324523452323, cpu_prefix_sum[i], gpu_prefix_sum[i+1], i);
     }
 
     // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)

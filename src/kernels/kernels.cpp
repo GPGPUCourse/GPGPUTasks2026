@@ -4,6 +4,8 @@
 #include "cl/generated_kernels/fill_buffer_with_zeros.h"
 #include "cl/generated_kernels/prefix_sum_01_reduction.h"
 #include "cl/generated_kernels/prefix_sum_02_prefix_accumulation.h"
+#include "cl/generated_kernels/prefix_sum_up_scan.h"
+#include "cl/generated_kernels/prefix_sum_down_scan.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/fill_buffer_with_zeros_comp.h"
@@ -48,6 +50,16 @@ const ocl::ProgramBinaries& getAplusB()
 const ProgramBinaries& getFillBufferWithZeros()
 {
     return opencl_binaries_fill_buffer_with_zeros;
+}
+
+const ProgramBinaries& getPrefixSumDownScan()
+{
+    return opencl_binaries_prefix_sum_down_scan;
+}
+
+const ProgramBinaries& getPrefixSumUpScan()
+{
+    return opencl_binaries_prefix_sum_up_scan;
 }
 
 const ProgramBinaries& getPrefixSum01Reduction()
