@@ -199,8 +199,8 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
 //#pragma unroll(8)
         for (int c=0;c<=7;++c)
         {
-            who+=a[9*threadid+c];
-            a[9*threadid+c]=who;
+            who=(a[9*threadid+c]+=who);
+            //a[9*threadid+c]=who;
         }
         a[9*threadid+8]+=who0;
         __syncthreads();
