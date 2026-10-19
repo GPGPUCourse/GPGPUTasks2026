@@ -75,14 +75,38 @@ void run(int argc, char** argv)
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
+
+    std::vector<unsigned int> level_sizes{n};
+    std::vector<gpu::gpu_mem_32u> block_sums;
+    do {
+        unsigned int blocks = (level_sizes.back() + GROUP_SIZE - 1) / GROUP_SIZE;
+        block_sums.emplace_back(blocks);
+        if (blocks == 1) break;
+        level_sizes.push_back(blocks);
+    } while (true);
     for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            for (size_t level = 0; level < level_sizes.size(); ++level) {
+                gpu::gpu_mem_32u in, out;
+                if (level == 0) {
+                    in = input_gpu;
+                    out = prefix_sum_accum_gpu;
+                } else {
+                    in = block_sums[level - 1];
+                    out = block_sums[level - 1];
+                }
+                ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, level_sizes[level]),
+                                       in, out, block_sums[level], level_sizes[level]);
+            }
+            for (size_t level = level_sizes.size() - 1; level > 0; --level) {
+                auto out = level == 1 ? prefix_sum_accum_gpu : block_sums[level - 2];
+                ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, level_sizes[level - 1]),
+                                             block_sums[level - 1], out, level_sizes[level - 1]);
+            }
             // ocl_fill_with_zeros.exec();
             // ocl_sum_reduction.exec();
             // ocl_prefix_accumulation.exec();
