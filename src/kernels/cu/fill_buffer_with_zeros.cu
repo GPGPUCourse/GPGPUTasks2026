@@ -140,7 +140,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         if (threadid<=2*80 && threadid>blockIdx.x)
         {
             atomicAdd(sums+threadid,totalsum);
-        }
+        } //
         if (threadIdx.x==0)
         {
             int o=atomicAdd(ended,1);
