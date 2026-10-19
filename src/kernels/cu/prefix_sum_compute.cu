@@ -10,27 +10,20 @@
 __global__ void blelloch_iteration(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    unsigned int* input,
+    const unsigned int* input,
     unsigned int* sum_buffer,
     unsigned int* block_additives,
+    unsigned int block_size,
     unsigned int n)
 {
     const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
     __shared__ unsigned int temp[GROUP_SIZE * 2];
 
-    temp[2 * threadIdx.x] = input[2 * index];
-    temp[2 * threadIdx.x + 1] = input[2 * index + 1];
+    temp[2 * threadIdx.x] = 2 * index < n ? input[2 * index] : 0;
+    temp[2 * threadIdx.x + 1] = 2 * index + 1 < n ? input[2 * index + 1] : 0;
 
     int offset = 1;
-    // #pragma unroll
-    if (threadIdx.x == 0) {
-        printf("offset=%d: ", offset);
-        for (int t = 0; t < GROUP_SIZE * 2; ++t) printf("%u ", temp[t]);
-        printf("\n");
-    }
-    
     for (int d = GROUP_SIZE * 2 >> 1; d > 0; d >>= 1) { // up
-        
         if (threadIdx.x < d) {
             int ai = offset * (2 * threadIdx.x + 1) - 1;
             int bi = offset * (2 * threadIdx.x + 2) - 1;
@@ -39,68 +32,47 @@ __global__ void blelloch_iteration(
         offset *= 2;
         __syncthreads();
     }
+
     // записать полученную сумму этой воркгруппы в sum_buffer
-    sum_buffer[blockIdx.x] = temp[n - 1];
-
-
     if (threadIdx.x == 0) {
-        temp[n - 1] = 0;
+        sum_buffer[blockIdx.x] = temp[GROUP_SIZE * 2 - 1];
+        temp[GROUP_SIZE * 2 - 1] = 0;
     }
-    // #pragma unroll
-    if (threadIdx.x == 0) {
-        printf("offset=%d: ", offset);
-        for (int t = 0; t < GROUP_SIZE * 2; ++t) printf("%u ", temp[t]);
-        printf("\n");
-    }
+
     for (int d = 1; d < GROUP_SIZE * 2; d *= 2) { // down
         offset >>= 1;
         __syncthreads();
         if (threadIdx.x < d) {
             int ai = offset * (2 * threadIdx.x + 1) - 1;
             int bi = offset * (2 * threadIdx.x + 2) - 1;
-            uint t = temp[ai];
+            unsigned int t = temp[ai];
             temp[ai] = temp[bi];
             temp[bi] += t;
         }
-        if (threadIdx.x == 0) {
-            printf("offset=%d: ", offset);
-            for (int t = 0; t < GROUP_SIZE * 2; ++t) printf("%u ", temp[t]);
-            printf("\n");
-        }
     }
-    
     __syncthreads();
 
-    block_additives[2 * index] = temp[2 * threadIdx.x];
-    block_additives[2 * index + 1] = temp[2 * threadIdx.x + 1];
-
-    // логично распараллеливать добавление добавки в output, 
-    // чтобы можно было в несколько тредов
-    // тогда надо сохранить temp
-
+    const bool inclusive = block_size == 1;
+    if (2 * index < n) {
+        block_additives[2 * index] = temp[2 * threadIdx.x] + (inclusive ? input[2 * index] : 0);
+    }
+    if (2 * index + 1 < n) {
+        block_additives[2 * index + 1] = temp[2 * threadIdx.x + 1] + (inclusive ? input[2 * index + 1] : 0);
+    }
 }
 
 
 __global__ void per_block_additive(
-    unsigned int* block_additives,
+    const unsigned int* block_additives,
     unsigned int* output,
     unsigned int block_size,
     unsigned int n
 ) {
     const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
 
-    // тут надо додумать и переписать
-    // идея понятная - прибавляем префсумму всех блоков до
-
-    int block_idx = 0;
-    if (blockIdx.x != 0) {
-        block_idx = int(block_size / (blockIdx.x * blockDim.x));
-    }
-    
     if (index < n) {
-        output[index] += block_additives[block_idx];
+        output[index] += block_additives[index / block_size];
     }
-
 }
 
 
@@ -113,20 +85,34 @@ void prefix_sum_compute(const gpu::WorkSize &workSize,
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
 
-    gpu::gpu_mem_32u cur_input = input;
+    // суммы блоков пишем попеременно в две непересекающиеся части sum_buffer:
+    // [0, sums_count) и [sums_count, ...), где sums_count - число сумм первого уровня (дальше их только меньше)
+    // input никогда не перезаписываем, и на одном уровне никогда не читаем и пишем один и тот же буфер
+    const unsigned int sums_count = (n + GROUP_SIZE * 2 - 1) / (GROUP_SIZE * 2);
     gpu::gpu_mem_32u cur_buffer = sum_buffer;
+    gpu::gpu_mem_32u next_buffer(sum_buffer, sums_count);
 
-    for (int block_size = 1; block_size < n; block_size *= GROUP_SIZE * 2) {
-        blelloch_iteration<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(cur_input.cuptr(), cur_buffer.cuptr(), block_additives.cuptr(), n);
+    gpu::gpu_mem_32u cur_input = input;
+    unsigned int input_size = n;
+
+    // первый уровень нужен всегда (даже при n == 1), следующие - пока блоков больше одного
+    size_t block_size = 1;
+    do {
+        // каждый поток сканирует 2 элемента, поэтому сетку считаем от размера входа текущего уровня
+        gpu::WorkSize scan_worksize(GROUP_SIZE, (input_size + 1) / 2);
+        blelloch_iteration<<<scan_worksize.cuGridSize(), scan_worksize.cuBlockSize(), 0, stream>>>(cur_input.cuptr(), cur_buffer.cuptr(), block_additives.cuptr(), block_size, input_size);
         CUDA_CHECK_KERNEL_SYNC(stream);
 
-        per_block_additive<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(block_additives.cuptr(), output.cuptr(), block_size, n);
+        gpu::WorkSize sum_worksize(GROUP_SIZE, n);
+        per_block_additive<<<sum_worksize.cuGridSize(), sum_worksize.cuBlockSize(), 0, stream>>>(block_additives.cuptr(), output.cuptr(), block_size, n);
         CUDA_CHECK_KERNEL_SYNC(stream);
 
-        cur_input = sum_buffer;
-        cur_buffer = input;
-
-    }
+        // суммы блоков этого уровня - вход следующего
+        cur_input = cur_buffer;
+        cur_buffer.swap(next_buffer);
+        input_size = (input_size + GROUP_SIZE * 2 - 1) / (GROUP_SIZE * 2);
+        block_size *= GROUP_SIZE * 2;
+    } while (block_size < n);
 
     CUDA_CHECK_KERNEL(stream);
 }

@@ -42,7 +42,6 @@ void run(int argc, char** argv)
     avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
 
     unsigned int n = 100*1000*1000;
-    n = 8;
     std::vector<unsigned int> as(n, 0);
     size_t total_sum = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -77,11 +76,12 @@ void run(int argc, char** argv)
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) {
+
         timer t;
 
         if (context.type() == gpu::Context::TypeCUDA) {
             // cuda::fill_buffer_with_zeros(gpu::WorkSize(GROUP_SIZE, n), prefix_sum_accum_gpu, n);
-
+            prefix_sum_accum_gpu.fill(0);
             cuda::prefix_sum_compute(gpu::WorkSize(GROUP_SIZE, n / 2), input_gpu, buffer_sum_gpu, block_additives_gpu, prefix_sum_accum_gpu, n);
         } else {
             rassert(false, 4531412341, context.type());
