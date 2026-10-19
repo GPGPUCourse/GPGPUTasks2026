@@ -108,11 +108,16 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
     __shared__ unsigned int b[1024];
     __shared__ unsigned int d[1024];
     __shared__ unsigned int valsum;
-    for (int startid0=0;startid0<n;startid0+=2*80*1024*9)
+    unsigned int jj=0;
+    for (int startid0=0,jj=0;startid0<n;startid0+=2*80*1024*9,jj+=1)
     {
         unsigned int startid=startid0+blockIdx.x*1024*9;
         unsigned int threadid=threadIdx.x;
-        unsigned int sumbefore=start[0];
+        unsigned int sumbefore=start[jj];
+        if (blockIdx.x==0 && threadIdx.x==0)
+        {
+            atomicAdd(start+jj+1,sumbefore);
+        }
 #pragma unroll(9)
         for (int c=0;c<9;++c)
         {
@@ -155,14 +160,20 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         unsigned int endedwas=2*startid0/(9*1024);
         if (threadIdx.x==0)
         {
-            atomicAdd(start,totalsum);
             unsigned int uselessiterations=0;
-            while (true) ///странный цикл
+            while (atomicAdd(sums+blockIdx.x,0)%256<blockIdx.x) ///странный цикл
             {
-                valsum=atomicAdd(sums+blockIdx.x,0);
-                if (valsum%256==blockIdx.x) {valsum/=256;break;}
                 uselessiterations+=1;
             }
+        }
+        __syncthreads();
+        if (threadIdx.x==0)
+        {
+            valsum=atomicAdd(sums+blockIdx.x,0)/256;
+        }
+        if (threadIdx.x==1023)
+        {
+            atomicAdd(start+jj+1,totalsum);
         }
         __syncthreads();
         unsigned int who0=sumbefore+valsum;
@@ -187,7 +198,6 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         {
             sums[blockIdx.x]=0;
         }
-        __syncthreads();
         if (threadIdx.x==0)
         {
             atomicAdd(ended,1);
