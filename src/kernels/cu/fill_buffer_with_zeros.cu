@@ -203,21 +203,20 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
-            while (atomicCAS(ended,endedwas+2*2*80,endedwas+2*2*80)!=(endedwas+2*2*80)) ///странный цикл
+            while (atomicAdd(ended,0)!=(endedwas+2*2*80)) ///странный цикл
             {
                 uselessiterations+=1;
             }
         }
-        if (threadIdx.x==0)
+        /*if (threadIdx.x==0)
         {
             if (startid>0 && startid<n && pr[startid]-pr[startid-1]!=A[startid])
             {
                 mistake=true;
             }
-        }
-        if (startid>0) mistake=true;
+        }*/
         __syncthreads();
-        if (mistake)
+        /*if (mistake)
         {
             if (threadIdx.x==0)
             {
@@ -232,7 +231,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
                 }
             }
             __syncthreads();
-        }
+        }*/
         /*if (blockIdx.x==0 && threadIdx.x==0 && startid0==0)
         {
             printf("start[0] = %d",start[0]);
