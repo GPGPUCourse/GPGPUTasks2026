@@ -113,6 +113,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         unsigned int startid=startid0+blockIdx.x*1024*9;
         unsigned int threadid=threadIdx.x;
         unsigned int sumbefore=start[0];
+#pragma unroll(9)
         for (int c=0;c<9;++c)
         {
             if (startid+1024*c+threadid<n)
@@ -121,6 +122,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
             }
         }
         __syncthreads();
+#pragma unroll(8)
         for (int c=0;c<=7;++c)
         {
             a[9*threadid+8]+=a[9*threadid+c];
@@ -175,6 +177,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         }
         a[9*threadid+8]+=who0;
         __syncthreads();
+#pragma unroll(9)
         for (int c=0;c<9;++c)
         {
             if (startid+1024*c+threadid<n)
