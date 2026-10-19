@@ -188,6 +188,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
                 pr[startid+1024*c+threadid]=a[1024*c+threadid];
             }
         }
+        __syncthreads();
         if (threadIdx.x==0)
         {
             sums[blockIdx.x]=0;
