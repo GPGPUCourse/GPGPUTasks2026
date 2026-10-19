@@ -7,6 +7,7 @@
 #include "../defines.h"
 #include "helpers/rassert.cu"
 
+template <bool FIRST_LEVEL>
 __global__ void prefix_sum_02_prefix_accumulation(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
@@ -20,16 +21,15 @@ __global__ void prefix_sum_02_prefix_accumulation(
         return;
     unsigned int length = i + 1;
 
-    if (pow2 == 0) {
+    if (FIRST_LEVEL) {
         prefix_sum_accum[i] = (length & 1u) ? pow2_sum[i] : 0u;
-        return;
-    }
+    } else {
+        unsigned int segment_size = 1 << pow2;
 
-    unsigned int segment_size = 1 << pow2;
-
-    if ((length & segment_size) != 0) {
-        unsigned int segment = (length >> pow2) - 1;
-        prefix_sum_accum[i] += pow2_sum[segment];
+        if ((length & segment_size) != 0) {
+            unsigned int segment = (length >> pow2) - 1;
+            prefix_sum_accum[i] += pow2_sum[segment];
+        }
     }
 }
 
@@ -40,7 +40,16 @@ void prefix_sum_02_prefix_accumulation(const gpu::WorkSize& workSize,
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::prefix_sum_02_prefix_accumulation<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(pow2_sum.cuptr(), prefix_sum_accum.cuptr(), n, pow2);
+    if (pow2 == 0) {
+        ::prefix_sum_02_prefix_accumulation<true>
+            <<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+                pow2_sum.cuptr(), prefix_sum_accum.cuptr(), n, pow2);
+    } else {
+        ::prefix_sum_02_prefix_accumulation<false>
+            <<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+                pow2_sum.cuptr(), prefix_sum_accum.cuptr(), n, pow2);
+    }
+
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda
