@@ -5,6 +5,11 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
+#define VECTOR_WIDTH 4
+#define VECTORS_PER_THREAD 2
+#define ELEMENTS_PER_THREAD (VECTOR_WIDTH * VECTORS_PER_THREAD)
+#define SCAN_BLOCK_SIZE (GROUP_SIZE * ELEMENTS_PER_THREAD)
+
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void prefix_sum_02_prefix_accumulation(
     __global const uint* block_prefix_sum,
@@ -17,12 +22,13 @@ __kernel void prefix_sum_02_prefix_accumulation(
     }
 
     uint prefix = block_prefix_sum[block - 1];
-    size_t first = block * (2 * GROUP_SIZE) + get_local_id(0);
-    size_t second = first + GROUP_SIZE;
-    if (first < n) {
-        prefix_sum_accum[first] += prefix;
-    }
-    if (second < n) {
-        prefix_sum_accum[second] += prefix;
+    #pragma unroll
+    for (unsigned int part = 0; part < VECTORS_PER_THREAD; ++part) {
+        size_t first = block * SCAN_BLOCK_SIZE + ELEMENTS_PER_THREAD * get_local_id(0) + VECTOR_WIDTH * part;
+        for (unsigned int i = 0; i < VECTOR_WIDTH; ++i) {
+            if (first + i < n) {
+                prefix_sum_accum[first + i] += prefix;
+            }
+        }
     }
 }

@@ -71,7 +71,7 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u input_gpu(n), prefix_sum_accum_gpu(n);
     std::vector<gpu::gpu_mem_32u> block_sums_gpu;
     for (unsigned int count = n; count > 0;) {
-        count = (count - 1) / (2 * GROUP_SIZE) + 1;
+        count = (count - 1) / (8 * GROUP_SIZE) + 1;
         block_sums_gpu.emplace_back(count);
         if (count == 1) {
             break;
@@ -94,7 +94,7 @@ void run(int argc, char** argv)
                 auto& output = level == 0 ? prefix_sum_accum_gpu : block_sums_gpu[level - 1];
                 unsigned int count = static_cast<unsigned int>(input.number());
                 gpu::WorkSize work_size(GROUP_SIZE, block_sums_gpu[level].number() * GROUP_SIZE);
-                ocl_sum_reduction.exec(work_size, input, output, block_sums_gpu[level], count);
+                ocl_sum_reduction.execAsynchronized(work_size, input, output, block_sums_gpu[level], count);
             }
 
             for (size_t level = block_sums_gpu.size(); level > 1; --level) {
@@ -102,8 +102,9 @@ void run(int argc, char** argv)
                 const auto& block_prefix_sum = block_sums_gpu[level - 2];
                 unsigned int count = static_cast<unsigned int>(output.number());
                 gpu::WorkSize work_size(GROUP_SIZE, block_prefix_sum.number() * GROUP_SIZE);
-                ocl_prefix_accumulation.exec(work_size, block_prefix_sum, output, count);
+                ocl_prefix_accumulation.execAsynchronized(work_size, block_prefix_sum, output, count);
             }
+            OCL_SAFE_CALL(clFinish(context.cl()->queue()));
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
