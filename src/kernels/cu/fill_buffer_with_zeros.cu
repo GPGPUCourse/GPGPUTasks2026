@@ -145,14 +145,14 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         } //
         if (threadIdx.x==0)
         {
-            //int o=atomicAdd(ended,1);
+            int o=atomicAdd(ended,1);
         }
         __syncthreads();
         //if (startid0==2*80*1024*9 && o+1==6*1024*80) printf("blockIdx.x = %d, threadIdx.x= %d, o = %d \n, sums[31] = %d \n",blockIdx.x,threadIdx.x,o,sums[31]);
         //return;
         //if (o==2*1024*80-1) {printf("blockIdx.x = %d, threadIdx.x= %d, o = %d \n",blockIdx.x,threadIdx.x,o);}
         //return;
-        unsigned int endedwas=startid0/(9*1024);
+        unsigned int endedwas=2*startid0/(9*1024);
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
@@ -193,6 +193,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         {
             sums[blockIdx.x]=0;
         }
+        __syncthreads();
         if (threadIdx.x==0)
         {
             atomicAdd(ended,1);
@@ -200,7 +201,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
         if (threadIdx.x==0)
         {
             unsigned int uselessiterations=0;
-            while (atomicAdd(ended,0)<endedwas+160) ///странный цикл
+            while (atomicCAS(ended,endedwas+2*2*80,endedwas+2*2*80)!=(endedwas+2*2*80)) ///странный цикл
             {
                 uselessiterations+=1;
             }
@@ -223,7 +224,8 @@ namespace cuda {
         CUDA_CHECK_KERNEL(stream);
     }
 }
-namespace cuda {
+namespace cuda
+{
     void makesums2(const gpu::WorkSize &workSize,
                 gpu::gpu_mem_32u &A, gpu::gpu_mem_32u &pr,gpu::gpu_mem_32u &sums,gpu::gpu_mem_32u& start,gpu::gpu_mem_32u& ended,unsigned int n)
     {
