@@ -85,16 +85,6 @@ __device__ __forceinline__ unsigned int prefix_sum_look_back(
     }
 }
 
-template<unsigned int BLOCK>
-__device__ __forceinline__ void prefix_sum_block_sync()
-{
-    if (BLOCK == 32)
-        __syncwarp(0xffffffffu);
-    else
-        __syncthreads();
-}
-
-template<unsigned int BLOCK, unsigned int TILE>
 __global__ void prefix_sum_lookback_kernel(
     const unsigned int* __restrict__ input,
     unsigned int* __restrict__ output,
@@ -102,10 +92,8 @@ __global__ void prefix_sum_lookback_kernel(
     unsigned int* next_tile,
     unsigned int n)
 {
-    static_assert(BLOCK == 256 || BLOCK == 128 || BLOCK == 64 || BLOCK == 32,
-        "unsupported block size");
-    static_assert(TILE == 1024 || TILE == 2048 || TILE == 4096,
-        "unsupported tile size");
+    constexpr unsigned int BLOCK = 256;
+    constexpr unsigned int TILE = 4096;
     constexpr unsigned int WARPS = BLOCK / 32;
     constexpr unsigned int STRIPS = TILE / (BLOCK * 4);
     constexpr unsigned int SEGMENTS = TILE / 128;
@@ -121,7 +109,7 @@ __global__ void prefix_sum_lookback_kernel(
     if (tx == 0)
         tile = atomicAdd(next_tile, 1u);
 
-    prefix_sum_block_sync<BLOCK>();
+    __syncthreads();
 
     uint4 data[STRIPS];
     unsigned int value[STRIPS];
@@ -140,14 +128,13 @@ __global__ void prefix_sum_lookback_kernel(
             warp_prefix[strip * WARPS + warp] = value[strip];
     }
 
-    prefix_sum_block_sync<BLOCK>();
+    __syncthreads();
 
     if (warp == 0) {
-        unsigned int total = lane < SEGMENTS ? warp_prefix[lane] : 0u;
+        unsigned int total = warp_prefix[lane];
         total = prefix_sum_warp_scan(total, lane);
 
-        if (lane < SEGMENTS)
-            warp_prefix[lane] = total;
+        warp_prefix[lane] = total;
 
         unsigned int tile_sum = __shfl_sync(0xffffffffu, total, SEGMENTS - 1);
 
@@ -171,7 +158,7 @@ __global__ void prefix_sum_lookback_kernel(
         }
     }
 
-    prefix_sum_block_sync<BLOCK>();
+    __syncthreads();
 
 #pragma unroll
     for (unsigned int strip = 0; strip < STRIPS; ++strip) {
@@ -203,43 +190,12 @@ __global__ void prefix_sum_lookback_kernel(
 
 namespace cuda {
 
-template<unsigned int BLOCK>
-void prefix_sum_launch_lookback(
-    const gpu::WorkSize& workSize,
-    const unsigned int* input,
-    unsigned int* output,
-    PrefixState* states,
-    unsigned int* next_tile,
-    unsigned int n,
-    unsigned int tile_size,
-    cudaStream_t stream)
-{
-    switch (tile_size) {
-    case 1024:
-        ::prefix_sum_lookback_kernel<BLOCK, 1024>
-            <<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-                input, output, states, next_tile, n);
-        break;
-    case 2048:
-        ::prefix_sum_lookback_kernel<BLOCK, 2048>
-            <<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-                input, output, states, next_tile, n);
-        break;
-    case 4096:
-        ::prefix_sum_lookback_kernel<BLOCK, 4096>
-            <<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-                input, output, states, next_tile, n);
-        break;
-    }
-}
-
 void prefix_sum_lookback(
     const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32u& input,
     gpu::gpu_mem_32u& output,
     gpu::gpu_mem_32u& workspace,
-    unsigned int n,
-    unsigned int tile_size)
+    unsigned int n)
 {
     if (n == 0)
         return;
@@ -247,17 +203,12 @@ void prefix_sum_lookback(
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA,
         34523543124312, context.type());
-    rassert(tile_size == 1024 || tile_size == 2048 || tile_size == 4096,
-        7104202613, tile_size);
 
-    unsigned int tiles = n / tile_size + (n % tile_size != 0);
+    unsigned int tiles = n / 4096u + (n % 4096u != 0);
     size_t workspace_size = size_t(tiles) * 2 + 1;
     rassert(workspace.number() >= workspace_size,
         7104202610, workspace.number(), workspace_size);
-    rassert((workSize.cuBlockSize().x == 256
-                || workSize.cuBlockSize().x == 128
-                || workSize.cuBlockSize().x == 64
-                || workSize.cuBlockSize().x == 32)
+    rassert(workSize.cuBlockSize().x == 256
             && workSize.cuBlockSize().y == 1
             && workSize.cuBlockSize().z == 1,
         7104202611, workSize.cuBlockSize().x);
@@ -273,24 +224,9 @@ void prefix_sum_lookback(
     PrefixState* states = reinterpret_cast<PrefixState*>(workspace.cuptr());
     unsigned int* next_tile = workspace.cuptr() + size_t(tiles) * 2;
 
-    switch (workSize.cuBlockSize().x) {
-    case 256:
-        prefix_sum_launch_lookback<256>(workSize, input.cuptr(), output.cuptr(),
-            states, next_tile, n, tile_size, stream);
-        break;
-    case 128:
-        prefix_sum_launch_lookback<128>(workSize, input.cuptr(), output.cuptr(),
-            states, next_tile, n, tile_size, stream);
-        break;
-    case 64:
-        prefix_sum_launch_lookback<64>(workSize, input.cuptr(), output.cuptr(),
-            states, next_tile, n, tile_size, stream);
-        break;
-    case 32:
-        prefix_sum_launch_lookback<32>(workSize, input.cuptr(), output.cuptr(),
-            states, next_tile, n, tile_size, stream);
-        break;
-    }
+    ::prefix_sum_lookback_kernel
+        <<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+            input.cuptr(), output.cuptr(), states, next_tile, n);
 
     CUDA_CHECK_KERNEL_SYNC(stream);
 }

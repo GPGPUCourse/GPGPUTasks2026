@@ -9,7 +9,6 @@
 #include "kernels/kernels.h"
 #include "libgpu/work_size.h"
 
-#include <fstream>
 #include <vector>
 
 void run(int argc, char** argv)
@@ -34,14 +33,6 @@ void run(int argc, char** argv)
     //          если же вас это не останавливает - профилировщик (nsight-systems) при запуске на NVIDIA тоже работает (хоть и менее мощный чем nsight-compute)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
-
-    ocl::KernelSource ocl_fill_with_zeros(ocl::getFillBufferWithZeros());
-    ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
-    ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
-
-    avk2::KernelSource vk_fill_with_zeros(avk2::getFillBufferWithZeros());
-    avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
-    avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
 
     unsigned int n = 100 * 1000 * 1000;
     std::vector<unsigned int> as(n, 0);
@@ -73,90 +64,48 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u prefix_sum_accum_gpu(n);
 
-    const unsigned int max_tiles = n / 1024u + (n % 1024u != 0);
-    gpu::gpu_mem_32u scan_workspace(size_t(max_tiles) * 2 + 1);
+    constexpr unsigned int BLOCK = 256;
+    constexpr unsigned int TILE = 4096;
+    const unsigned int tiles = n / TILE + (n % TILE != 0);
+    gpu::gpu_mem_32u scan_workspace(size_t(tiles) * 2 + 1);
+    const gpu::WorkSize scan_work_size(BLOCK, size_t(tiles) * BLOCK);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
 
-    const unsigned int variants[][2] = {
-        {128, 1024},
-        {64, 1024},
-        {256, 1024},
-        {32, 1024},
-        {128, 2048},
-        {64, 2048},
-        {256, 2048},
-        {32, 2048},
-        {128, 4096},
-        {64, 4096},
-        {256, 4096},
-        {32, 4096},
-        {128, 1024}
-    };
-    for (unsigned int variant = 0; variant < 13; ++variant) {
-        unsigned int block = variants[variant][0];
-        unsigned int tile_size = variants[variant][1];
-        unsigned int tiles = n / tile_size + (n % tile_size != 0);
-        const gpu::WorkSize scan_work_size(block, size_t(tiles) * block);
-        prefix_sum_accum_gpu.fill(0xffffffffu);
-        std::cout << "Evaluating variant #" << (variant + 1)
-                  << ": threads/block=" << block
-                  << ", tile=" << tile_size
-                  << ", items/thread=" << (tile_size / block)
-                  << (variant == 12 ? " (baseline repeat)" : "") << std::endl;
+    prefix_sum_accum_gpu.fill(0xffffffffu);
 
-        // Запускаем кернел (несколько раз и с замером времени выполнения)
-        std::vector<double> times;
-        for (int iter = 0; iter < 10; ++iter) {
-            timer t;
+    // Запускаем кернел (несколько раз и с замером времени выполнения)
+    std::vector<double> times;
+    for (int iter = 0; iter < 10; ++iter) {
+        timer t;
 
-            // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-            // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-            if (context.type() == gpu::Context::TypeOpenCL) {
-                // TODO
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-                // ocl_fill_with_zeros.exec();
-                // ocl_sum_reduction.exec();
-                // ocl_prefix_accumulation.exec();
-            } else if (context.type() == gpu::Context::TypeCUDA) {
-                cuda::prefix_sum_lookback(
-                    scan_work_size, input_gpu, prefix_sum_accum_gpu, scan_workspace, n, tile_size);
-            } else if (context.type() == gpu::Context::TypeVulkan) {
-                // TODO
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-                // vk_fill_with_zeros.exec();
-                // vk_sum_reduction.exec();
-                // vk_prefix_accumulation.exec();
-            } else {
-                rassert(false, 4531412341, context.type());
-            }
+        cuda::prefix_sum_lookback(
+            scan_work_size, input_gpu, prefix_sum_accum_gpu, scan_workspace, n);
 
-            times.push_back(t.elapsed());
-        }
-        std::cout << "prefix sum times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+        times.push_back(t.elapsed());
+    }
+    std::cout << "prefix sum times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 
-        // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили префиксные суммы)
-        double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
-        std::cout << "GPU prefix sum median effective VRAM bandwidth: "
-                  << memory_size_gb / stats::median(times) << " GB/s ("
-                  << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
+    // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили префиксные суммы)
+    double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
+    std::cout << "GPU prefix sum median effective VRAM bandwidth: "
+              << memory_size_gb / stats::median(times) << " GB/s ("
+              << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
-        // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-        std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
+    // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
+    std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
 
-        // Сверяем результат
-        for (size_t i = 0; i < n; ++i) {
-            rassert(cpu_prefix_sum[i] == gpu_prefix_sum[i], 566324523452323, cpu_prefix_sum[i], gpu_prefix_sum[i], i);
-        }
-
-        // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
-        std::vector<unsigned int> input_values = input_gpu.readVector();
-        for (size_t i = 0; i < n; ++i) {
-            rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
-        }
+    // Сверяем результат
+    for (size_t i = 0; i < n; ++i) {
+        rassert(cpu_prefix_sum[i] == gpu_prefix_sum[i], 566324523452323, cpu_prefix_sum[i], gpu_prefix_sum[i], i);
     }
 
+    // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
+    std::vector<unsigned int> input_values = input_gpu.readVector();
+    for (size_t i = 0; i < n; ++i) {
+        rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
+    }
 }
 
 int main(int argc, char** argv)

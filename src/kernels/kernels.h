@@ -12,8 +12,7 @@ void prefix_sum_lookback(
     const gpu::gpu_mem_32u& input,
     gpu::gpu_mem_32u& output,
     gpu::gpu_mem_32u& workspace,
-    unsigned int n,
-    unsigned int tile_size);
+    unsigned int n);
 }
 
 namespace ocl {
