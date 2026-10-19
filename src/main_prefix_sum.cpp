@@ -68,9 +68,14 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    unsigned int pow2 = 1;
+    while (pow2 < n) pow2 <<= 1;
+    gpu::gpu_mem_32u input_gpu(n), pref_sum(pow2);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
+    input_gpu.fill(0);
+    pref_sum.writeN(as.data(), n);
+
     input_gpu.writeN(as.data(), n);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
@@ -81,11 +86,17 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
+            pref_sum.fill(0);
+            pref_sum.writeN(as.data(), n);
             // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            for (unsigned int step = 2; step <= pow2; step <<= 1) {
+                gpu::WorkSize workSize(GROUP_SIZE, std::max(256U, pow2 / step));
+                ocl_sum_reduction.exec(workSize, pref_sum, step, pow2);
+            }
+            for (unsigned int step = pow2 / 2; step > 1; step >>= 1) {
+                gpu::WorkSize workSize(GROUP_SIZE, std::max(256U, pow2 / step));
+                ocl_prefix_accumulation.exec(workSize, pref_sum, step, pow2);
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -113,7 +124,7 @@ void run(int argc, char** argv)
               << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
+    std::vector<unsigned int> gpu_prefix_sum = pref_sum.readVector();
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
