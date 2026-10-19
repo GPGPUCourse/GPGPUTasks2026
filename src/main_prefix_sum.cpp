@@ -73,22 +73,38 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u prefix_sum_accum_gpu(n);
 
-    constexpr unsigned int TILE = 1024;
-    const unsigned int tiles = n / TILE + (n % TILE != 0);
-    gpu::gpu_mem_32u scan_workspace(size_t(tiles) * 2 + 1);
+    const unsigned int max_tiles = n / 1024u + (n % 1024u != 0);
+    gpu::gpu_mem_32u scan_workspace(size_t(max_tiles) * 2 + 1);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
 
-    const unsigned int block_sizes[] = { 256, 128, 64, 256 };
-    for (unsigned int variant = 0; variant < 4; ++variant) {
-        unsigned int block = block_sizes[variant];
+    const unsigned int variants[][2] = {
+        {128, 1024},
+        {64, 1024},
+        {256, 1024},
+        {32, 1024},
+        {128, 2048},
+        {64, 2048},
+        {256, 2048},
+        {32, 2048},
+        {128, 4096},
+        {64, 4096},
+        {256, 4096},
+        {32, 4096},
+        {128, 1024}
+    };
+    for (unsigned int variant = 0; variant < 13; ++variant) {
+        unsigned int block = variants[variant][0];
+        unsigned int tile_size = variants[variant][1];
+        unsigned int tiles = n / tile_size + (n % tile_size != 0);
         const gpu::WorkSize scan_work_size(block, size_t(tiles) * block);
         prefix_sum_accum_gpu.fill(0xffffffffu);
         std::cout << "Evaluating variant #" << (variant + 1)
                   << ": threads/block=" << block
-                  << ", items/thread=" << (1024 / block)
-                  << (variant == 3 ? " (baseline repeat)" : "") << std::endl;
+                  << ", tile=" << tile_size
+                  << ", items/thread=" << (tile_size / block)
+                  << (variant == 12 ? " (baseline repeat)" : "") << std::endl;
 
         // Запускаем кернел (несколько раз и с замером времени выполнения)
         std::vector<double> times;
@@ -105,7 +121,7 @@ void run(int argc, char** argv)
                 // ocl_prefix_accumulation.exec();
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 cuda::prefix_sum_lookback(
-                    scan_work_size, input_gpu, prefix_sum_accum_gpu, scan_workspace, n);
+                    scan_work_size, input_gpu, prefix_sum_accum_gpu, scan_workspace, n, tile_size);
             } else if (context.type() == gpu::Context::TypeVulkan) {
                 // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -140,6 +156,7 @@ void run(int argc, char** argv)
             rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
         }
     }
+
 }
 
 int main(int argc, char** argv)
@@ -166,3 +183,5 @@ int main(int argc, char** argv)
 
     return exit_code;
 }
+
+
