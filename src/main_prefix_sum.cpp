@@ -35,6 +35,7 @@ void run(int argc, char** argv)
 
     ocl::KernelSource ocl_fill_with_zeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
+    ocl::KernelSource ocl_build_oracle(ocl::getPrefixSum01Reduction(), "prefix_sum_build_oracle");
     ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
 
     avk2::KernelSource vk_fill_with_zeros(avk2::getFillBufferWithZeros());
@@ -68,7 +69,13 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    unsigned int block_count = n / GROUP_SIZE + (n % GROUP_SIZE != 0);
+    unsigned int leaf_count = 1;
+    while (leaf_count < block_count) {
+        leaf_count <<= 1;
+    }
+    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(2 * leaf_count),
+        buffer2_pow2_sum_gpu(2 * block_count), prefix_sum_accum_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -81,11 +88,17 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            if (n != 0) {
+                gpu::WorkSize work_size(GROUP_SIZE, n);
+                ocl_sum_reduction.exec(work_size, input_gpu, buffer1_pow2_sum_gpu,
+                    buffer2_pow2_sum_gpu, n, leaf_count);
+                for (unsigned int level_size = leaf_count >> 1; level_size != 0; level_size >>= 1) {
+                    ocl_build_oracle.exec(gpu::WorkSize(GROUP_SIZE, level_size),
+                        buffer1_pow2_sum_gpu, level_size);
+                }
+                ocl_prefix_accumulation.exec(work_size, input_gpu, buffer1_pow2_sum_gpu,
+                    buffer2_pow2_sum_gpu, prefix_sum_accum_gpu, n, leaf_count);
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
