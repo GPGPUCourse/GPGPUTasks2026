@@ -215,6 +215,7 @@ __global__ void __launch_bounds__(1024,2) makesums2(unsigned int* A,unsigned int
                 mistake=true;
             }
         }
+        if (startid>0) mistake=true;
         __syncthreads();
         if (mistake)
         {
