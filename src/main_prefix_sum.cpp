@@ -8,7 +8,9 @@
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
 
+#include <cstdlib>
 #include <fstream>
+#include <string>
 
 void run(int argc, char** argv)
 {
@@ -25,7 +27,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -73,6 +75,13 @@ void run(int argc, char** argv)
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
 
+    // CUDA: по умолчанию однопроходный scan с decoupled look-back (один раз читает вход и один раз пишет результат).
+    // PREFIX_SUM_ALGORITHM=lecture переключает на алгоритм с лекции (суммы блоков степеней двойки + накопление),
+    // он делает log2(n) проходов и в разы медленнее, но полезен как опора для проверки.
+    const char* algorithm_env = std::getenv("PREFIX_SUM_ALGORITHM");
+    const bool lecture_algorithm = algorithm_env != nullptr && std::string(algorithm_env) == "lecture";
+    gpu::gpu_mem_32u single_pass_status_gpu(cuda::prefix_sum_03_status_size(n)); // служебные слова look-back, обнуляются при каждом вызове
+
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) {
@@ -87,11 +96,27 @@ void run(int argc, char** argv)
             // ocl_sum_reduction.exec();
             // ocl_prefix_accumulation.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
+            if (!lecture_algorithm) {
+                cuda::prefix_sum_03_single_pass(input_gpu, prefix_sum_accum_gpu, single_pass_status_gpu, n);
+            } else {
+                // Уровень p: buffer хранит суммы блоков по 2^p элементов (уровень 0 - сам вход), накопление по
+                // установленным битам i + 1, затем следующий уровень вдвое короче, пока не останется один блок.
+                const unsigned int group = 256;
+                cuda::fill_buffer_with_zeros(gpu::WorkSize(group, n), prefix_sum_accum_gpu, n);
+                const gpu::gpu_mem_32u* level = &input_gpu;
+                gpu::gpu_mem_32u* next = &buffer1_pow2_sum_gpu;
+                gpu::gpu_mem_32u* spare = &buffer2_pow2_sum_gpu;
+                unsigned int level_n = n;
+                for (unsigned int p = 0; level_n > 0; ++p) {
+                    cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(group, n), *level, prefix_sum_accum_gpu, n, p);
+                    if (level_n == 1) break;
+                    cuda::prefix_sum_01_reduction(gpu::WorkSize(group, (level_n + 1) / 2), *level, *next, level_n);
+                    level_n = (level_n + 1) / 2;
+                    level = next;
+                    std::swap(next, spare);
+                    if (next == &input_gpu) next = &buffer1_pow2_sum_gpu; // вход не перезаписываем
+                }
+            }
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
