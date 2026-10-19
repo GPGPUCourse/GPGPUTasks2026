@@ -5,7 +5,7 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__attribute__((reqd_work_group_size(GROUP_SIZE_X, 1, 1)))
 __kernel void fill_buffer_with_zeros(
     __global uint* buffer,
     unsigned int n)
