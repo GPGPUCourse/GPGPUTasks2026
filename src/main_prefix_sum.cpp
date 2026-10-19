@@ -33,13 +33,11 @@ void run(int argc, char** argv)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
-    ocl::KernelSource ocl_fill_with_zeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
     ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
-
-    avk2::KernelSource vk_fill_with_zeros(avk2::getFillBufferWithZeros());
-    avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
-    avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
+    // JIT-компиляция не входит в замеры времени Scan.
+    ocl_sum_reduction.precompile();
+    ocl_prefix_accumulation.precompile();
 
     unsigned int n = 100*1000*1000;
     std::vector<unsigned int> as(n, 0);
@@ -68,7 +66,22 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n);
+    std::vector<unsigned int> level_sizes;
+    std::vector<gpu::gpu_mem_32u> level_prefix_sums, level_block_sums;
+    std::vector<gpu::WorkSize> level_work_sizes;
+    // Каждый следующий уровень сканирует суммы блоков предыдущего.
+    // Заканчиваем уровнем, который полностью помещается в одну WG.
+    for (unsigned int level_n = n; ; ) {
+        const size_t group_count = (static_cast<size_t>(level_n) + SCAN_BLOCK_SIZE - 1) / SCAN_BLOCK_SIZE;
+        level_sizes.push_back(level_n);
+        level_prefix_sums.emplace_back(level_n);
+        level_block_sums.emplace_back(group_count);
+        level_work_sizes.emplace_back(GROUP_SIZE, group_count * GROUP_SIZE);
+        if (group_count == 1)
+            break;
+        level_n = static_cast<unsigned int>(group_count);
+    }
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -77,43 +90,31 @@ void run(int argc, char** argv)
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) {
         timer t;
-
-        // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-        // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fill_with_zeros.exec();
-            // vk_sum_reduction.exec();
-            // vk_prefix_accumulation.exec();
-        } else {
-            rassert(false, 4531412341, context.type());
+        for (size_t level = 0; level < level_sizes.size(); ++level) {
+            const auto& level_input = level == 0 ? input_gpu : level_block_sums[level - 1];
+            ocl_sum_reduction.exec(level_work_sizes[level], level_input,
+                                               level_prefix_sums[level], level_block_sums[level],
+                                               level_sizes[level]);
         }
+
+        for (size_t level = level_sizes.size() - 1; level > 0; --level) {
+            ocl_prefix_accumulation.exec(level_work_sizes[level - 1],
+                                                     level_prefix_sums[level], level_prefix_sums[level - 1],
+                                                     level_sizes[level - 1]);
+        }
+        OCL_SAFE_CALL(clFinish(context.cl()->queue()));
 
         times.push_back(t.elapsed());
     }
     std::cout << "prefix sum times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 
-    // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили префиксные суммы)
     double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
     std::cout << "GPU prefix sum median effective VRAM bandwidth: "
               << memory_size_gb / stats::median(times) << " GB/s ("
               << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
+    std::vector<unsigned int> gpu_prefix_sum = level_prefix_sums.front().readVector();
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
