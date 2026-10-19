@@ -80,27 +80,88 @@ void run(int argc, char** argv)
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
+        // if (context.type() == gpu::Context::TypeOpenCL) {
+        //     // TODO
+        //     throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+        //     // ocl_fill_with_zeros.exec();
+        //     // ocl_sum_reduction.exec();
+        //     // ocl_prefix_accumulation.exec();
+        // } else if (context.type() == gpu::Context::TypeCUDA) {
+        //     // TODO
+        //     throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+        //     // cuda::fill_buffer_with_zeros();
+        //     // cuda::prefix_sum_01_reduction();
+        //     // cuda::prefix_sum_02_prefix_accumulation();
+        // } else if (context.type() == gpu::Context::TypeVulkan) {
+        //     // TODO
+        //     throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+        //     // vk_fill_with_zeros.exec();
+        //     // vk_sum_reduction.exec();
+        //     // vk_prefix_accumulation.exec();
+        // } else {
+        //     rassert(false, 4531412341, context.type());
+        // }
+
+
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            // Stage 1: scan each block and calculate its total sum.
+            gpu::WorkSize element_work_size(GROUP_SIZE, n);
+
+            ocl_prefix_accumulation.exec(
+                element_work_size,
+                input_gpu,
+                prefix_sum_accum_gpu,
+                buffer1_pow2_sum_gpu,
+                n,
+                0u
+            );
+
+            // Stage 2: scan the array of block sums.
+            const unsigned int num_blocks =
+                (n + GROUP_SIZE - 1) / GROUP_SIZE;
+
+            gpu::gpu_mem_32u* src = &buffer1_pow2_sum_gpu;
+
+            for (unsigned int offset = 1;
+                 offset < num_blocks;
+                 offset <<= 1) {
+
+                gpu::gpu_mem_32u* dst =
+                    (src == &buffer1_pow2_sum_gpu)
+                    ? &buffer2_pow2_sum_gpu
+                    : &buffer1_pow2_sum_gpu;
+
+                gpu::WorkSize block_work_size(GROUP_SIZE, num_blocks);
+
+                ocl_sum_reduction.exec(
+                    block_work_size,
+                    *src,
+                    *dst,
+                    num_blocks,
+                    offset
+                );
+
+                src = dst;
+            }
+
+            // Stage 3: add the prefix sum of previous blocks.
+            ocl_prefix_accumulation.exec(
+                element_work_size,
+                prefix_sum_accum_gpu,
+                prefix_sum_accum_gpu,
+                *src,
+                n,
+                GROUP_SIZE
+            );
+
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
         } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fill_with_zeros.exec();
-            // vk_sum_reduction.exec();
-            // vk_prefix_accumulation.exec();
         } else {
             rassert(false, 4531412341, context.type());
         }
+
 
         times.push_back(t.elapsed());
     }
