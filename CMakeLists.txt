@@ -61,6 +61,8 @@ set(OPENCL_SOURCES
         src/kernels/cl/aplusb.cl
         src/kernels/cl/fill_buffer_with_zeros.cl
         src/kernels/cl/prefix_sum_01_reduction.cl
+        src/kernels/cl/prefix_one_group_reduction.cl
+        src/kernels/cl/prefix_one_group_accum.cl
         src/kernels/cl/prefix_sum_02_prefix_accumulation.cl)
 
 set(OPENCL_INCLUDES src/kernels/defines.h src/kernels/cl/helpers/rassert.cl)
