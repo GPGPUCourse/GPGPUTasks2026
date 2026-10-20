@@ -71,7 +71,8 @@ void run(int argc, char** argv)
     unsigned int width = 2048;
     unsigned int height = 2048;
     unsigned int iterationsLimit = 256;
-    unsigned int isSmoothing = false;
+    unsigned int isSmoothing = true;
+    gpu::WorkSize workSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height);
 
 #if 1
     float centralX = -0.789136f;
@@ -122,7 +123,16 @@ void run(int argc, char** argv)
                 // _______________________________OpenCL_____________________________________________
                 if (context.type() == gpu::Context::TypeOpenCL) {
                     // TODO ocl_mandelbrot.exec(...);
-                    throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                    ocl_mandelbrot.exec(
+                        workSize,
+                        gpu_results,
+                        width, height,
+                        centralX - sizeX / 2.0f,
+                        centralY - sizeY / 2.0f,
+                        sizeX, sizeY,
+                        iterationsLimit,
+                        isSmoothing);
+                    //throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
 
                     // _______________________________CUDA___________________________________________
                 } else if (context.type() == gpu::Context::TypeCUDA) {
@@ -140,7 +150,8 @@ void run(int argc, char** argv)
                     } params = { width, height, centralX - sizeX / 2.0f, centralY - sizeY / 2.0f, sizeX, sizeY, iterationsLimit, isSmoothing };
                     // TODO vk_mandelbrot.exec(params, ...);
                     throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-                } else {
+                }
+                else {
                     rassert(false, 546345243, context.type());
                 }
             }
