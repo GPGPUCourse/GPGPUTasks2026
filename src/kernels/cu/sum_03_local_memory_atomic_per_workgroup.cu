@@ -4,6 +4,8 @@
 
 #include <libgpu/cuda/cu/common.cu>
 
+#include <cuda/atomic>
+
 #include "../defines.h"
 
 __global__ void sum_03_local_memory_atomic_per_workgroup(
@@ -11,13 +13,27 @@ __global__ void sum_03_local_memory_atomic_per_workgroup(
     unsigned int* sum,
     unsigned int  n)
 {
-    // Подсказки:
-    // const uint index = blockIdx.x * blockDim.x + threadIdx.x;
-    // const uint local_index = threadIdx.x;
-    // __shared__ unsigned int local_data[GROUP_SIZE];
-    // __syncthreads();
+    const std::size_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const std::size_t local_idx = threadIdx.x;
 
-    // TODO
+    __shared__ int shmem[GROUP_SIZE];
+
+    shmem[local_idx] = (idx < n) ? a[idx] : 0;
+    __syncthreads();
+
+    if (local_idx == 0) {
+        int local_sum = 0;
+        for (int id = 0; id < GROUP_SIZE; id++) {
+            local_sum += shmem[id];
+        }
+
+        atomicAdd(sum, local_sum);
+        //                |
+        // very very bad \|/
+        //                v
+        // cuda::atomic_ref<unsigned int> ref(*sum);
+        // ref.fetch_add(local_sum);
+    }
 }
 
 namespace cuda {

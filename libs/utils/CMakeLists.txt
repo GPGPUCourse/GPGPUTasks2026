@@ -24,7 +24,7 @@ find_package(Threads REQUIRED)
 if (GPU_CUDA_SUPPORT)
     find_package (CUDA REQUIRED)
 
-    add_definitions(-DCUDA_SUPPORT)
+    add_definitions(-DCUDA_SUPPORT) 
 
     cuda_add_library(${PROJECT_NAME} ${SOURCES} ${HEADERS})
 else()
