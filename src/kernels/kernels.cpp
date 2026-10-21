@@ -6,7 +6,7 @@
 #include "cl/generated_kernels/prefix_sum_02_prefix_accumulation.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
-#include "vk/generated_kernels/fill_buffer_with_zeros_comp.h"
+#include "vk/generated_kernels/reset_sum_comp.h"
 #include "vk/generated_kernels/prefix_sum_01_reduction_comp.h"
 #include "vk/generated_kernels/prefix_sum_02_prefix_accumulation_comp.h"
 
@@ -18,7 +18,7 @@ void aplusb(const gpu::WorkSize& workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
-void fill_buffer_with_zeros(const gpu::WorkSize &workSize,
+void reset_sum(const gpu::WorkSize &workSize,
             gpu::gpu_mem_32u &buffer, unsigned int n)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
@@ -67,9 +67,9 @@ const ProgramBinaries& getAplusB()
     return vulkan_binaries_aplusb_comp;
 }
 
-const ProgramBinaries& getFillBufferWithZeros()
+const ProgramBinaries& getResetSum()
 {
-    return vulkan_binaries_fill_buffer_with_zeros_comp;
+    return vulkan_binaries_reset_sum_comp;
 }
 
 const ProgramBinaries& getPrefixSum01Reduction()
