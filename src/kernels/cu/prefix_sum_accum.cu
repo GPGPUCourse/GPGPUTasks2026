@@ -6,11 +6,12 @@
 
 #include "../defines.h"
 #include "helpers/rassert.cu"
-#include <algorithm>
+
+#include "../helper.h"
 
 __global__ void prefix_sum_02_prefix_accumulation_blelloch(
-    unsigned int* data,
-    unsigned int* partial_sum,
+    uint4* data,
+    uint4* partial_sum,
     unsigned int n)
 {
     const unsigned int index = 2 * blockIdx.x * blockDim.x + threadIdx.x;
@@ -19,7 +20,7 @@ __global__ void prefix_sum_02_prefix_accumulation_blelloch(
     }
     const unsigned int prefix_sum_index = index / PREFIX_SUM_GROPU_DATA_SIZE;
     if (prefix_sum_index > 0) {
-        const unsigned int acc = partial_sum[prefix_sum_index - 1];
+        const uint4 acc = partial_sum[prefix_sum_index - 1];
         if (index < n)
             data[index] += acc;
         if (index + GROUP_SIZE < n)
@@ -29,7 +30,7 @@ __global__ void prefix_sum_02_prefix_accumulation_blelloch(
 
 namespace cuda {
 void prefix_sum_02_prefix_accumulation_blelloch(const gpu::WorkSize& workSize,
-    gpu::gpu_mem_32u& data, gpu::gpu_mem_32u& partial_sums, unsigned int data_size)
+    gpu::shared_device_buffer_typed<uint4>& data, gpu::shared_device_buffer_typed<uint4>& partial_sums, unsigned int data_size)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());

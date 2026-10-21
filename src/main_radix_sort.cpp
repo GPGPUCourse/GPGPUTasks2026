@@ -45,8 +45,8 @@ void run(int argc, char** argv)
 
     FastRandom r;
 
-    int n = 100000000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
-    int max_value = std::numeric_limits<int>::max(); // TODO при отладке используйте минимальное max_value (например max_value=8) при котором воспроизводится бага
+    int n = 100000000;
+    int max_value = std::numeric_limits<int>::max();
     std::vector<unsigned int> as(n, 0);
     std::vector<unsigned int> sorted(n, 0);
     for (size_t i = 0; i < n; ++i) {
@@ -84,95 +84,66 @@ void run(int argc, char** argv)
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
-    std::vector<gpu::gpu_mem_32u> counters_tmp;
-    std::vector<unsigned int*> counters_pointers;
-    const size_t num_groups =
-        n / GROUP_SIZE + (n % GROUP_SIZE != 0);
-    for (int i = 0; i < 4; i++) {
-        counters_tmp.emplace_back(num_groups);
-        counters_pointers.emplace_back(counters_tmp[i].cuptr());
-    }
-    gpu::shared_device_buffer_typed<uint32_t*> counters(4);
 
-    std::vector<gpu::gpu_mem_32u> reductors;
+    const unsigned int uint4_work_size = n / 4 + (n % 4 == 0 ? 0 : 1);
+    const size_t num_groups_reductors = n / (GROUP_SIZE * 4) + (n % (GROUP_SIZE * 4) != 0);
 
-    for (unsigned int size = num_groups; size > 1;) {
+    gpu::shared_device_buffer_typed<uint4> counters(num_groups_reductors);
+
+    std::vector<gpu::shared_device_buffer_typed<uint4>> reductors;
+    reductors.push_back(counters);
+
+    // редуктор внутри не только редуцирует, но еще и внутри группы сортирует
+    for (unsigned int size = num_groups_reductors; size > 1;) {
         size = size / PREFIX_SUM_GROPU_DATA_SIZE + (size % PREFIX_SUM_GROPU_DATA_SIZE != 0);
         reductors.emplace_back(size);
     }
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
-    counters.writeN(counters_pointers.data(), 4);
 
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
     buffer_output_gpu.fill(255);
 
+    auto* input = &buffer_output_gpu;
+    auto* output = &input_gpu;
+
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
-        // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-        // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // cuda::fill_buffer_with_zeros();
-            // cuda::radix_sort_01_local_counting();
-            auto* input = &buffer_output_gpu;
-            auto* output = &input_gpu;
+        if (context.type() == gpu::Context::TypeCUDA) {
             for (int offset = 0; offset < 32; offset += 2) {
                 std::swap(input, output);
+
                 cuda::radix_sort_02_global_prefixes_scan_sum_reduction(
-                    gpu::WorkSize(GROUP_SIZE, 1, n, 1), *input, counters, offset, n);
+                    gpu::WorkSize(GROUP_SIZE, 1, uint4_work_size, 1), *input, counters, offset, n);
 
-                for (int j = 0; j < 4; j++) {
+                for (unsigned int i = 1; i < reductors.size(); ++i) {
 
-                    for (unsigned int i = 0; i < reductors.size(); ++i) {
-                        gpu::gpu_mem_32u& data = (i == 0) ? counters_tmp[j] : reductors[i - 1];
+                    const unsigned int size = reductors[i - 1].size() / reductors[i - 1].elementSize();
+                    const unsigned int threads = size / 2 + size % 2;
 
-                        const unsigned int size = data.size() / data.elementSize();
-                        const unsigned int threads = size / 2 + size % 2;
+                    cuda::prefix_sum_01_reduction_blelloch(gpu::WorkSize(GROUP_SIZE, 1, threads, 1), reductors[i - 1], reductors[i - 1], reductors[i], size);
+                }
 
-                        cuda::prefix_sum_01_reduction_blelloch(gpu::WorkSize(GROUP_SIZE, 1, threads, 1), data, data, reductors[i], size);
-                    }
+                for (int i = static_cast<int>(reductors.size()) - 1; i > 0; --i) {
 
-                    for (int i = static_cast<int>(reductors.size()) - 1;
-                        i >= 0; --i)
-                    {
-                        gpu::gpu_mem_32u& data = (i == 0) ? counters_tmp[j] : reductors[i - 1];
+                    const unsigned int size = reductors[i - 1].size() / reductors[i - 1].elementSize();
+                    const unsigned int threads = size / 2 + size % 2;
 
-                        const unsigned int size = data.size() / data.elementSize();
-                        const unsigned int threads = size / 2 + size % 2;
-
-                        cuda::prefix_sum_02_prefix_accumulation_blelloch(
-                            gpu::WorkSize(GROUP_SIZE, 1, threads, 1),data, reductors[i], size);
-                    }
+                    cuda::prefix_sum_02_prefix_accumulation_blelloch(
+                        gpu::WorkSize(GROUP_SIZE, 1, threads, 1), reductors[i - 1], reductors[i], size);
                 }
 
                 cuda::radix_sort_04_scatter(
-                    gpu::WorkSize(GROUP_SIZE, 1, n, 1), *input, counters, *output, offset, n);
+                    gpu::WorkSize(SCATTER_GROUP_SIZE, 1, n, 1), *input, counters, *output, offset, n);
 
             }
-//            std::swap(input, output);
 
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fillBufferWithZeros.exec();
-            // vk_radixSort01LocalCounting.exec();
-            // vk_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // vk_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // vk_radixSort04Scatter.exec();
         } else {
             rassert(false, 4531412341, context.type());
         }
@@ -186,19 +157,19 @@ void run(int argc, char** argv)
     std::cout << "GPU radix-sort median effective VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s (" << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    // TODO
-    std::vector<unsigned int> gpu_sorted = input_gpu.readVector();
+    std::vector<unsigned int> gpu_sorted = (*output).readVector();
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
         rassert(sorted[i] == gpu_sorted[i], 566324523452323, sorted[i], gpu_sorted[i], i);
     }
 
+    // TODO
     // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
-//    std::vector<unsigned int> input_values = input_gpu.readVector();
-//    for (size_t i = 0; i < n; ++i) {
-//        rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
-//    }
+    //    std::vector<unsigned int> input_values = input_gpu.readVector();
+    //    for (size_t i = 0; i < n; ++i) {
+    //        rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
+    //    }
 }
 
 int main(int argc, char** argv)
