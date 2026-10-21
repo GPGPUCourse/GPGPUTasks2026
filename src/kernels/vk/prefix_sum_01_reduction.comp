@@ -34,13 +34,15 @@ void main()
     }
     barrier();
 
-    if (local_idx > 0) {
-        return;
+    if (local_idx == 0) {
+        for (uint k = 1; k < GROUP_SIZE && group_start + k < cur_size; ++k) {
+            local_buffer[k] += local_buffer[k - 1];
+        }
     }
+    barrier();
 
-    pref_sum[GetBlockIndex(group_start)] = local_buffer[0];
-    for (uint k = 1; k < GROUP_SIZE && group_start + k < cur_size; ++k) {
-        local_buffer[k] += local_buffer[k - 1];
-        pref_sum[GetBlockIndex(group_start + k)] = local_buffer[k];
+
+    if (idx < cur_size) {
+        pref_sum[GetBlockIndex(idx)] = local_buffer[local_idx];
     }
 }
