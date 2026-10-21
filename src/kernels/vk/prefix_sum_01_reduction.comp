@@ -5,7 +5,8 @@
 #include "../defines.h"
 
 // we want to make it finally so that prefix_sum_accum[i] = sum[0, i]
-layout (std430, binding = 0)           buffer PrefixSum   { uint pref_sum[]; };
+layout (std430, binding = 0) readonly  buffer SumIn   { uint sum_in[]; };
+layout (std430, binding = 1) writeonly buffer SumOut  { uint sum_out[]; };
 
 layout (push_constant) uniform PushConstants {
     uint n;
@@ -28,7 +29,7 @@ void main()
     const uint cur_size = (params.n + (1 << params.st_pow) - 1) >> params.st_pow;
 
     if (idx < cur_size) {
-        local_buffer[local_idx] = pref_sum[block_idx];
+        local_buffer[local_idx] = sum_in[block_idx];
     } else {
         local_buffer[local_idx] = 0;
     }
@@ -43,6 +44,6 @@ void main()
 
 
     if (idx < cur_size) {
-        pref_sum[GetBlockIndex(idx)] = local_buffer[local_idx];
+        sum_out[GetBlockIndex(idx)] = local_buffer[local_idx];
     }
 }

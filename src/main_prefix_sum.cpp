@@ -85,28 +85,25 @@ void run(int argc, char** argv) {
 
     struct {
       unsigned n;
-    } params_fill = {n};
-
-    vk_reset_sum.exec(params_fill, gpu::WorkSize(GROUP_SIZE, n),
-                      input_gpu, prefix_sum_accum_gpu);
-
-    struct {
-      unsigned n;
       unsigned st_pow;
-    } params_reduction = {.n = n, .st_pow = 0};
+    } params = {.n = n, .st_pow = 0};
     unsigned tmp_n = n;
 
+    auto* sum_in = &input_gpu;
+    auto* sum_out = &prefix_sum_accum_gpu;
+
     while (tmp_n > 1) {
-      vk_sum_reduction.exec(params_reduction, gpu::WorkSize(GROUP_SIZE, tmp_n),
-                            prefix_sum_accum_gpu);
+      vk_sum_reduction.exec(params, gpu::WorkSize(GROUP_SIZE, tmp_n),
+                            *sum_in, *sum_out);
       tmp_n = div_ceil(tmp_n, (unsigned)GROUP_SIZE);
-      params_reduction.st_pow += 8;
+      sum_in = sum_out;
+      params.st_pow += 8;
     }
 
-    while (params_reduction.st_pow != 0) {
-      params_reduction.st_pow -= 8;
-      tmp_n = div_ceil(n, 1u << params_reduction.st_pow);
-      vk_prefix_accumulation.exec(params_reduction,
+    while (params.st_pow != 0) {
+      params.st_pow -= 8;
+      tmp_n = div_ceil(n, 1u << params.st_pow);
+      vk_prefix_accumulation.exec(params,
                                   gpu::WorkSize(GROUP_SIZE, tmp_n),
                                   prefix_sum_accum_gpu);
     }
