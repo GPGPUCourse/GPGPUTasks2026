@@ -4,17 +4,46 @@
 
 #include "../defines.h"
 
-// это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-// НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-layout (std430, binding = 0) readonly buffer Pow2SumIn      { uint pow2_sum[]; }; // contains n values
-layout (std430, binding = 1)          buffer NextPow2SumOut { uint next_pow2_sum[]; }; // will contain (n+1)/2 values
+// we want to make it finally so that prefix_sum_accum[i] = sum[0, i]
+layout (std430, binding = 0) readonly  buffer SumIn   { uint sum_in[]; };
+layout (std430, binding = 1) writeonly buffer SumOut  { uint sum_out[]; };
 
 layout (push_constant) uniform PushConstants {
     uint n;
+    uint st_pow;
 } params;
 
-layout (local_size_x = 1) in;
+shared uint local_buffer[GROUP_SIZE];
+
+uint GetBlockIndex(uint global_idx) {
+    return min((global_idx + 1) << params.st_pow, params.n) - 1;
+}
+
+layout (local_size_x = GROUP_SIZE) in;
 void main()
 {
-    // TODO
+    const uint idx = gl_GlobalInvocationID.x;
+    const uint local_idx = gl_LocalInvocationID.x;
+    const uint group_start = gl_WorkGroupID.x * GROUP_SIZE;
+    const uint block_idx = GetBlockIndex(idx);
+    const uint cur_size = (params.n + (1 << params.st_pow) - 1) >> params.st_pow;
+
+    if (idx < cur_size) {
+        local_buffer[local_idx] = sum_in[block_idx];
+    } else {
+        local_buffer[local_idx] = 0;
+    }
+    barrier();
+
+    if (local_idx == 0) {
+        for (uint k = 1; k < GROUP_SIZE && group_start + k < cur_size; ++k) {
+            local_buffer[k] += local_buffer[k - 1];
+        }
+    }
+    barrier();
+
+
+    if (idx < cur_size) {
+        sum_out[GetBlockIndex(idx)] = local_buffer[local_idx];
+    }
 }

@@ -78,7 +78,7 @@ endforeach()
 # Обратите внимание что это происходит на этапе компиляции, кроме того эта команда делает так чтобы файл src/kernels/vk/aplusb_comp.h был перечислен среди HEADERS для компиляции при вызове add_executable
 set(VULKAN_SOURCES
         src/kernels/vk/aplusb.comp
-        src/kernels/vk/fill_buffer_with_zeros.comp
+        src/kernels/vk/reset_sum.comp
         src/kernels/vk/prefix_sum_01_reduction.comp
         src/kernels/vk/prefix_sum_02_prefix_accumulation.comp)
 
