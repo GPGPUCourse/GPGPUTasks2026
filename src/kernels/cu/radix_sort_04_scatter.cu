@@ -30,6 +30,14 @@ __global__ void radix_sort_04_scatter(
     unsigned int bucket = (number >> offset) & 0x3;
     unsigned int local_order_in_warp = 0;
 
+    unsigned int num_groups = n / SCATTER_GROUP_SIZE + (n % SCATTER_GROUP_SIZE == 0 ? 0 : 1);
+    uint4 bucket_baseui;
+    uint4 global_countersui;
+    if (threadIdx.x == 0) {
+        if (blockIdx.x > 0)
+            bucket_baseui = counters[blockIdx.x - 1];
+        global_countersui = counters[num_groups - 1];
+    }
     __shared__ int warp_data[4 * SCATTER_GROUP_WARPS];
 
     for (unsigned int i = 0; i < 4; i++) {
@@ -65,11 +73,9 @@ __global__ void radix_sort_04_scatter(
 
     __shared__ unsigned int bucket_base[4];
     __shared__ unsigned int global_counters[4];
-    unsigned int num_groups = n / SCATTER_GROUP_SIZE + (n % SCATTER_GROUP_SIZE == 0 ? 0 : 1);
 
     if (threadIdx.x == 0) {
         if (blockIdx.x > 0) {
-            uint4 bucket_baseui = counters[blockIdx.x - 1];
             bucket_base[0] = bucket_baseui.x;
             bucket_base[1] = bucket_baseui.y;
             bucket_base[2] = bucket_baseui.z;
@@ -80,7 +86,6 @@ __global__ void radix_sort_04_scatter(
             bucket_base[2] = 0;
             bucket_base[3] = 0;
         }
-        uint4 global_countersui = counters[num_groups - 1];
         global_counters[0] = global_countersui.x;
         global_counters[1] = global_countersui.y;
         global_counters[2] = global_countersui.z;
