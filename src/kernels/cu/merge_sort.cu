@@ -22,7 +22,7 @@ __global__ void merge_sort(
     const auto part_size = 1 << sorted_k;
     const bool is_left = ((i >> sorted_k) & 1) == 0;
 
-    const int current_part_start = i - i % part_size;
+    const int current_part_start = i - (i & (part_size - 1));
     const int other_part_start = is_left ? current_part_start + part_size : current_part_start - part_size;
 
     int l = other_part_start - 1, r = min(other_part_start + part_size, n);
