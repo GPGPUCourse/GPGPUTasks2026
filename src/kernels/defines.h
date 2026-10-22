@@ -2,8 +2,8 @@
 #define my_defines_vk
 
 #define GROUP_SIZE   256
-#define THREAD_SORT_SIZE 4
-#define THREAD_SORT_SIZE_LOG2 2
+#define THREAD_SORT_SIZE 2
+#define THREAD_SORT_SIZE_LOG2 1
 
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
 

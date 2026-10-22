@@ -94,9 +94,9 @@ void run(int argc, char** argv)
             rassert(false, 4531412341, context.type());
         }
 
-        // cuda::sort_small(gpu::WorkSize(GROUP_SIZE, n / THREAD_SORT_SIZE), input_gpu, buffer_output_gpu, n);
+        cuda::sort_small(gpu::WorkSize(GROUP_SIZE, n / THREAD_SORT_SIZE), input_gpu, buffer_output_gpu, n);
 
-        for (int k = 0; (1 << k) < n; ++k) {
+        for (int k = THREAD_SORT_SIZE_LOG2; (1 << k) < n; ++k) {
             // 2^k - размер отсортированной части
             const auto& input = k == 0 ? input_gpu : buffer_output_gpu;
             const gpu::WorkSize work_size(GROUP_SIZE, n);
