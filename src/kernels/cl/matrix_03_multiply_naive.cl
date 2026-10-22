@@ -28,6 +28,4 @@ __kernel void matrix_03_multiply_naive(
 
     c[y * w + x] = acc;
 
-
-    // TODO
 }

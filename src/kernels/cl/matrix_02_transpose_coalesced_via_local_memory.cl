@@ -21,7 +21,7 @@ __kernel void matrix_02_transpose_coalesced_via_local_memory(
     const uint group_y = get_group_id(1);
 
     __local float tile[16][16];
-    
+
     if (x < w && y < h) {
         tile[ly][lx] = matrix[y * w + x];
     }
@@ -34,5 +34,4 @@ __kernel void matrix_02_transpose_coalesced_via_local_memory(
     if (out_x < h && out_y < w) {
         transposed_matrix[out_y * h + out_x] = tile[lx][ly];
     }
-    // TODO
 }

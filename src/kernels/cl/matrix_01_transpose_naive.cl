@@ -17,5 +17,4 @@ __kernel void matrix_01_transpose_naive(
     if (x < w && y < h) {
         transposed_matrix[x * h + y] = matrix[y * w + x];
     }
-    // TODO
 }
