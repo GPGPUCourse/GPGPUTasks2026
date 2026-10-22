@@ -14,7 +14,33 @@ __global__ void merge_sort(
                    int  n)
 {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    // TODO
+    if (i >= n) {
+        return;
+    }
+    const auto el = input_data[i];
+
+    const auto part_size = 1 << sorted_k;
+    const bool is_left = ((i >> sorted_k) & 1) == 0;
+
+    const int current_part_start = i - i % part_size;
+    const int other_part_start = is_left ? current_part_start + part_size : current_part_start - part_size;
+
+    int l = other_part_start - 1, r = min(other_part_start + part_size, n);
+    // printf("%d (%s) -> ищем в [%d, %d)\n", i, is_left ? "лев" : "прв", other_part_start, r);
+
+    while (r - l > 1) {
+        const auto m = (l + r) / 2;
+        const auto other_el = input_data[m];
+        if (is_left ? other_el < el : other_el <= el) {
+            l = m;
+        } else {
+            r = m;
+        }
+    }
+
+    const auto res_index = is_left ? i + max(r - other_part_start, 0) : i + r - other_part_start - part_size;
+    // printf("%d пишет %d в %d\n", i, el, res_index);
+    output_data[res_index] = el;
 }
 
 namespace cuda {
