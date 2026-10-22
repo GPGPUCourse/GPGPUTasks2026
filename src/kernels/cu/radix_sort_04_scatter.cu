@@ -39,7 +39,6 @@ __global__ void radix_sort_04_scatter(
         global_countersui = counters[num_groups - 1];
     }
     __shared__ unsigned int warp_data[SCATTER_GROUP_WARPS];
-    __shared__ unsigned int sum;
     unsigned int local_sums = 0;
 #pragma unroll
 
@@ -56,11 +55,9 @@ __global__ void radix_sort_04_scatter(
     }
     if (lane == 0 && warp == SCATTER_GROUP_WARPS - 1) {
         warp_data[0] = 0;
-        sum = local_sums;
     }
     __shared__ unsigned int work_group_base[4];
     __shared__ unsigned int global_counters[4];
-    __shared__ unsigned int local_counters[4];
 
     __syncthreads();
 
@@ -78,20 +75,6 @@ __global__ void radix_sort_04_scatter(
 
         warp_data[lane] = warp_data_local;
 
-        if (lane == 0) {
-            unsigned int prefix = warp_data[SCATTER_GROUP_WARPS - 1];
-
-            unsigned int count0 = (prefix & 0xffu) + (sum & 0xffu);
-
-            unsigned int count1 = ((prefix >> 8) & 0xffu) + ((sum >> 8) & 0xffu);
-
-            unsigned int count2 = ((prefix >> 16) & 0xffu) + ((sum >> 16) & 0xffu);
-
-            local_counters[0] = 0;
-            local_counters[1] = count0;
-            local_counters[2] = count0 + count1;
-            local_counters[3] = count0 + count1 + count2;
-        }
     }
 
     if (threadIdx.x == 32) {
@@ -112,22 +95,11 @@ __global__ void radix_sort_04_scatter(
         global_counters[3] = global_countersui.x + global_countersui.y + global_countersui.z;
     }
 
-    __syncthreads();
-
-    __shared__ unsigned int shuffle[SCATTER_GROUP_SIZE];
-    unsigned char index_in_work_group = ((warp_data[warp] >> (bucket * 8)) & 0xff) + local_order_in_warp;
-
-    if (valid) {
-        shuffle[local_counters[bucket] + index_in_work_group] = number;
-    }
 
     __syncthreads();
     if (valid) {
-        number = shuffle[threadIdx.x];
-        bucket = (number >> offset) & 3u;
-
-
-        unsigned int res_index = global_counters[bucket] + work_group_base[bucket] + threadIdx.x - local_counters[bucket];
+        unsigned char index_in_work_group = ((warp_data[warp] >> (bucket * 8)) & 0xff) + local_order_in_warp;
+        unsigned int res_index = global_counters[bucket] + work_group_base[bucket] + index_in_work_group;
         output[res_index] = number;
     }
 }
