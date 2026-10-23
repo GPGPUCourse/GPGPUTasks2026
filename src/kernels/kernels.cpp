@@ -2,22 +2,35 @@
 
 #include "cl/generated_kernels/aplusb.h"
 #include "cl/generated_kernels/fill_buffer_with_zeros.h"
-#include "cl/generated_kernels/radix_sort_01_local_counting.h"
-#include "cl/generated_kernels/radix_sort_02_global_prefixes_scan_sum_reduction.h"
-#include "cl/generated_kernels/radix_sort_03_global_prefixes_scan_accumulation.h"
-#include "cl/generated_kernels/radix_sort_04_scatter.h"
+#include "cl/generated_kernels/prefix_sum_01_reduction.h"
+#include "cl/generated_kernels/prefix_sum_02_prefix_accumulation.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/fill_buffer_with_zeros_comp.h"
-#include "vk/generated_kernels/radix_sort_01_local_counting_comp.h"
-#include "vk/generated_kernels/radix_sort_02_global_prefixes_scan_sum_reduction_comp.h"
-#include "vk/generated_kernels/radix_sort_03_global_prefixes_scan_accumulation_comp.h"
-#include "vk/generated_kernels/radix_sort_04_scatter_comp.h"
+#include "vk/generated_kernels/prefix_sum_01_reduction_comp.h"
+#include "vk/generated_kernels/prefix_sum_02_prefix_accumulation_comp.h"
 
 #ifndef CUDA_SUPPORT
 namespace cuda {
 void aplusb(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n)
+{
+    // dummy implementation if CUDA_SUPPORT is disabled
+    rassert(false, 54623523412413);
+}
+void small_array_prefix(const gpu::WorkSize &workSize, gpu::gpu_mem_32u &arr, unsigned int n, unsigned int offset)
+{
+    // dummy implementation if CUDA_SUPPORT is disabled
+    rassert(false, 54623523412413);
+}
+void copy_mem(const gpu::WorkSize &workSize,
+            const gpu::gpu_mem_32u &in, gpu::gpu_mem_32u &out, unsigned int in_size, unsigned int out_size)
+{
+    // dummy implementation if CUDA_SUPPORT is disabled
+    rassert(false, 54623523412413);
+}
+void copy_mem_bit(const gpu::WorkSize &workSize,
+            const gpu::gpu_mem_32u &in, gpu::gpu_mem_32u &out, unsigned int in_size, unsigned int out_size, unsigned int bit)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
@@ -28,25 +41,23 @@ void fill_buffer_with_zeros(const gpu::WorkSize &workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
-void radix_sort_01_local_counting(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &values, gpu::gpu_mem_32u &buffer1, unsigned int a1, unsigned int a2)
+void insert_to_sort_position(const gpu::WorkSize &workSize,
+            const gpu::gpu_mem_32u &in, const gpu::gpu_mem_32u &prefix_sum, gpu::gpu_mem_32u &out, unsigned int n, unsigned int bit)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
-void radix_sort_02_global_prefixes_scan_sum_reduction(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &buffer1, gpu::gpu_mem_32u &buffer2, unsigned int a1)
+void prefix_sum_01_reduction(const gpu::WorkSize &workSize,
+            const gpu::gpu_mem_32u &in, gpu::gpu_mem_32u &out, unsigned int n, unsigned int in_start, unsigned int out_start)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
-void radix_sort_03_global_prefixes_scan_accumulation(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &buffer1, gpu::gpu_mem_32u &buffer2, unsigned int a1, unsigned int a2)
+void prefix_sum_02_prefix_accumulation(const gpu::WorkSize &workSize,
+            const gpu::gpu_mem_32u &in, gpu::gpu_mem_32u &out, unsigned int n, unsigned int in_start, unsigned int out_start)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
-    rassert(false, 54623523412413);
-}
-void radix_sort_04_scatter(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &values, const gpu::gpu_mem_32u &buffer1, gpu::gpu_mem_32u &buffer2, unsigned int a1, unsigned int a2)
-{
-    // dummy implementation if CUDA_SUPPORT is disabled
-    rassert(false, 54623523412413);
+    rassert(false, 546237686412414);
 }
 } // namespace cuda
 #endif
@@ -62,24 +73,14 @@ const ProgramBinaries& getFillBufferWithZeros()
     return opencl_binaries_fill_buffer_with_zeros;
 }
 
-const ProgramBinaries& getRadixSort01LocalCounting()
+const ProgramBinaries& getPrefixSum01Reduction()
 {
-    return opencl_binaries_radix_sort_01_local_counting;
+    return opencl_binaries_prefix_sum_01_reduction;
 }
 
-const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction()
+const ProgramBinaries& getPrefixSum02PrefixAccumulation()
 {
-    return opencl_binaries_radix_sort_02_global_prefixes_scan_sum_reduction;
-}
-
-const ProgramBinaries& getRadixSort03GlobalPrefixesScanAccumulation()
-{
-    return opencl_binaries_radix_sort_03_global_prefixes_scan_accumulation;
-}
-
-const ProgramBinaries& getRadixSort04Scatter()
-{
-    return opencl_binaries_radix_sort_04_scatter;
+    return opencl_binaries_prefix_sum_02_prefix_accumulation;
 }
 } // namespace ocl
 
@@ -94,23 +95,13 @@ const ProgramBinaries& getFillBufferWithZeros()
     return vulkan_binaries_fill_buffer_with_zeros_comp;
 }
 
-const ProgramBinaries& getRadixSort01LocalCounting()
+const ProgramBinaries& getPrefixSum01Reduction()
 {
-    return vulkan_binaries_radix_sort_01_local_counting_comp;
+    return vulkan_binaries_prefix_sum_01_reduction_comp;
 }
 
-const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction()
+const ProgramBinaries& getPrefixSum02PrefixAccumulation()
 {
-    return vulkan_binaries_radix_sort_02_global_prefixes_scan_sum_reduction_comp;
-}
-
-const ProgramBinaries& getRadixSort03GlobalPrefixesScanAccumulation()
-{
-    return vulkan_binaries_radix_sort_03_global_prefixes_scan_accumulation_comp;
-}
-
-const ProgramBinaries& getRadixSort04Scatter()
-{
-    return vulkan_binaries_radix_sort_04_scatter_comp;
+    return vulkan_binaries_prefix_sum_02_prefix_accumulation_comp;
 }
 } // namespace avk2
