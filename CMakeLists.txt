@@ -99,13 +99,15 @@ if (GPU_CUDA_SUPPORT)
     # 1) один раз обычным компилятором - для HOST-side кода, компилируются только те функции которые не помечены специально что они для видеокарты (или помечены что они и для видеокарты и для HOST-side кода)
     # 2) второй раз специальным CUDA-компилятором NVCC - для DEVICE-side кода, например функции помеченные специальным модификатором __global__ (кернелы) или __device__ (функции которые можно вызвать на видеокарте, т.е. из кернелов)
     # Вероятно вам стоит выставить в CMake options: -DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    set(CUDA_SOURCES
+   set(CUDA_SOURCES
             src/kernels/cu/aplusb.cu
+            src/kernels/cu/copy_mem_bit.cu
+            src/kernels/cu/copy_mem.cu
+            src/kernels/cu/small_array_prefix.cu
             src/kernels/cu/fill_buffer_with_zeros.cu
-            src/kernels/cu/radix_sort_01_local_counting.cu
-            src/kernels/cu/radix_sort_02_global_prefixes_scan_sum_reduction.cu
-            src/kernels/cu/radix_sort_03_global_prefixes_scan_accumulation.cu
-            src/kernels/cu/radix_sort_04_scatter.cu)
+            src/kernels/cu/insert_to_sort_position.cu
+            src/kernels/cu/prefix_sum_01_reduction.cu
+            src/kernels/cu/prefix_sum_02_prefix_accumulation.cu)
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
