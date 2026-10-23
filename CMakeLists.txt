@@ -67,9 +67,9 @@ set(OPENCL_SOURCES
 
 set(OPENCL_INCLUDES src/kernels/defines.h src/kernels/cl/helpers/rassert.cl)
 set(OPENCL_DEFINES)
-foreach(CL_FILE IN LISTS OPENCL_SOURCES)
+foreach (CL_FILE IN LISTS OPENCL_SOURCES)
     compile_opencl(HEADERS ${CL_FILE} OPENCL_INCLUDES OPENCL_DEFINES)
-endforeach()
+endforeach ()
 
 # compile_vulkan CMake-функция объявлена в libs/gpu/libgpu/vulkan/CMakeLists.txt:97
 # Она считывает все байты из файла src/kernels/vk/aplusb.comp (т.е. весь исходный код кернела), компилирует с помощью glslc компилятора (в т.ч. выполняя все #include)
@@ -87,9 +87,9 @@ set(VULKAN_SOURCES
         src/kernels/vk/radix_sort_04_scatter.comp)
 
 set(VULKAN_DEFINES)
-foreach(VK_FILE IN LISTS VULKAN_SOURCES)
+foreach (VK_FILE IN LISTS VULKAN_SOURCES)
     compile_vulkan(HEADERS ${VK_FILE} VULKAN_DEFINES)
-endforeach()
+endforeach ()
 
 if (GPU_CUDA_SUPPORT)
     enable_language(CUDA)
@@ -102,10 +102,11 @@ if (GPU_CUDA_SUPPORT)
     set(CUDA_SOURCES
             src/kernels/cu/aplusb.cu
             src/kernels/cu/fill_buffer_with_zeros.cu
-            src/kernels/cu/radix_sort_01_local_counting.cu
             src/kernels/cu/radix_sort_02_global_prefixes_scan_sum_reduction.cu
-            src/kernels/cu/radix_sort_03_global_prefixes_scan_accumulation.cu
-            src/kernels/cu/radix_sort_04_scatter.cu)
+            src/kernels/cu/radix_sort_04_scatter.cu
+            src/kernels/cu/prefix_sum_accum.cu
+            src/kernels/cu/prefix_sum_reduction.cu
+    )
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
@@ -116,13 +117,13 @@ else ()
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
 endif ()
 
-add_executable(main_aplusb     src/main_aplusb.cpp)
+add_executable(main_aplusb src/main_aplusb.cpp)
 add_executable(main_radix_sort src/main_radix_sort.cpp)
 
-target_link_libraries(main_aplusb     ${PROJECT_NAME}_core)
+target_link_libraries(main_aplusb ${PROJECT_NAME}_core)
 target_link_libraries(main_radix_sort ${PROJECT_NAME}_core)
 
 if (GPU_CUDA_SUPPORT)
-    target_include_directories(main_aplusb     PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_include_directories(main_aplusb PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
     target_include_directories(main_radix_sort PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 endif ()

@@ -3,12 +3,24 @@
 #include <libgpu/vulkan/engine.h>
 
 namespace cuda {
+
+// struct counters {
+//     unsigned int counter[4];
+// };
+
 void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n);
-void fill_buffer_with_zeros(const gpu::WorkSize &workSize, gpu::gpu_mem_32u &buffer, unsigned int n);
-void radix_sort_01_local_counting(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &values, gpu::gpu_mem_32u &buffer1, unsigned int a1, unsigned int a2);
-void radix_sort_02_global_prefixes_scan_sum_reduction(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &buffer1, gpu::gpu_mem_32u &buffer2, unsigned int a1);
-void radix_sort_03_global_prefixes_scan_accumulation(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &buffer1, gpu::gpu_mem_32u &buffer2, unsigned int a1, unsigned int a2);
-void radix_sort_04_scatter(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &values, const gpu::gpu_mem_32u &buffer1, gpu::gpu_mem_32u &buffer2, unsigned int a1, unsigned int a2);
+
+void prefix_sum_02_prefix_accumulation_blelloch(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32u& data, const gpu::gpu_mem_32u& partial_sums, unsigned int data_size);
+
+void prefix_sum_01_reduction_blelloch(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32u& data, const gpu::gpu_mem_32u& res, const gpu::gpu_mem_32u& partial_sums, unsigned int data_size);
+
+void radix_sort_02_global_prefixes_scan_sum_reduction(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32u& input, gpu::gpu_mem_32u& counters, unsigned int offset, unsigned int n);
+
+void radix_sort_04_scatter(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32u& input, gpu::gpu_mem_32u& counters, const gpu::gpu_mem_32u& output, unsigned int offset, unsigned int n);
 }
 
 namespace ocl {
