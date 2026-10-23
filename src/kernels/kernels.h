@@ -17,14 +17,18 @@ namespace ocl {
 const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getFillBufferWithZeros();
-const ProgramBinaries& getPrefixSum01Reduction();
-const ProgramBinaries& getPrefixSum02PrefixAccumulation();
+const ProgramBinaries& getRadixSort01LocalCounting();
+const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction();
+const ProgramBinaries& getRadixSort03GlobalPrefixesScanAccumulation();
+const ProgramBinaries& getRadixSort04Scatter();
 }
 
 namespace avk2 {
 const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getFillBufferWithZeros();
-const ProgramBinaries& getPrefixSum01Reduction();
-const ProgramBinaries& getPrefixSum02PrefixAccumulation();
+const ProgramBinaries& getRadixSort01LocalCounting();
+const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction();
+const ProgramBinaries& getRadixSort03GlobalPrefixesScanAccumulation();
+const ProgramBinaries& getRadixSort04Scatter();
 }
