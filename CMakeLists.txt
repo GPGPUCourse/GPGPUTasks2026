@@ -100,6 +100,7 @@ if (GPU_CUDA_SUPPORT)
     # 2) второй раз специальным CUDA-компилятором NVCC - для DEVICE-side кода, например функции помеченные специальным модификатором __global__ (кернелы) или __device__ (функции которые можно вызвать на видеокарте, т.е. из кернелов)
     # Вероятно вам стоит выставить в CMake options: -DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
     set(CUDA_SOURCES
+            src/kernels/cu/cub_radix_sort.cu
             src/kernels/cu/aplusb.cu
             src/kernels/cu/fill_buffer_with_zeros.cu
             src/kernels/cu/radix_sort_01_local_counting.cu
@@ -125,4 +126,8 @@ target_link_libraries(main_radix_sort ${PROJECT_NAME}_core)
 if (GPU_CUDA_SUPPORT)
     target_include_directories(main_aplusb     PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
     target_include_directories(main_radix_sort PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+
+    add_executable(test_cub_radix_sort src/test_cub_radix_sort.cpp)
+    target_link_libraries(test_cub_radix_sort ${PROJECT_NAME}_core)
+    target_include_directories(test_cub_radix_sort PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 endif ()

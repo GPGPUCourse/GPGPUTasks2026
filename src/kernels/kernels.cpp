@@ -16,6 +16,14 @@
 
 #ifndef CUDA_SUPPORT
 namespace cuda {
+size_t cub_radix_sort_temp_bytes(const gpu::gpu_mem_32u&, gpu::gpu_mem_32u&, int)
+{
+    throw std::runtime_error("CUB radix sort requires GPU_CUDA_SUPPORT=ON");
+}
+void cub_radix_sort(const gpu::gpu_mem_32u&, gpu::gpu_mem_32u&, gpu::gpu_mem_8u&, int)
+{
+    throw std::runtime_error("CUB radix sort requires GPU_CUDA_SUPPORT=ON");
+}
 void aplusb(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n)
 {
