@@ -10,6 +10,7 @@
 #include "kernels/kernels.h"
 
 #include "debug.h" // TODO очень советую использовать debug::prettyBits(...) для отладки
+#include "kernels/helper.h"
 
 #include <fstream>
 
@@ -86,15 +87,14 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     const unsigned int uint4_work_size = n / 4 + (n % 4 == 0 ? 0 : 1);
-    const size_t num_groups_reductors = n / (GROUP_SIZE * 4) + (n % (GROUP_SIZE * 4) != 0);
+    const size_t num_groups_reductors = get_reducted_groups_count(n);
 
-    gpu::shared_device_buffer_typed<uint4> counters(num_groups_reductors);
+    gpu::gpu_mem_32u counters(num_groups_reductors * BUCKET_COUNT);
 
-    std::vector<gpu::shared_device_buffer_typed<uint4>> reductors;
+    std::vector<gpu::gpu_mem_32u> reductors;
     reductors.push_back(counters);
 
-    // редуктор внутри не только редуцирует, но еще и внутри группы сортирует
-    for (unsigned int size = num_groups_reductors; size > 1;) {
+    for (unsigned int size = num_groups_reductors * BUCKET_COUNT; size > 1;) {
         size = size / PREFIX_SUM_GROPU_DATA_SIZE + (size % PREFIX_SUM_GROPU_DATA_SIZE != 0);
         reductors.emplace_back(size);
     }
@@ -116,18 +116,18 @@ void run(int argc, char** argv)
         timer t;
 
         if (context.type() == gpu::Context::TypeCUDA) {
-            for (int offset = 0; offset < 32; offset += 2) {
+            for (int offset = 0; offset < 32; offset += 8) {
                 std::swap(input, output);
 
                 cuda::radix_sort_02_global_prefixes_scan_sum_reduction(
-                    gpu::WorkSize(GROUP_SIZE, 1, uint4_work_size, 1), *input, counters, offset, n);
+                    gpu::WorkSize(COUNTER_REDUCTION_GROUP_SIZE, 1, uint4_work_size, 1), *input, counters, offset, n);
 
                 for (unsigned int i = 1; i < reductors.size(); ++i) {
 
                     const unsigned int size = reductors[i - 1].size() / reductors[i - 1].elementSize();
                     const unsigned int threads = size / 2 + size % 2;
 
-                    cuda::prefix_sum_01_reduction_blelloch(gpu::WorkSize(GROUP_SIZE, 1, threads, 1), reductors[i - 1], reductors[i - 1], reductors[i], size);
+                    cuda::prefix_sum_01_reduction_blelloch(gpu::WorkSize(SCAN_GROUP_SIZE, 1, threads, 1), reductors[i - 1], reductors[i - 1], reductors[i], size);
                 }
 
                 for (int i = static_cast<int>(reductors.size()) - 1; i > 0; --i) {
@@ -136,12 +136,11 @@ void run(int argc, char** argv)
                     const unsigned int threads = size / 2 + size % 2;
 
                     cuda::prefix_sum_02_prefix_accumulation_blelloch(
-                        gpu::WorkSize(GROUP_SIZE, 1, threads, 1), reductors[i - 1], reductors[i], size);
+                        gpu::WorkSize(SCAN_GROUP_SIZE, 1, threads, 1), reductors[i - 1], reductors[i], size);
                 }
 
                 cuda::radix_sort_04_scatter(
                     gpu::WorkSize(SCATTER_GROUP_SIZE, 1, n, 1), *input, counters, *output, offset, n);
-
             }
 
         } else {

@@ -4,109 +4,140 @@
 
 #include <libgpu/cuda/cu/common.cu>
 
+#include "../blelloch_local_sort.h"
 #include "../defines.h"
+#include "../helper.h"
 #include "helpers/rassert.cu"
+
+__device__ __forceinline__ void warp_local_scan(
+    unsigned int* temp,
+    unsigned int data_size)
+{
+    const unsigned int lane = threadIdx.x & 31u;
+    const unsigned int warp = threadIdx.x / 32;
+    const unsigned int num_warps = blockDim.x / 32;
+
+    __shared__ unsigned int warp_sums[32];
+
+    __syncthreads();
+
+    unsigned int value = 0;
+    if (threadIdx.x < data_size)
+        value = temp[compute_index(threadIdx.x)];
+
+    unsigned int prefix = value;
+
+#pragma unroll
+    for (unsigned int k = 1; k < 32; k *= 2) {
+        unsigned int increment = __shfl_up_sync(0xffffffffu, prefix, k);
+        if (lane >= k)
+            prefix += increment;
+    }
+
+    if (lane == 31)
+        warp_sums[warp] = prefix;
+
+    __syncthreads();
+
+    if (warp == 0) {
+        unsigned int warp_value = 0;
+        if (lane < num_warps)
+            warp_value = warp_sums[lane];
+
+        unsigned int warp_prefix = warp_value;
+
+#pragma unroll
+        for (unsigned int k = 1; k < 32; k *= 2) {
+            unsigned int increment =
+                __shfl_up_sync(0xffffffffu, warp_prefix, k);
+            if (lane >= k)
+                warp_prefix += increment;
+        }
+
+        if (lane < num_warps)
+            warp_sums[lane] = warp_prefix - warp_value;
+
+    }
+
+    __syncthreads();
+
+    if (threadIdx.x < data_size)
+        temp[compute_index(threadIdx.x)] =
+            warp_sums[warp] + prefix - value;
+
+    __syncthreads();
+}
 
 __global__ void radix_sort_04_scatter(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
     unsigned int* input,
-    uint4* counters,
+    unsigned int* counters,
     unsigned int* output,
     unsigned int offset,
     unsigned int n)
 {
     const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned char lane = threadIdx.x & 31u;
-    unsigned char warp = threadIdx.x / 32;
     const unsigned int lane_before_mask_excluding = (1u << lane) - 1u;
     const bool valid = index < n;
-    unsigned int number;
+    const unsigned int warp = threadIdx.x / 32;
+
+    __shared__ unsigned int data[SCATTER_GROUP_SIZE];
+    __shared__ unsigned int local_base[(BUCKET_COUNT - 1) / NUM_BANKS + BUCKET_COUNT];
+
     if (valid)
-        number = input[index];
+        data[threadIdx.x] = input[index];
     else
-        number = 0;
+        data[threadIdx.x] = 0;
 
-    unsigned char bucket = (number >> offset) & 0x3;
-    unsigned char local_order_in_warp = 0;
+    __shared__ unsigned int group_bucket_counters[(16 * SCATTER_GROUP_WARPS - 1) / NUM_BANKS + 16 * SCATTER_GROUP_WARPS];
+    unsigned int local_order_in_warp_bucket = 0;
 
-    unsigned int num_groups = n / SCATTER_GROUP_SIZE + (n % SCATTER_GROUP_SIZE == 0 ? 0 : 1);
-    uint4 bucket_baseui;
-    uint4 global_countersui;
-    if (threadIdx.x == 32) {
-        if (blockIdx.x > 0)
-            bucket_baseui = counters[blockIdx.x - 1];
-        global_countersui = counters[num_groups - 1];
-    }
-    __shared__ unsigned int warp_data[SCATTER_GROUP_WARPS];
-    unsigned int local_sums = 0;
-#pragma unroll
+    for (unsigned int local_sort_offset = offset; local_sort_offset < offset + RADIX_BITS; local_sort_offset += 4) {
 
-    for (int i = 3; i >= 0; --i) {
-        unsigned int mask = __ballot_sync(0xffffffff, valid && bucket == i);
-        if (valid && i == bucket) {
-            local_order_in_warp = __popc(mask & lane_before_mask_excluding);
-        }
-        local_sums |= (__popc(mask) << (8 * i));
-    }
-
-    if (lane == 0 && warp < SCATTER_GROUP_WARPS - 1) {
-        warp_data[warp + 1] = local_sums;
-    }
-    if (lane == 0 && warp == SCATTER_GROUP_WARPS - 1) {
-        warp_data[0] = 0;
-    }
-    __shared__ unsigned int work_group_base[4];
-    __shared__ unsigned int global_counters[4];
-
-    __syncthreads();
-
-    if (warp == 0 && lane < SCATTER_GROUP_WARPS) {
-        unsigned int warp_data_local = warp_data[lane];
+        unsigned int number = data[threadIdx.x];
+        unsigned int bucket = get_bucket_with_dim(number, local_sort_offset, 4);
 
 #pragma unroll
-        for (unsigned char k = 1; k < SCATTER_GROUP_WARPS; k *= 2) {
-
-            unsigned int inc = __shfl_up_sync(0x000000ffu, warp_data_local, k);
-            if (lane >= k) {
-                warp_data_local += inc;
+        for (int local_bucket = 15; local_bucket >= 0; --local_bucket) {
+            unsigned int mask = __ballot_sync(0xffffffff, valid && bucket == local_bucket);
+            if (valid && local_bucket == bucket) {
+                local_order_in_warp_bucket = __popc(mask & lane_before_mask_excluding);
             }
+            if (lane == 0)
+                group_bucket_counters[compute_index(warp + local_bucket * SCATTER_GROUP_WARPS)] = __popc(mask);
         }
 
-        warp_data[lane] = warp_data_local;
-
+        warp_local_scan(group_bucket_counters, 16 * SCATTER_GROUP_WARPS);
+        if (valid)
+            data[group_bucket_counters[compute_index(bucket * SCATTER_GROUP_WARPS + warp)] + local_order_in_warp_bucket] = number;
+        __syncthreads();
     }
 
-    if (threadIdx.x == 32) {
-        if (blockIdx.x > 0) {
-            work_group_base[0] = bucket_baseui.x;
-            work_group_base[1] = bucket_baseui.y;
-            work_group_base[2] = bucket_baseui.z;
-            work_group_base[3] = bucket_baseui.w;
-        } else {
-            work_group_base[0] = 0;
-            work_group_base[1] = 0;
-            work_group_base[2] = 0;
-            work_group_base[3] = 0;
-        }
-        global_counters[0] = 0;
-        global_counters[1] = global_countersui.x;
-        global_counters[2] = global_countersui.x + global_countersui.y;
-        global_counters[3] = global_countersui.x + global_countersui.y + global_countersui.z;
-    }
-
-
+    unsigned int number = data[threadIdx.x];
+    unsigned int bucket = get_bucket(number, offset);
     __syncthreads();
+
     if (valid) {
-        unsigned char index_in_work_group = ((warp_data[warp] >> (bucket * 8)) & 0xff) + local_order_in_warp;
-        unsigned int res_index = global_counters[bucket] + work_group_base[bucket] + index_in_work_group;
+
+        if (threadIdx.x == 0 ||
+            bucket != get_bucket(data[threadIdx.x - 1], offset)) {
+            local_base[compute_index(bucket)] = threadIdx.x;
+        }
+    }
+    __syncthreads();
+
+    if (valid) {
+        unsigned int block_base = counters[bucket * get_reducted_groups_count(n) + blockIdx.x];
+        unsigned int res_index = block_base + threadIdx.x - local_base[compute_index(bucket)];
         output[res_index] = number;
     }
 }
 
 namespace cuda {
 void radix_sort_04_scatter(const gpu::WorkSize& workSize,
-    const gpu::gpu_mem_32u& input, gpu::shared_device_buffer_typed<uint4>& counters, const gpu::gpu_mem_32u& output, unsigned int offset, unsigned int n)
+    const gpu::gpu_mem_32u& input, gpu::gpu_mem_32u& counters, const gpu::gpu_mem_32u& output, unsigned int offset, unsigned int n)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());

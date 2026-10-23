@@ -10,27 +10,23 @@
 #include "../helper.h"
 
 __global__ void prefix_sum_02_prefix_accumulation_blelloch(
-    uint4* data,
-    uint4* partial_sum,
+    unsigned int* data,
+    unsigned int* partial_sum,
     unsigned int n)
 {
     const unsigned int index = 2 * blockIdx.x * blockDim.x + threadIdx.x;
-    if (index >= n) {
+    if (index >= n || blockIdx.x == 0) {
         return;
     }
-    const unsigned int prefix_sum_index = index / PREFIX_SUM_GROPU_DATA_SIZE;
-    if (prefix_sum_index > 0) {
-        const uint4 acc = partial_sum[prefix_sum_index - 1];
-        if (index < n)
-            data[index] += acc;
-        if (index + GROUP_SIZE < n)
-            data[index + GROUP_SIZE] += acc;
-    }
+    const unsigned int acc = partial_sum[blockIdx.x];
+    data[index] += acc;
+    if (index + blockDim.x < n)
+        data[index + blockDim.x] += acc;
 }
 
 namespace cuda {
 void prefix_sum_02_prefix_accumulation_blelloch(const gpu::WorkSize& workSize,
-    gpu::shared_device_buffer_typed<uint4>& data, gpu::shared_device_buffer_typed<uint4>& partial_sums, unsigned int data_size)
+    const gpu::gpu_mem_32u& data, const gpu::gpu_mem_32u& partial_sums, unsigned int data_size)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
