@@ -71,7 +71,7 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u input_gpu(n), prefix_sum_accum_gpu(n);
     std::vector<gpu::gpu_mem_32u> blocks;
     for (unsigned int count = n; count > 0;) {
-        count = count / GROUP_SIZE;
+        count = div_ceil<unsigned int>(count, GROUP_SIZE);
         blocks.emplace_back(count);
         if (count == 1) {
             break;
