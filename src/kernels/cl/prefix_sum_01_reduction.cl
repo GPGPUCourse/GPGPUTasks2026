@@ -5,13 +5,54 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-__attribute__((reqd_work_group_size(1, 1, 1)))
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void prefix_sum_01_reduction(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* pow2_sum, // contains n values
-    __global       uint* next_pow2_sum, // will contain (n+1)/2 values
+    __global const uint* input,
+    __global       uint* output,
+    __global       uint* blocks,
     unsigned int n)
 {
-    // TODO
+    const uint index = get_local_id(0);
+    const uint global_index = get_global_id(0);
+
+    __local uint temp[GROUP_SIZE];
+
+    const uint value = global_index < n ? input[global_index] : 0;
+    temp[index] = value;
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    // up sweep
+    for (uint i = 1; i < GROUP_SIZE; i *= 2) {
+        uint j = (index + 1) * 2 * i - 1;
+
+        if (j < GROUP_SIZE) {
+            temp[j] += temp[j-i];
+        }
+
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+    if (index == 0) {
+        blocks[get_group_id(0)] = temp[GROUP_SIZE-1];
+        temp[GROUP_SIZE-1] = 0;
+    }
+
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    // down sweep
+    for (uint i = GROUP_SIZE / 2; i > 0; i /= 2) {
+        uint j = (index + 1) * 2 * i - 1;
+
+        if (j < GROUP_SIZE) {
+            uint old = temp[j-i];
+            temp[j-i] = temp[j];
+            temp[j] += old;
+        }
+
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+    if (global_index < n) {
+        output[global_index] = temp[index] + value;
+    }
 }
