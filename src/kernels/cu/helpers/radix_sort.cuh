@@ -193,7 +193,6 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
             base = __shfl_sync(peers, base, leader);
             rank[i] = ((base >> half) & 0xffffu) + __popc(peers & lane_lt);
         }
-        __syncwarp();
     }
     __syncthreads();
 
