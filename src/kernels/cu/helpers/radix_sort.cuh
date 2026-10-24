@@ -256,6 +256,7 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
             const unsigned pos = i * THREADS + threadIdx.x;
             const unsigned k = s_keys[pos];
             out[s_dest[digit_of(k, pass)] + pos] = k;
+            __syncwarp();
         }
     } else {
         const unsigned tile_n = n - tile_base;
