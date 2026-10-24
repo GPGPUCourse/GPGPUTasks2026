@@ -10,7 +10,7 @@ constexpr int WARPS = THREADS / 32;
 constexpr int BITS = 8;
 constexpr int DIGITS = 1 << BITS;
 constexpr int PASSES = 32 / BITS;
-constexpr int ITEMS = 25;                 // keys per thread in a digit pass
+constexpr int ITEMS = 24;                 // keys per thread in a digit pass
 constexpr int TILE = THREADS * ITEMS;     // keys per block in a digit pass
 constexpr int MIN_BLOCKS = 2;
 constexpr int STEP = 1;                   // tiles read at once when a block collects its offsets
@@ -187,10 +187,9 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
             const unsigned kd = digit_of(key[i], pass);
             const unsigned peers = same_digit(kd, active);
             const int leader = 31 - __clz(peers);
+            unsigned base = 0;
             const unsigned half = (kd >> 7) * 16;
-            // the other lanes add to a word of s_keys, which is not in use yet
-            unsigned* const target = lane == leader ? &s_counts[warp][kd & (DIGITS / 2 - 1)] : &s_keys[threadIdx.x];
-            unsigned base = atomicAdd(target, (unsigned)__popc(peers) << half);
+            if (lane == leader) base = atomicAdd(&s_counts[warp][kd & (DIGITS / 2 - 1)], (unsigned)__popc(peers) << half);
             base = __shfl_sync(peers, base, leader);
             rank[i] = ((base >> half) & 0xffffu) + __popc(peers & lane_lt);
         }
