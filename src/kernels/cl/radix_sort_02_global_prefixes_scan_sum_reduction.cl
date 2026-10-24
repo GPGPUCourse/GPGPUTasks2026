@@ -7,11 +7,15 @@
 
 __attribute__((reqd_work_group_size(1, 1, 1)))
 __kernel void radix_sort_02_global_prefixes_scan_sum_reduction(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* buffer1,
-    __global       uint* buffer2,
-    unsigned int a1)
+    __global const uint* histograms,  // локальные гистограммы всех групп: groups * 256 значений
+    __global       uint* totals,      // суммарное количество каждой из 256 цифр
+    unsigned int groups)
 {
-    // TODO
+    const unsigned int digit = get_global_id(0);
+
+    uint sum = 0;
+    for (unsigned int group = 0; group < groups; ++group) {
+        sum += histograms[group * 256 + digit];
+    }
+    totals[digit] = sum;
 }

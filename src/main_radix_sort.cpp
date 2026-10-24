@@ -68,9 +68,11 @@ void run(int argc, char** argv)
         std::cout << "CPU std::sort effective RAM bandwidth: " << memory_size_gb / elapsed << " GB/s (" << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
+    const unsigned int groups = (unsigned)((n + GROUP_SIZE - 1) / GROUP_SIZE);
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    // buffer1 - локальные гистограммы групп (groups * 256), buffer2 - [0..255] суммы цифр + [256..] базы групп для цифр
+    gpu::gpu_mem_32u buffer1_gpu(groups * GROUP_SIZE), buffer2_gpu(256 + groups * GROUP_SIZE), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -84,22 +86,26 @@ void run(int argc, char** argv)
     buffer4_gpu.fill(255);
     buffer_output_gpu.fill(255);
 
-    // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
+    for (int iter = 0; iter < 10; ++iter) {
         timer t;
+        for (unsigned int pass = 0; pass < 4; ++pass) {
+            const unsigned int un = (unsigned)n;
+            const unsigned int shift = 8u * pass;
+            const gpu::gpu_mem_32u* srcs[4] = {&input_gpu,   &buffer3_gpu, &buffer4_gpu, &buffer3_gpu};
+            gpu::gpu_mem_32u*       dsts[4] = {&buffer3_gpu, &buffer4_gpu, &buffer3_gpu, &buffer_output_gpu};
 
-        // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-        // TODO
-        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-        // ocl_fillBufferWithZeros.exec();
-        // ocl_radixSort01LocalCounting.exec();
-        // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-        // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-        // ocl_radixSort04Scatter.exec();
+            const gpu::gpu_mem_32u& src = *srcs[pass];
+            gpu::gpu_mem_32u&       dst = *dsts[pass];
 
+            ocl_radixSort01LocalCounting.exec(gpu::WorkSize(GROUP_SIZE, n), src, buffer1_gpu, un, shift);
+            ocl_radixSort02GlobalPrefixesScanSumReduction.exec(gpu::WorkSize(1, 256), buffer1_gpu, buffer2_gpu, groups);
+            ocl_radixSort03GlobalPrefixesScanAccumulation.exec(gpu::WorkSize(1, 256), buffer2_gpu, buffer1_gpu, buffer2_gpu, groups);
+            ocl_radixSort04Scatter.exec(gpu::WorkSize(1, groups), src, buffer2_gpu, dst, un, shift);
+        }
         times.push_back(t.elapsed());
     }
+
     std::cout << "GPU radix-sort times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 
     // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили его переупорядоченным)

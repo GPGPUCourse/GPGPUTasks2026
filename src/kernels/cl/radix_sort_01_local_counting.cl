@@ -5,14 +5,27 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-__attribute__((reqd_work_group_size(1, 1, 1)))
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void radix_sort_01_local_counting(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* buffer1,
-    __global       uint* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+    __global const uint* values,      // n входных чисел
+    __global       uint* histograms,  // сюда пишутся локальные гистограммы: groups * 256 значений
+    unsigned int n,
+    unsigned int shift)               // номер младшего бита текущего 8-битного разряда
 {
-    // TODO
+    const unsigned int lid = get_local_id(0);
+    const unsigned int group_id = get_group_id(0);
+
+    __local uint hist[256];
+
+    hist[lid] = 0;
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    const unsigned int id = get_global_id(0);
+    if (id < n) {
+        const uint digit = (values[id] >> shift) & 255u;
+        atomic_add(&hist[digit], 1);
+    }
+
+    barrier(CLK_LOCAL_MEM_FENCE);
+    histograms[group_id * 256 + lid] = hist[lid];
 }
