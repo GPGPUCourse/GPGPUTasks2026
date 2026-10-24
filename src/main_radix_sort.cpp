@@ -88,13 +88,16 @@ void run(int argc, char** argv)
     }
 
     int ng = (n + GROUP_SIZE - 1) / GROUP_SIZE;
-    int m = RADIX * ng; // размер counts
+    int m = RADIX * ng;
 
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u buffer1_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
+    // buffer2[digit * ng + group] = сколько раз digit встретился в группе
     gpu::gpu_mem_32u buffer2_gpu(m); // counts
+    // prefix sum по counts
     gpu::gpu_mem_32u buffer3_gpu(m); // prefixes
+    // Временные буферы для преф сум
     gpu::gpu_mem_32u buffer4_gpu(m); // tmp для reduce
     gpu::gpu_mem_32u buffer5_gpu(m); // tmp для reduce
 
@@ -102,6 +105,7 @@ void run(int argc, char** argv)
 
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
+        // Стартуем таймер этой итерации сортировки
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
@@ -111,7 +115,6 @@ void run(int argc, char** argv)
             gpu::gpu_mem_32u* a = &buffer_output_gpu;
             gpu::gpu_mem_32u* b = &buffer1_gpu;
             gpu::WorkSize ws(GROUP_SIZE, n);
-
             for (int bit = 0; bit < 32; bit += RADIX_BITS) {
                 // считаем сколько 0/1 в каждой группе
                 ocl_radixSort01LocalCounting.exec(ws, *a, buffer2_gpu, (unsigned int) n, (unsigned int) bit);
@@ -124,11 +127,14 @@ void run(int argc, char** argv)
                 int cur_n = m;
                 gpu::gpu_mem_32u* x = &buffer4_gpu;
                 gpu::gpu_mem_32u* y = &buffer5_gpu;
+                // reduce
                 for (int level = 0; ; level++) {
                     int half_n = (cur_n + kReduceFactor - 1) / kReduceFactor;
-                    int next_pow2 = 4 * (level + 1);
-                    if (half_n == 0 || next_pow2 >= 32 || (1u << next_pow2) > (unsigned int) m)
+                    int next_pow2 = 4 * (level + 1); // log2(kReduceFactor)
+                    // Если блоков уже нет / сдвиг слишком большой / блок больше всего массива - стоп
+                    if (half_n == 0 || next_pow2 >= 32 || (1u << next_pow2) > (unsigned int) m){
                         break;
+                    }
 
                     gpu::WorkSize ws3(GROUP_SIZE, half_n);
                     if (level == 0) {
@@ -136,6 +142,7 @@ void run(int argc, char** argv)
                     } else {
                         ocl_radixSort02GlobalPrefixesScanSumReduction.exec(ws3, *y, *x, cur_n);
                     }
+
                     ocl_radixSort03GlobalPrefixesScanAccumulation.exec(ws2, *x, buffer3_gpu, (unsigned int) m, (unsigned int) next_pow2);
 
                     cur_n = half_n;
