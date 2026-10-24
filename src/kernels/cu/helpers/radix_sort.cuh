@@ -48,15 +48,12 @@ __device__ __forceinline__ unsigned digit_of(unsigned key, int pass) { return (k
 // lanes of `mask` with the same digit as this lane
 __device__ __forceinline__ unsigned same_digit(unsigned kd, unsigned mask)
 {
-    unsigned peers = mask;
+    unsigned m[BITS];
 #pragma unroll
-    for (int b = 0; b < BITS; ++b) {
-        unsigned m;
+    for (int b = 0; b < BITS; ++b)
         asm("{\n\t.reg .pred p;\n\tand.b32 %0, %1, %2;\n\tsetp.ne.u32 p, %0, 0;\n\tvote.sync.ballot.b32 %0, p, %3;\n\t@!p not.b32 %0, %0;\n\t}"
-            : "=r"(m) : "r"(kd), "r"(1u << b), "r"(mask));
-        peers &= m;
-    }
-    return peers;
+            : "=r"(m[b]) : "r"(kd), "r"(1u << b), "r"(mask));
+    return (m[0] & m[1] & m[2]) & (m[3] & m[4] & m[5]) & (m[6] & m[7] & mask);
 }
 
 __device__ __forceinline__ unsigned warp_inclusive_scan(unsigned v)
