@@ -21,9 +21,9 @@ static_assert(DIGITS == THREADS, "thread d handles digit d in the per-digit step
 static_assert(TILE < 65536, "16-bit counters");
 
 __host__ __device__ inline unsigned tiles_for(unsigned n) { return (n + TILE - 1) / TILE; }
-// scratch (unsigned words): [PASSES * DIGITS counts, then offsets][PASSES tile counters][padding to a 128-byte
-// line][tiles * DIGITS status words]
-constexpr unsigned STATUS_AT = (PASSES * DIGITS + PASSES + 31) / 32 * 32;
+// scratch (unsigned words): [PASSES * DIGITS counts][PASSES * DIGITS offsets][PASSES tile counters][padding to a
+// 128-byte line][tiles * DIGITS status words]
+constexpr unsigned STATUS_AT = (2 * PASSES * DIGITS + PASSES + 31) / 32 * 32;
 __host__ __device__ inline unsigned scratch_words(unsigned n) { return STATUS_AT + tiles_for(n) * DIGITS; }
 
 // the status words are shared by all passes: the flag carries the pass number
@@ -107,13 +107,16 @@ static __global__ void __launch_bounds__(THREADS) count_digits(const unsigned* _
     }
 }
 
-// counts -> exclusive offsets, for every pass (one block)
-static __global__ void __launch_bounds__(THREADS) digit_offsets(unsigned* __restrict__ hist)
+// counts -> exclusive offsets, for every pass (one block); leaves the counts zero for the next sort and zeroes the
+// tile counters of the passes
+static __global__ void __launch_bounds__(THREADS) digit_offsets(unsigned* __restrict__ hist, unsigned* __restrict__ offs, unsigned* __restrict__ counters)
 {
     __shared__ unsigned s_warp[WARPS];
     const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
+    if (threadIdx.x < PASSES) counters[threadIdx.x] = 0;
     for (int p = 0; p < PASSES; ++p) {
         const unsigned v = hist[p * DIGITS + threadIdx.x];
+        hist[p * DIGITS + threadIdx.x] = 0;
         const unsigned incl = warp_inclusive_scan(v);
         if (lane == 31) s_warp[warp] = incl;
         __syncthreads();
@@ -122,7 +125,7 @@ static __global__ void __launch_bounds__(THREADS) digit_offsets(unsigned* __rest
         for (int w = 0; w < WARPS; ++w)
             if (w < warp) carry += s_warp[w];
         __syncthreads();
-        hist[p * DIGITS + threadIdx.x] = carry + incl - v;
+        offs[p * DIGITS + threadIdx.x] = carry + incl - v;
     }
 }
 
@@ -269,13 +272,19 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
 
 // --- host side (stream-ordered) ---------------------------------------------------------------------------------
 inline unsigned* scratch_hist(unsigned* scratch) { return scratch; }
-inline unsigned* scratch_counters(unsigned* scratch) { return scratch + PASSES * DIGITS; }
+inline unsigned* scratch_offsets(unsigned* scratch) { return scratch + PASSES * DIGITS; }
+inline unsigned* scratch_counters(unsigned* scratch) { return scratch + 2 * PASSES * DIGITS; }
 inline unsigned* scratch_status(unsigned* scratch) { return scratch + STATUS_AT; }
 
+// the counts are left zero by digit_offsets of the previous sort; zeroed here only for a scratch area not seen before
 inline cudaError_t count_async(const unsigned* input, unsigned* scratch, unsigned n, cudaStream_t stream)
 {
-    const cudaError_t e = cudaMemsetAsync(scratch_hist(scratch), 0, sizeof(unsigned) * PASSES * DIGITS, stream);
-    if (e != cudaSuccess) return e;
+    static const unsigned* zeroed = nullptr;
+    if (scratch != zeroed) {
+        const cudaError_t e = cudaMemsetAsync(scratch_hist(scratch), 0, sizeof(unsigned) * PASSES * DIGITS, stream);
+        if (e != cudaSuccess) return e;
+        zeroed = scratch;
+    }
     unsigned blocks = (n / 4 + THREADS - 1) / THREADS;
     blocks = blocks < 1280u ? blocks : 1280u;
     if (blocks == 0) blocks = 1;
@@ -285,13 +294,13 @@ inline cudaError_t count_async(const unsigned* input, unsigned* scratch, unsigne
 
 inline cudaError_t offsets_async(unsigned* scratch, cudaStream_t stream)
 {
-    digit_offsets<<<1, THREADS, 0, stream>>>(scratch_hist(scratch));
+    digit_offsets<<<1, THREADS, 0, stream>>>(scratch_hist(scratch), scratch_offsets(scratch), scratch_counters(scratch));
     return cudaGetLastError();
 }
 
 // Every pass rewrites the status words of all its tiles and their flag carries the pass number, so words left by
 // an earlier pass or an earlier sort never read as published. They are zeroed only for a scratch area not seen
-// before or grown; the tile counters are zeroed for every sort.
+// before or grown; the tile counters are zeroed by digit_offsets.
 inline cudaError_t reset_async(unsigned* scratch, unsigned n, cudaStream_t stream)
 {
     static const unsigned* zeroed_scratch = nullptr;
@@ -303,7 +312,7 @@ inline cudaError_t reset_async(unsigned* scratch, unsigned n, cudaStream_t strea
         zeroed_scratch = scratch;
         zeroed_tiles = tiles;
     }
-    return cudaMemsetAsync(scratch_counters(scratch), 0, sizeof(unsigned) * PASSES, stream);
+    return cudaSuccess;
 }
 
 // input -> tmp1 -> tmp2 -> tmp1 -> output
@@ -314,7 +323,7 @@ inline cudaError_t passes_async(const unsigned* input, unsigned* output, unsigne
     unsigned* bufs[2] = {tmp1, tmp2};
     for (int p = 0; p < PASSES; ++p) {
         unsigned* dst = (p == PASSES - 1) ? output : bufs[p & 1];
-        digit_pass<<<tiles, THREADS, 0, stream>>>(src, dst, n, p, scratch_hist(scratch) + p * DIGITS, scratch_status(scratch), scratch_counters(scratch) + p);
+        digit_pass<<<tiles, THREADS, 0, stream>>>(src, dst, n, p, scratch_offsets(scratch) + p * DIGITS, scratch_status(scratch), scratch_counters(scratch) + p);
         src = dst;
     }
     return cudaGetLastError();
