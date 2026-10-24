@@ -21,8 +21,10 @@ static_assert(DIGITS == THREADS, "thread d handles digit d in the per-digit step
 static_assert(TILE < 65536, "16-bit counters");
 
 __host__ __device__ inline unsigned tiles_for(unsigned n) { return (n + TILE - 1) / TILE; }
-// scratch (unsigned words): [PASSES * DIGITS counts, then offsets][PASSES tile counters][tiles * DIGITS status words]
-__host__ __device__ inline unsigned scratch_words(unsigned n) { return PASSES * DIGITS + PASSES + tiles_for(n) * DIGITS; }
+// scratch (unsigned words): [PASSES * DIGITS counts, then offsets][PASSES tile counters][padding to a 128-byte
+// line][tiles * DIGITS status words]
+constexpr unsigned STATUS_AT = (PASSES * DIGITS + PASSES + 31) / 32 * 32;
+__host__ __device__ inline unsigned scratch_words(unsigned n) { return STATUS_AT + tiles_for(n) * DIGITS; }
 
 // the status words are shared by all passes: the flag carries the pass number
 __device__ __forceinline__ unsigned flag_partial(int pass) { return 2u * pass + 1u; }
@@ -146,6 +148,7 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
     const unsigned d = threadIdx.x;
     if (threadIdx.x == 0) s_tile = atomicAdd(counter, 1u);
     const unsigned goff = offsets[d];
+    const bool live = (d + 1 < DIGITS ? offsets[d + 1] : n) != goff;  // digit d occurs in the array
     for (int i = threadIdx.x; i < WARPS * DIGITS / 2; i += THREADS) (&s_counts[0][0])[i] = 0;
     s_hist[d] = 0;
     __syncthreads();
@@ -169,7 +172,8 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
     }
     __syncthreads();
     const unsigned my_count = s_hist[d];
-    if (tile > 0) put_status(tile_status + d, partial, my_count);
+    if (!live) put_status(tile_status + d, complete, 0u);
+    else if (tile > 0) put_status(tile_status + d, partial, my_count);
 
     // order of the keys of one digit inside a warp's run: (item, lane)
     unsigned rank[ITEMS];
@@ -224,7 +228,7 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
 
     // offset of digit d from the tiles before this one
     unsigned before = 0;
-    if (tile > 0) {
+    if (tile > 0 && live) {
         bool done = false;
         for (int t = (int)tile - 1; t >= 0 && !done; t -= STEP) {
             unsigned w[STEP];
@@ -242,7 +246,7 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
             }
         }
     }
-    put_status(tile_status + d, complete, before + my_count);
+    if (live) put_status(tile_status + d, complete, before + my_count);
     s_dest[d] = goff + before - digit_start;
     __syncthreads();
 
@@ -269,7 +273,7 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
 // --- host side (stream-ordered) ---------------------------------------------------------------------------------
 inline unsigned* scratch_hist(unsigned* scratch) { return scratch; }
 inline unsigned* scratch_counters(unsigned* scratch) { return scratch + PASSES * DIGITS; }
-inline unsigned* scratch_status(unsigned* scratch) { return scratch + PASSES * DIGITS + PASSES; }
+inline unsigned* scratch_status(unsigned* scratch) { return scratch + STATUS_AT; }
 
 inline cudaError_t count_async(const unsigned* input, unsigned* scratch, unsigned n, cudaStream_t stream)
 {
