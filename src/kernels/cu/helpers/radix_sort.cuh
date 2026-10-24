@@ -76,7 +76,7 @@ static __global__ void __launch_bounds__(THREADS) count_digits(const unsigned* _
     const unsigned n4 = n / 4;
     const uint4* keys4 = reinterpret_cast<const uint4*>(keys);
     const unsigned stride = gridDim.x * THREADS;
-    constexpr int LOADS = 8;  // vectors in flight per thread
+    constexpr int LOADS = 4;  // vectors in flight per thread
     for (unsigned i = blockIdx.x * THREADS + threadIdx.x; i < n4; i += LOADS * stride) {
         uint4 v[LOADS];
 #pragma unroll
