@@ -29,6 +29,7 @@ void run(int argc, char** argv)
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
     gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    constexpr unsigned int kReduceFactor = REDUCE_FACTOR;
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -86,37 +87,72 @@ void run(int argc, char** argv)
         std::cout << "CPU std::sort effective RAM bandwidth: " << memory_size_gb / elapsed << " GB/s (" << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
-    // Аллоцируем буферы в VRAM
+    int ng = (n + GROUP_SIZE - 1) / GROUP_SIZE;
+    int m = RADIX * ng;
+
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u buffer1_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
+    // buffer2[digit * ng + group] = сколько раз digit встретился в группе
+    gpu::gpu_mem_32u buffer2_gpu(m); // counts
+    // prefix sum по counts
+    gpu::gpu_mem_32u buffer3_gpu(m); // prefixes
+    // Временные буферы для преф сум
+    gpu::gpu_mem_32u buffer4_gpu(m); // tmp для reduce
+    gpu::gpu_mem_32u buffer5_gpu(m); // tmp для reduce
 
-    // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
-    // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
-    // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
-    // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
-    buffer_output_gpu.fill(255);
 
-    // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
+        // Стартуем таймер этой итерации сортировки
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
+            input_gpu.copyToN(buffer_output_gpu, n);
+            gpu::gpu_mem_32u* a = &buffer_output_gpu;
+            gpu::gpu_mem_32u* b = &buffer1_gpu;
+            gpu::WorkSize ws(GROUP_SIZE, n);
+            for (int bit = 0; bit < 32; bit += RADIX_BITS) {
+                // считаем сколько 0/1 в каждой группе
+                ocl_radixSort01LocalCounting.exec(ws, *a, buffer2_gpu, (unsigned int) n, (unsigned int) bit);
+
+                // префсуммы по counts
+                gpu::WorkSize ws2(GROUP_SIZE, m);
+                ocl_fillBufferWithZeros.exec(ws2, buffer3_gpu, (unsigned int) m);
+                ocl_radixSort03GlobalPrefixesScanAccumulation.exec(ws2, buffer2_gpu, buffer3_gpu, (unsigned int) m, 0u);
+
+                int cur_n = m;
+                gpu::gpu_mem_32u* x = &buffer4_gpu;
+                gpu::gpu_mem_32u* y = &buffer5_gpu;
+                // reduce
+                for (int level = 0; ; level++) {
+                    int half_n = (cur_n + kReduceFactor - 1) / kReduceFactor;
+                    int next_pow2 = 4 * (level + 1); // log2(kReduceFactor)
+                    // Если блоков уже нет / сдвиг слишком большой / блок больше всего массива - стоп
+                    if (half_n == 0 || next_pow2 >= 32 || (1u << next_pow2) > (unsigned int) m){
+                        break;
+                    }
+
+                    gpu::WorkSize ws3(GROUP_SIZE, half_n);
+                    if (level == 0) {
+                        ocl_radixSort02GlobalPrefixesScanSumReduction.exec(ws3, buffer2_gpu, *x, cur_n);
+                    } else {
+                        ocl_radixSort02GlobalPrefixesScanSumReduction.exec(ws3, *y, *x, cur_n);
+                    }
+
+                    ocl_radixSort03GlobalPrefixesScanAccumulation.exec(ws2, *x, buffer3_gpu, (unsigned int) m, (unsigned int) next_pow2);
+
+                    cur_n = half_n;
+                    std::swap(x, y);
+                }
+
+                // раскидываем
+                ocl_radixSort04Scatter.exec(ws, *a, buffer2_gpu, buffer3_gpu, *b, (unsigned int) n, (unsigned int) bit);
+                std::swap(a, b);
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
