@@ -19,17 +19,30 @@ struct GroupCounts {
   uint32_t data[NGROUPS];
 };
 
-__device__ __forceinline__ uint32_t warpScan(uint32_t val) {
-    unsigned mask = 0xFFFFFFFF;
-    int lane = threadIdx.x & 31;
+__device__ __forceinline__
+void warpHistogramAndRank(
+    uint32_t group,
+    int lane,
+    GroupCounts &hist,
+    uint32_t &my_rank)
+{
+    const uint32_t lower_mask = (1u << lane) - 1;
+    GroupCounts h = {};
+    uint32_t rank = 0;
+
     #pragma unroll
-    for (int offset = 1; offset < 32; offset <<= 1) {
-        int n = __shfl_up_sync(mask, val, offset);
-        if (lane >= offset) {
-            val += n;
+    for (int i = 0; i < NGROUPS; ++i) {
+        uint32_t b = __ballot_sync(0xFFFFFFFFu, group == (uint32_t)i);
+        h[i] = __popc(b);
+        if ((uint32_t)i == group) {
+            rank = __popc(b & lower_mask);
         }
     }
-    return val;
+
+    if (lane == 31) {
+      hist = h;
+    }
+    my_rank = rank;
 }
 
 __global__ void radix_sort_04_scatter(
@@ -42,8 +55,7 @@ __global__ void radix_sort_04_scatter(
     __shared__ GroupCounts warp_counts[GROUP_SIZE/32];
     __shared__ GroupCounts tailCounts;
 
-    GroupCounts warp_scan = {};
-    GroupCounts scan = {};
+    uint32_t group_scan = 0;
 
     uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
     uint32_t local_idx = threadIdx.x;
@@ -52,18 +64,14 @@ __global__ void radix_sort_04_scatter(
     uint32_t elem = (idx < n) ? elems[idx] : -1u;
     uint32_t mask = (1 << ITER_BITS) - 1;
     uint32_t group = (elem >> bit) & mask; 
-    for (int i = 0; i < NGROUPS; ++i) {
-      warp_scan[i] = warpScan(group == i);
-    }
-    if (threadIdx.x % 32 == 31) {
-      warp_counts[threadIdx.x/32] = warp_scan;
-    }
+    uint32_t my_rank = 0;
+    warpHistogramAndRank(group, threadIdx.x%32, warp_counts[warp_idx], my_rank);
     __syncthreads();
 
-    scan += warp_scan;
     for (int wi = 0; wi < warp_idx; ++wi) {
-      scan += warp_counts[wi];
+      group_scan += warp_counts[wi][group];
     }
+    group_scan += my_rank;
 
     uint32_t offset = 0;
     uint32_t count = blockIdx.x;
@@ -90,7 +98,7 @@ __global__ void radix_sort_04_scatter(
     }
     __syncthreads();
 
-    scan += tailCounts;
+    group_scan += tailCounts[group];
 
     GroupCounts totalCnt = {};
     {
@@ -107,7 +115,7 @@ __global__ void radix_sort_04_scatter(
     for (int i = 0; i < group; ++i) {
       res_offset += totalCnt[i];
     }
-    res_offset += scan[group]-1;
+    res_offset += group_scan;
 
     if (res_offset < n) {
       result[res_offset] = elem;
