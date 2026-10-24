@@ -193,6 +193,7 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
             base = __shfl_sync(peers, base, leader);
             rank[i] = ((base >> half) & 0xffffu) + __popc(peers & lane_lt);
         }
+        __syncwarp();
     }
     __syncthreads();
 
@@ -251,14 +252,12 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
     __syncthreads();
 
     if (full) {
-        unsigned k = s_keys[threadIdx.x];
 #pragma unroll
         for (int i = 0; i < ITEMS; ++i) {
             const unsigned pos = i * THREADS + threadIdx.x;
-            const unsigned k_next = i + 1 < ITEMS ? s_keys[pos + THREADS] : 0u;
+            const unsigned k = s_keys[pos];
             out[s_dest[digit_of(k, pass)] + pos] = k;
             __syncwarp();
-            k = k_next;
         }
     } else {
         const unsigned tile_n = n - tile_base;
