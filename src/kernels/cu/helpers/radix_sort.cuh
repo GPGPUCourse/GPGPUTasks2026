@@ -10,7 +10,7 @@ constexpr int WARPS = THREADS / 32;
 constexpr int BITS = 8;
 constexpr int DIGITS = 1 << BITS;
 constexpr int PASSES = 32 / BITS;
-constexpr int ITEMS = 26;                 // keys per thread in a digit pass
+constexpr int ITEMS = 27;                 // keys per thread in a digit pass
 constexpr int TILE = THREADS * ITEMS;     // keys per block in a digit pass
 constexpr int MIN_BLOCKS = 2;
 constexpr int STEP = 1;                   // tiles read at once when a block collects its offsets
@@ -133,13 +133,13 @@ static __global__ void __launch_bounds__(THREADS, MIN_BLOCKS)
 digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned n, int pass,
            const unsigned* __restrict__ offsets, unsigned* status, unsigned* counter)
 {
-    __shared__ unsigned s_tile;
-    __shared__ unsigned s_warp[WARPS];
     __shared__ unsigned s_counts[WARPS][DIGITS / 2];  // two 16-bit counters per word: digits d and d + 128
     __shared__ unsigned s_digit[DIGITS];
     unsigned* const s_hist = s_digit;  // tile counts, read before the ranking
+    unsigned* const s_warp = s_digit;  // warp sums of the digit scan
     unsigned* const s_dest = s_digit;  // output offsets, written after the scatter
     __shared__ unsigned s_keys[TILE];
+    unsigned& s_tile = s_keys[0];      // the tile index, read before the keys arrive
     unsigned short (*s_offsets)[DIGITS] = reinterpret_cast<unsigned short (*)[DIGITS]>(s_counts);
 
     const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
