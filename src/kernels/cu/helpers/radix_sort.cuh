@@ -249,7 +249,6 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
     if (live) put_status(tile_status + d, complete, before + my_count);
     s_dest[d] = goff + before - digit_start;
     __syncthreads();
-    __syncwarp();  // the look-back leaves the lanes of a warp apart
 
     if (full) {
 #pragma unroll
@@ -257,6 +256,7 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
             const unsigned pos = i * THREADS + threadIdx.x;
             const unsigned k = s_keys[pos];
             out[s_dest[digit_of(k, pass)] + pos] = k;
+            __syncwarp();
         }
     } else {
         const unsigned tile_n = n - tile_base;
