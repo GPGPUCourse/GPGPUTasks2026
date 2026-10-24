@@ -10,12 +10,26 @@
 __global__ void radix_sort_01_local_counting(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* buffer1,
-          unsigned int* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+    const unsigned int* elems,
+          uint2* counts,
+          unsigned int bit,
+          unsigned int n)
 {
-    // TODO
+    __shared__ uint32_t zeros, ones;
+    uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
+    uint32_t elem = (idx < n) ? elems[idx] : (-1u);
+    uint32_t bitval = (elem >> bit) & 1; 
+    if (threadIdx.x == 0) {
+      zeros = 0;
+      ones = 0;
+    }
+    __syncthreads();
+    atomicAdd(&zeros, bitval == 0);
+    atomicAdd(&ones, bitval == 1);
+    __syncthreads();
+    if (threadIdx.x == 0) {
+      counts[blockIdx.x] = { zeros, ones };
+    }
 }
 
 namespace cuda {
@@ -25,7 +39,7 @@ void radix_sort_01_local_counting(const gpu::WorkSize &workSize,
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::radix_sort_01_local_counting<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(buffer1.cuptr(), buffer2.cuptr(), a1, a2);
+    ::radix_sort_01_local_counting<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(buffer1.cuptr(), (uint2*)buffer2.cuptr(), a1, a2);
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda
