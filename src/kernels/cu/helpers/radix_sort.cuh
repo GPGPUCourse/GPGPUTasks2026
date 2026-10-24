@@ -160,7 +160,7 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
 #pragma unroll
     for (int i = 0; i < ITEMS; ++i) {
         const unsigned idx = warp_base + i * 32 + lane;
-        key[i] = (full || idx < n) ? in[idx] : 0u;
+        key[i] = (full || idx < n) ? __ldcs(in + idx) : 0u;  // read once
     }
 #pragma unroll
     for (int i = 0; i < ITEMS; ++i) {
