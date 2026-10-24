@@ -127,28 +127,8 @@ static __global__ void __launch_bounds__(THREADS) digit_offsets(unsigned* __rest
     }
 }
 
-__device__ __forceinline__ void load_tile(const unsigned* __restrict__ in, unsigned n, unsigned tile, unsigned (&key)[ITEMS])
-{
-    const unsigned first = tile * TILE + (threadIdx.x >> 5) * 32 * ITEMS + (threadIdx.x & 31);
-    const bool full = tile * TILE + TILE <= n;
-#pragma unroll
-    for (int i = 0; i < ITEMS; ++i) {
-        const unsigned idx = first + i * 32;
-        key[i] = (full || idx < n) ? in[idx] : 0u;
-    }
-}
-
-// add to a shared word on the lanes where `on` is set; 0 on the other lanes
-__device__ __forceinline__ unsigned add_where(unsigned addr, unsigned val, bool on)
-{
-    unsigned old = 0;
-    asm volatile("{\n\t.reg .pred p;\n\tsetp.ne.u32 p, %2, 0;\n\t@p atom.shared.add.u32 %0, [%1], %3;\n\t}"
-                 : "+r"(old) : "r"(addr), "r"((unsigned)on), "r"(val));
-    return old;
-}
-
 // one digit pass: in -> out, stable by the digit of `pass`; offsets: the exclusive offset of each digit in the
-// array; status: tiles * DIGITS words; counter: one word, zero before the launch, hands out the tiles
+// array; status: tiles * DIGITS words; counter: one word, zero before the launch
 static __global__ void __launch_bounds__(THREADS, MIN_BLOCKS)
 digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned n, int pass,
            const unsigned* __restrict__ offsets, unsigned* status, unsigned* counter)
@@ -156,6 +136,7 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
     __shared__ unsigned s_tile;
     __shared__ unsigned s_warp[WARPS];
     __shared__ unsigned s_counts[WARPS][DIGITS / 2];  // two 16-bit counters per word: digits d and d + 128
+    __shared__ unsigned s_hist[DIGITS];
     __shared__ unsigned s_dest[DIGITS];
     __shared__ unsigned s_keys[TILE];
     unsigned short (*s_offsets)[DIGITS] = reinterpret_cast<unsigned short (*)[DIGITS]>(s_counts);
@@ -163,122 +144,125 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
     const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
     const unsigned lane_lt = (1u << lane) - 1u;
     const unsigned d = threadIdx.x;
-    const unsigned tiles = tiles_for(n);
-    const unsigned counts_base = (unsigned)__cvta_generic_to_shared(&s_counts[warp][0]);
-    const unsigned partial = flag_partial(pass), complete = flag_full(pass);
     if (threadIdx.x == 0) s_tile = atomicAdd(counter, 1u);
     const unsigned goff = offsets[d];
     for (int i = threadIdx.x; i < WARPS * DIGITS / 2; i += THREADS) (&s_counts[0][0])[i] = 0;
+    s_hist[d] = 0;
     __syncthreads();
-    unsigned tile = s_tile;
-    if (tile >= tiles) return;
+    const unsigned tile = s_tile;
+    const unsigned tile_base = tile * TILE;
+    const bool full = tile_base + TILE <= n;
+    const unsigned warp_base = tile_base + warp * 32 * ITEMS;
+    const unsigned partial = flag_partial(pass), complete = flag_full(pass);
+    unsigned* tile_status = status + (size_t)tile * DIGITS;
+
     unsigned key[ITEMS];
-    load_tile(in, n, tile, key);
-
-    while (true) {
-        const unsigned tile_base = tile * TILE;
-        const bool full = tile_base + TILE <= n;
-        const unsigned warp_base = tile_base + warp * 32 * ITEMS;
-        unsigned* tile_status = status + (size_t)tile * DIGITS;
-
-        // order of the keys of one digit inside a warp's run: (item, lane)
-        unsigned rank[ITEMS];
 #pragma unroll
-        for (int i = 0; i < ITEMS; ++i) {
-            const unsigned idx = warp_base + i * 32 + lane;
-            const bool valid = full || idx < n;
-            const unsigned active = full ? 0xffffffffu : __ballot_sync(0xffffffffu, valid);
-            rank[i] = 0;
-            if (valid) {
-                const unsigned kd = digit_of(key[i], pass);
-                const unsigned peers = same_digit(kd, active);
-                const int leader = 31 - __clz(peers);
-                const unsigned half = (kd >> 7) * 16;
-                unsigned base = add_where(counts_base + 4u * (kd & (DIGITS / 2 - 1)), (unsigned)__popc(peers) << half, lane == leader);
-                base = __shfl_sync(peers, base, leader);
-                rank[i] = ((base >> half) & 0xffffu) + __popc(peers & lane_lt);
-            }
-        }
-        __syncthreads();
+    for (int i = 0; i < ITEMS; ++i) {
+        const unsigned idx = warp_base + i * 32 + lane;
+        key[i] = (full || idx < n) ? in[idx] : 0u;
+    }
+#pragma unroll
+    for (int i = 0; i < ITEMS; ++i) {
+        const unsigned idx = warp_base + i * 32 + lane;
+        if (full || idx < n) atomicAdd(&s_hist[digit_of(key[i], pass)], 1u);
+    }
+    __syncthreads();
+    const unsigned my_count = s_hist[d];
+    if (tile > 0) put_status(tile_status + d, partial, my_count);
 
-        const unsigned half = (d >> 7) * 16, pair = d & (DIGITS / 2 - 1), slot = 2 * pair + (d >> 7);
-        unsigned counts[WARPS];
-        unsigned my_count = 0;
+    // order of the keys of one digit inside a warp's run: (item, lane)
+    unsigned rank[ITEMS];
+#pragma unroll
+    for (int i = 0; i < ITEMS; ++i) {
+        const unsigned idx = warp_base + i * 32 + lane;
+        const bool valid = full || idx < n;
+        const unsigned active = full ? 0xffffffffu : __ballot_sync(0xffffffffu, valid);
+        rank[i] = 0;
+        if (valid) {
+            const unsigned kd = digit_of(key[i], pass);
+            const unsigned peers = same_digit(kd, active);
+            const int leader = 31 - __clz(peers);
+            unsigned base = 0;
+            const unsigned half = (kd >> 7) * 16;
+            if (lane == leader) base = atomicAdd(&s_counts[warp][kd & (DIGITS / 2 - 1)], (unsigned)__popc(peers) << half);
+            base = __shfl_sync(peers, base, leader);
+            rank[i] = ((base >> half) & 0xffffu) + __popc(peers & lane_lt);
+        }
+    }
+    __syncthreads();
+
+    const unsigned half = (d >> 7) * 16, pair = d & (DIGITS / 2 - 1), slot = 2 * pair + (d >> 7);
+    unsigned counts[WARPS];
+#pragma unroll
+    for (int w = 0; w < WARPS; ++w) counts[w] = (s_counts[w][pair] >> half) & 0xffffu;
+    const unsigned incl = warp_inclusive_scan(my_count);
+    if (lane == 31) s_warp[warp] = incl;
+    __syncthreads();
+    unsigned carry = 0;
+#pragma unroll
+    for (int w = 0; w < WARPS; ++w)
+        if (w < warp) carry += s_warp[w];
+    const unsigned digit_start = carry + incl - my_count;
+    {
+        unsigned run = digit_start;
 #pragma unroll
         for (int w = 0; w < WARPS; ++w) {
-            counts[w] = (s_counts[w][pair] >> half) & 0xffffu;
-            my_count += counts[w];
+            s_offsets[w][slot] = (unsigned short)run;
+            run += counts[w];
         }
-        if (tile > 0) put_status(tile_status + d, partial, my_count);
-        const unsigned incl = warp_inclusive_scan(my_count);
-        if (lane == 31) s_warp[warp] = incl;
-        __syncthreads();
-        unsigned carry = 0;
+    }
+    __syncthreads();
 #pragma unroll
-        for (int w = 0; w < WARPS; ++w)
-            if (w < warp) carry += s_warp[w];
-        const unsigned digit_start = carry + incl - my_count;
-        {
-            unsigned run = digit_start;
+    for (int i = 0; i < ITEMS; ++i) {
+        const unsigned idx = warp_base + i * 32 + lane;
+        if (full || idx < n) {
+            const unsigned kd = digit_of(key[i], pass);
+            s_keys[s_offsets[warp][2 * (kd & (DIGITS / 2 - 1)) + (kd >> 7)] + rank[i]] = key[i];
+        }
+    }
+
+    // offset of digit d from the tiles before this one
+    unsigned before = 0;
+    if (tile > 0) {
+        bool done = false;
+        for (int t = (int)tile - 1; t >= 0 && !done; t -= STEP) {
+            unsigned w[STEP];
 #pragma unroll
-            for (int w = 0; w < WARPS; ++w) {
-                s_offsets[w][slot] = (unsigned short)run;
-                run += counts[w];
+            for (int k = 0; k < STEP; ++k) w[k] = (t - k >= 0) ? get_status(status + (size_t)(t - k) * DIGITS + d) : (complete << FLAG_SHIFT);
+#pragma unroll
+            for (int k = 0; k < STEP && !done; ++k) {
+                unsigned f = w[k] >> FLAG_SHIFT;
+                while (f != partial && f != complete) {
+                    w[k] = get_status(status + (size_t)(t - k) * DIGITS + d);
+                    f = w[k] >> FLAG_SHIFT;
+                }
+                before += w[k] & COUNT_MASK;
+                done = f == complete;
             }
         }
-        __syncthreads();
+    }
+    put_status(tile_status + d, complete, before + my_count);
+    s_dest[d] = goff + before - digit_start;
+    __syncthreads();
+
+    if (full) {
 #pragma unroll
         for (int i = 0; i < ITEMS; ++i) {
-            const unsigned idx = warp_base + i * 32 + lane;
-            if (full || idx < n) {
-                const unsigned kd = digit_of(key[i], pass);
-                s_keys[s_offsets[warp][2 * (kd & (DIGITS / 2 - 1)) + (kd >> 7)] + rank[i]] = key[i];
-            }
+            const unsigned pos = i * THREADS + threadIdx.x;
+            const unsigned k = s_keys[pos];
+            out[s_dest[digit_of(k, pass)] + pos] = k;
         }
-
-        // offset of digit d from the tiles before this one
-        unsigned before = 0;
-        if (tile > 0) {
-            for (int t = (int)tile - 1; t >= 0; --t) {
-                unsigned w = get_status(status + (size_t)t * DIGITS + d);
-                unsigned f = w >> FLAG_SHIFT;
-                while (f != partial && f != complete) {
-                    w = get_status(status + (size_t)t * DIGITS + d);
-                    f = w >> FLAG_SHIFT;
-                }
-                before += w & COUNT_MASK;
-                if (f == complete) break;
-            }
-        }
-        put_status(tile_status + d, complete, before + my_count);
-        s_dest[d] = goff + before - digit_start;
-        if (threadIdx.x == 0) s_tile = atomicAdd(counter, 1u);
-        __syncthreads();
-        const unsigned next = s_tile;
-        if (next < tiles) load_tile(in, n, next, key);
-        for (int i = threadIdx.x; i < WARPS * DIGITS / 2; i += THREADS) (&s_counts[0][0])[i] = 0;
-
-        if (full) {
+    } else {
+        const unsigned tile_n = n - tile_base;
 #pragma unroll
-            for (int i = 0; i < ITEMS; ++i) {
-                const unsigned pos = i * THREADS + threadIdx.x;
+        for (int i = 0; i < ITEMS; ++i) {
+            const unsigned pos = i * THREADS + threadIdx.x;
+            if (pos < tile_n) {
                 const unsigned k = s_keys[pos];
                 out[s_dest[digit_of(k, pass)] + pos] = k;
             }
-        } else {
-            const unsigned tile_n = n - tile_base;
-#pragma unroll
-            for (int i = 0; i < ITEMS; ++i) {
-                const unsigned pos = i * THREADS + threadIdx.x;
-                if (pos < tile_n) {
-                    const unsigned k = s_keys[pos];
-                    out[s_dest[digit_of(k, pass)] + pos] = k;
-                }
-            }
         }
-        if (next >= tiles) break;
-        tile = next;
-        __syncthreads();
     }
 }
 
@@ -321,31 +305,15 @@ inline cudaError_t reset_async(unsigned* scratch, unsigned n, cudaStream_t strea
     return cudaMemsetAsync(scratch_counters(scratch), 0, sizeof(unsigned) * PASSES, stream);
 }
 
-// blocks of digit_pass that fit on the device at once
-inline unsigned resident_blocks()
-{
-    static unsigned blocks = 0;
-    if (!blocks) {
-        int dev = 0, sms = 0, per_sm = 0;
-        cudaGetDevice(&dev);
-        cudaDeviceGetAttribute(&sms, cudaDevAttrMultiProcessorCount, dev);
-        cudaOccupancyMaxActiveBlocksPerMultiprocessor(&per_sm, digit_pass, THREADS, 0);
-        blocks = (unsigned)(sms > 0 ? sms : 1) * (unsigned)(per_sm > 0 ? per_sm : 1);
-    }
-    return blocks;
-}
-
 // input -> tmp1 -> tmp2 -> tmp1 -> output
 inline cudaError_t passes_async(const unsigned* input, unsigned* output, unsigned* tmp1, unsigned* tmp2, unsigned* scratch, unsigned n, cudaStream_t stream)
 {
     const unsigned tiles = tiles_for(n);
-    if (tiles == 0) return cudaSuccess;
-    const unsigned grid = tiles < resident_blocks() ? tiles : resident_blocks();
     const unsigned* src = input;
     unsigned* bufs[2] = {tmp1, tmp2};
     for (int p = 0; p < PASSES; ++p) {
         unsigned* dst = (p == PASSES - 1) ? output : bufs[p & 1];
-        digit_pass<<<grid, THREADS, 0, stream>>>(src, dst, n, p, scratch_hist(scratch) + p * DIGITS, scratch_status(scratch), scratch_counters(scratch) + p);
+        digit_pass<<<tiles, THREADS, 0, stream>>>(src, dst, n, p, scratch_hist(scratch) + p * DIGITS, scratch_status(scratch), scratch_counters(scratch) + p);
         src = dst;
     }
     return cudaGetLastError();
