@@ -107,8 +107,7 @@ static __global__ void __launch_bounds__(THREADS) count_digits(const unsigned* _
     }
 }
 
-// counts -> exclusive offsets, for every pass (one block); leaves the counts zero for the next sort and zeroes the
-// tile counters of the passes
+// counts -> exclusive offsets, for every pass (one block); also zeroes the tile counters of the passes
 static __global__ void __launch_bounds__(THREADS) digit_offsets(unsigned* __restrict__ hist, unsigned* __restrict__ offs, unsigned* __restrict__ counters)
 {
     __shared__ unsigned s_warp[WARPS];
@@ -116,7 +115,6 @@ static __global__ void __launch_bounds__(THREADS) digit_offsets(unsigned* __rest
     if (threadIdx.x < PASSES) counters[threadIdx.x] = 0;
     for (int p = 0; p < PASSES; ++p) {
         const unsigned v = hist[p * DIGITS + threadIdx.x];
-        hist[p * DIGITS + threadIdx.x] = 0;
         const unsigned incl = warp_inclusive_scan(v);
         if (lane == 31) s_warp[warp] = incl;
         __syncthreads();
@@ -277,15 +275,10 @@ inline unsigned* scratch_offsets(unsigned* scratch) { return scratch + PASSES * 
 inline unsigned* scratch_counters(unsigned* scratch) { return scratch + 2 * PASSES * DIGITS; }
 inline unsigned* scratch_status(unsigned* scratch) { return scratch + STATUS_AT; }
 
-// the counts are left zero by digit_offsets of the previous sort; zeroed here only for a scratch area not seen before
 inline cudaError_t count_async(const unsigned* input, unsigned* scratch, unsigned n, cudaStream_t stream)
 {
-    static const unsigned* zeroed = nullptr;
-    if (scratch != zeroed) {
-        const cudaError_t e = cudaMemsetAsync(scratch_hist(scratch), 0, sizeof(unsigned) * PASSES * DIGITS, stream);
-        if (e != cudaSuccess) return e;
-        zeroed = scratch;
-    }
+    const cudaError_t e = cudaMemsetAsync(scratch_hist(scratch), 0, sizeof(unsigned) * PASSES * DIGITS, stream);
+    if (e != cudaSuccess) return e;
     unsigned blocks = (n / 4 + THREADS - 1) / THREADS;
     blocks = blocks < 1280u ? blocks : 1280u;
     if (blocks == 0) blocks = 1;

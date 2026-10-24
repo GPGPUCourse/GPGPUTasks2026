@@ -9,7 +9,7 @@
 #include "../defines.h"
 
 namespace cuda {
-// prepares the tile counters and status words used by the digit passes to collect the offsets of each tile
+// prepares the status words used by the digit passes to collect the offsets of each tile
 void radix_sort_03_global_prefixes_scan_accumulation(gpu::gpu_mem_32u &scratch, unsigned int n)
 {
     gpu::Context context;
