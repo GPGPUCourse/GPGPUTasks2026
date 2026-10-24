@@ -25,3 +25,5 @@ make -j${njobs}
 sudo make install
 popd
 rm -rf googletest-release-${googletest_version}
+
+brew install graphicsmagick # we need Magick++.h so that CImg.h can load jpg files
