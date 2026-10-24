@@ -43,7 +43,7 @@ __device__ __forceinline__ unsigned get_status(const unsigned* word)
     return d;
 }
 
-__device__ __forceinline__ unsigned digit_of(unsigned key, int pass) { return __byte_perm(key, 0u, 0x4440u | (unsigned)pass); }
+__device__ __forceinline__ unsigned digit_of(unsigned key, int pass) { return (key >> (pass * BITS)) & (DIGITS - 1); }
 
 // lanes of `mask` with the same digit as this lane
 __device__ __forceinline__ unsigned same_digit(unsigned kd, unsigned mask)
@@ -216,11 +216,13 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
     __syncthreads();
 #pragma unroll
     for (int i = 0; i < ITEMS; ++i) {
+        const unsigned kd = digit_of(key[i], pass);
+        rank[i] += s_offsets[warp][2 * (kd & (DIGITS / 2 - 1)) + (kd >> 7)];
+    }
+#pragma unroll
+    for (int i = 0; i < ITEMS; ++i) {
         const unsigned idx = warp_base + i * 32 + lane;
-        if (full || idx < n) {
-            const unsigned kd = digit_of(key[i], pass);
-            s_keys[s_offsets[warp][2 * (kd & (DIGITS / 2 - 1)) + (kd >> 7)] + rank[i]] = key[i];
-        }
+        if (full || idx < n) s_keys[rank[i]] = key[i];
     }
 
     // offset of digit d from the tiles before this one
