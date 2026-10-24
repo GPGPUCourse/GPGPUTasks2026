@@ -13,20 +13,34 @@ __global__ void radix_sort_03_global_prefixes_scan_accumulation(
     // TODO try char
     const unsigned int* buffer1,
           unsigned int* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+    unsigned int groups,
+    unsigned int cur_n,
+    unsigned int shift)
 {
-    // TODO
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if(index >= groups * 4u) {
+        return;
+    }
+
+    unsigned int bucket = index / groups;
+    unsigned int local_index = index % groups;
+
+    unsigned int real = local_index + 1;
+    unsigned int seg_size = (1 << shift);
+    if(real & seg_size) {
+        buffer2[index] += buffer1[bucket * cur_n + (real >> shift) - 1];
+    }
 }
 
 namespace cuda {
 void radix_sort_03_global_prefixes_scan_accumulation(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32u &buffer1, gpu::gpu_mem_32u &buffer2, unsigned int a1, unsigned int a2)
+            const gpu::gpu_mem_32u &buffer1, gpu::gpu_mem_32u &buffer2, unsigned int groups, unsigned int cur_n, unsigned int shift)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::radix_sort_03_global_prefixes_scan_accumulation<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(buffer1.cuptr(), buffer2.cuptr(), a1, a2);
+    ::radix_sort_03_global_prefixes_scan_accumulation<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(buffer1.cuptr(), buffer2.cuptr(), groups, cur_n, shift);
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda

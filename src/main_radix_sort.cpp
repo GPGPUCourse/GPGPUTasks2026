@@ -28,7 +28,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -101,6 +101,7 @@ void run(int argc, char** argv)
     buffer3_gpu.fill(255);
     buffer4_gpu.fill(255);
     buffer_output_gpu.fill(255);
+    const unsigned int groups = (static_cast<unsigned int>(n) + GROUP_SIZE - 1) / GROUP_SIZE;
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
@@ -118,8 +119,54 @@ void run(int argc, char** argv)
             // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
             // ocl_radixSort04Scatter.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            gpu::gpu_mem_32u* cur = &input_gpu;
+            gpu::gpu_mem_32u* next = &buffer1_gpu;
+            
+            for(unsigned int shift = 0; shift < 32; shift += 2) {
+                cuda::radix_sort_01_local_counting(gpu::WorkSize(GROUP_SIZE, n), *cur, 
+                buffer2_gpu, n, groups, shift);
+                
+                cuda::fill_buffer_with_zeros(gpu::WorkSize(GROUP_SIZE, 4u * groups), buffer3_gpu, 4u * groups);
+
+                gpu::gpu_mem_32u* cur_sum = &buffer2_gpu;
+                gpu::gpu_mem_32u* next_sum = &buffer4_gpu;
+                unsigned int cur_n = groups;
+                unsigned int cur_pow = 0;
+
+                while(cur_n > 0) {
+                    cuda::radix_sort_03_global_prefixes_scan_accumulation(gpu::WorkSize(GROUP_SIZE, 4u * groups),
+                    *cur_sum, buffer3_gpu, groups, cur_n, cur_pow);
+
+                    if(cur_n <= 1) {
+                        break;
+                    }
+                    unsigned int next_n = (cur_n + 1) / 2;
+
+                    cuda::radix_sort_02_global_prefixes_scan_sum_reduction(gpu::WorkSize(GROUP_SIZE, 4u * next_n),
+                    *cur_sum, *next_sum, cur_n, next_n);
+
+                    cur_n = next_n;
+                    cur_pow++;
+                    cur_sum = next_sum;
+                    if(next_sum == &buffer2_gpu) {
+                        next_sum = &buffer4_gpu;
+                    }
+                    else {
+                        next_sum = &buffer2_gpu;
+                    }
+                }
+
+                cuda::radix_sort_04_scatter(gpu::WorkSize(GROUP_SIZE, n), *cur, buffer3_gpu,
+                *next, n, groups, shift);
+
+                cur = next;
+                if(next == &buffer1_gpu) {
+                    next = &buffer_output_gpu;
+                }
+                else {
+                    next = &buffer1_gpu;
+                }
+            }
             // cuda::fill_buffer_with_zeros();
             // cuda::radix_sort_01_local_counting();
             // cuda::radix_sort_02_global_prefixes_scan_sum_reduction();
