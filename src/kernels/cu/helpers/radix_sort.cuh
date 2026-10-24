@@ -43,7 +43,7 @@ __device__ __forceinline__ unsigned get_status(const unsigned* word)
     return d;
 }
 
-__device__ __forceinline__ unsigned digit_of(unsigned key, int pass) { return (key >> (pass * BITS)) & (DIGITS - 1); }
+__device__ __forceinline__ unsigned digit_of(unsigned key, int pass) { return __byte_perm(key, 0u, 0x4440u | (unsigned)pass); }
 
 // lanes of `mask` with the same digit as this lane
 __device__ __forceinline__ unsigned same_digit(unsigned kd, unsigned mask)
