@@ -169,6 +169,7 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
     for (int i = 0; i < ITEMS; ++i) {
         const unsigned idx = warp_base + i * 32 + lane;
         if (full || idx < n) atomicAdd(&s_hist[digit_of(key[i], pass)], 1u);
+        __syncwarp();
     }
     __syncthreads();
     const unsigned my_count = s_hist[d];
