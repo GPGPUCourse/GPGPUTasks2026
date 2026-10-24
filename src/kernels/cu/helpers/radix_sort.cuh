@@ -10,7 +10,7 @@ constexpr int WARPS = THREADS / 32;
 constexpr int BITS = 8;
 constexpr int DIGITS = 1 << BITS;
 constexpr int PASSES = 32 / BITS;
-constexpr int ITEMS = 24;                 // keys per thread in a digit pass
+constexpr int ITEMS = 25;                 // keys per thread in a digit pass
 constexpr int TILE = THREADS * ITEMS;     // keys per block in a digit pass
 constexpr int MIN_BLOCKS = 2;
 constexpr int STEP = 1;                   // tiles read at once when a block collects its offsets
@@ -76,7 +76,7 @@ static __global__ void __launch_bounds__(THREADS) count_digits(const unsigned* _
     const unsigned n4 = n / 4;
     const uint4* keys4 = reinterpret_cast<const uint4*>(keys);
     const unsigned stride = gridDim.x * THREADS;
-    constexpr int LOADS = 4;  // vectors in flight per thread
+    constexpr int LOADS = 8;  // vectors in flight per thread
     for (unsigned i = blockIdx.x * THREADS + threadIdx.x; i < n4; i += LOADS * stride) {
         uint4 v[LOADS];
 #pragma unroll
