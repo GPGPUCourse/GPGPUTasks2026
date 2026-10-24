@@ -7,4 +7,7 @@
 
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
 
+#define ITER_BITS 2
+#define NGROUPS (1 << ITER_BITS)
+
 #endif // pragma once

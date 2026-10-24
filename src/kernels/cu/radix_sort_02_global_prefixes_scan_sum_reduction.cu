@@ -7,25 +7,35 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+struct GroupCounts {
+  __host__ __device__ uint32_t &operator[](uint32_t i) { return data[i]; }
+  __host__ __device__ uint32_t operator[](uint32_t i) const { return data[i]; }
+  uint32_t data[NGROUPS];
+};
+
 __global__ void radix_sort_02_global_prefixes_scan_sum_reduction(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
     // TODO try char
-    uint32_t* counts,
+    GroupCounts* counts,
     unsigned int n,
     unsigned int offset)
 {
+    __shared__ GroupCounts groups_cnt;
     uint32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-    __shared__ uint32_t zeros;
-    uint32_t cur_counts = (idx < n) ? counts[offset + idx] : 0;
+    GroupCounts elem = (idx < n) ? counts[offset + idx] : GroupCounts{};
     if (threadIdx.x == 0) {
-      zeros = 0;
+      for (int i = 0; i < (1 << ITER_BITS); ++i) {
+        groups_cnt[i] = 0;
+      }
     }
     __syncthreads();
-    atomicAdd(&zeros, cur_counts);
+    for (uint32_t i = 0; i < NGROUPS; ++i) {
+      atomicAdd(groups_cnt.data + i, elem[i]);
+    }
     __syncthreads();
     if (threadIdx.x == 0) {
-      counts[offset + n + blockIdx.x] = zeros;
+      counts[offset + n + blockIdx.x] = groups_cnt;
     }
 }
 
@@ -39,7 +49,7 @@ void radix_sort_02_global_prefixes_scan_sum_reduction(
   cudaStream_t stream = context.cudaStream();
   ::radix_sort_02_global_prefixes_scan_sum_reduction<<<
       workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-      counts.cuptr(), n, offset);
+      (GroupCounts*)counts.cuptr(), n, offset);
   CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda

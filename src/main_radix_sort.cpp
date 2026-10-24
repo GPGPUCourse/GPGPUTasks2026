@@ -119,13 +119,13 @@ void run(int argc, char** argv)
             // ocl_radixSort04Scatter.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
-            for (int bit = 0; bit < 32; ++bit) {
+            for (int bit = 0, iter = 0; bit < 32; bit += ITER_BITS, ++iter) {
               auto &input = (bit == 0)
                                 ? input_gpu
-                                : ((bit % 2 == 0) ? pingpong1 : pingpong2);
-              auto &output = (bit == 31)
+                                : ((iter % 2 == 0) ? pingpong1 : pingpong2);
+              auto &output = (bit + ITER_BITS >= 32)
                                  ? buffer_output_gpu
-                                 : ((bit % 2 == 0) ? pingpong2 : pingpong1);
+                                 : ((iter % 2 == 0) ? pingpong2 : pingpong1);
               cuda::radix_sort_01_local_counting(gpu::WorkSize(256, n), input, counts, bit, n);
               {
                 uint32_t insz = (n+255)/256;
