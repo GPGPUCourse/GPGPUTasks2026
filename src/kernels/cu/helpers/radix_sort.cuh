@@ -169,7 +169,6 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
     for (int i = 0; i < ITEMS; ++i) {
         const unsigned idx = warp_base + i * 32 + lane;
         if (full || idx < n) atomicAdd(&s_hist[digit_of(key[i], pass)], 1u);
-        __syncwarp();
     }
     __syncthreads();
     const unsigned my_count = s_hist[d];
@@ -252,12 +251,14 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
     __syncthreads();
 
     if (full) {
+        unsigned k = s_keys[threadIdx.x];
 #pragma unroll
         for (int i = 0; i < ITEMS; ++i) {
             const unsigned pos = i * THREADS + threadIdx.x;
-            const unsigned k = s_keys[pos];
+            const unsigned k_next = i + 1 < ITEMS ? s_keys[pos + THREADS] : 0u;
             out[s_dest[digit_of(k, pass)] + pos] = k;
             __syncwarp();
+            k = k_next;
         }
     } else {
         const unsigned tile_n = n - tile_base;
