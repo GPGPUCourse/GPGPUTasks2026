@@ -5,7 +5,7 @@ project(GPGPUTasks)
 set(CMAKE_CXX_STANDARD 17)
 
 # Если вы установили CUDA SDK - можете включить поддержку CUDA
-option(GPU_CUDA_SUPPORT "CUDA support." OFF)
+option(GPU_CUDA_SUPPORT "CUDA support." ON)
 
 # GLSLC_BIN используйтся для компиляции Vulkan шейдеров (GLSL)
 if (NOT DEFINED GLSLC_BIN)
@@ -102,10 +102,9 @@ if (GPU_CUDA_SUPPORT)
     set(CUDA_SOURCES
             src/kernels/cu/aplusb.cu
             src/kernels/cu/fill_buffer_with_zeros.cu
-            src/kernels/cu/radix_sort_01_local_counting.cu
-            src/kernels/cu/radix_sort_02_global_prefixes_scan_sum_reduction.cu
-            src/kernels/cu/radix_sort_03_global_prefixes_scan_accumulation.cu
-            src/kernels/cu/radix_sort_04_scatter.cu)
+            src/kernels/cu/radix_reduction.cu
+            src/kernels/cu/radix_accumulation.cu
+            src/kernels/cu/radix_scatter.cu)
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
