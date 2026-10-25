@@ -4,9 +4,6 @@
 
 #include <libgpu/cuda/cu/common.cu>
 
-#include "helpers/rassert.cu"
-#include "../defines.h"
-
 __global__ void fill_buffer_with_zeros(
     unsigned int* buffer,
     unsigned int n)

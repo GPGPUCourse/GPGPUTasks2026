@@ -4,19 +4,36 @@
 
 #include <libgpu/cuda/cu/common.cu>
 
-#include "helpers/rassert.cu"
-#include "../defines.h"
-
 __global__ void radix_sort_04_scatter(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* buffer1,
-    const unsigned int* buffer2,
-          unsigned int* buffer3,
-    unsigned int a1,
-    unsigned int a2)
+    const unsigned int* input,
+    const unsigned int* prefix,
+    unsigned int* output,
+    unsigned int n,
+    unsigned int offset)
 {
-    // TODO
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (index >= n) {
+        return;
+    }
+
+    const unsigned int b = (input[index] >> offset) & 1;
+
+    unsigned int sum = 0;
+    for (unsigned int j = blockIdx.x * blockDim.x; j < index; ++j) {
+        if (((input[j] >> offset) & 1) == b)
+            ++sum;
+    }
+
+    const unsigned int before_block = blockIdx.x == 0 ? 0 : prefix[2 * (blockIdx.x - 1) + b];
+
+    const unsigned int blocks_count = (n + blockDim.x - 1) / blockDim.x;
+
+    const unsigned int group_start = b == 0 ? 0 : prefix[2 * (blocks_count - 1)];
+
+    const unsigned int idx = group_start + before_block + sum;
+
+    output[idx] = input[index];
 }
 
 namespace cuda {

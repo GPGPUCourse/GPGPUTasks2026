@@ -4,18 +4,35 @@
 
 #include <libgpu/cuda/cu/common.cu>
 
-#include "helpers/rassert.cu"
-#include "../defines.h"
-
 __global__ void radix_sort_01_local_counting(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* buffer1,
-          unsigned int* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+    const unsigned int* input,
+          unsigned int* output,
+    unsigned int n,
+    unsigned int offset)
 {
-    // TODO
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (index >= n) {
+        return;
+    }
+    
+    __shared__ unsigned int local_data[2];
+    if (threadIdx.x == 0) {
+        local_data[0] = 0;
+        local_data[1] = 0;
+    }
+    
+    __syncthreads();
+    
+    const auto b = (input[index] >> offset) & 1;
+    atomicAdd(&local_data[b], 1);
+
+    __syncthreads();
+
+    if (threadIdx.x == 0) {
+        output[blockIdx.x * 2] = local_data[0];
+        output[blockIdx.x * 2 + 1] = local_data[1];
+    }
 }
 
 namespace cuda {
