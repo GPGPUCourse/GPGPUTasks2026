@@ -194,6 +194,9 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
         }
     }
     __syncthreads();
+    // status of digit d in the previous tile
+    unsigned w_first = 0;
+    if (tile > 0 && live) w_first = get_status(status + (size_t)(tile - 1) * DIGITS + d);
 
     const unsigned half = (d >> 7) * 16, pair = d & (DIGITS / 2 - 1), slot = 2 * pair + (d >> 7);
     unsigned counts[WARPS];
@@ -228,21 +231,17 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
     // offset of digit d from the tiles before this one
     unsigned before = 0;
     if (tile > 0 && live) {
-        bool done = false;
-        for (int t = (int)tile - 1; t >= 0 && !done; t -= STEP) {
-            unsigned w[STEP];
-#pragma unroll
-            for (int k = 0; k < STEP; ++k) w[k] = (t - k >= 0) ? get_status(status + (size_t)(t - k) * DIGITS + d) : (complete << FLAG_SHIFT);
-#pragma unroll
-            for (int k = 0; k < STEP && !done; ++k) {
-                unsigned f = w[k] >> FLAG_SHIFT;
-                while (f != partial && f != complete) {
-                    w[k] = get_status(status + (size_t)(t - k) * DIGITS + d);
-                    f = w[k] >> FLAG_SHIFT;
-                }
-                before += w[k] & COUNT_MASK;
-                done = f == complete;
+        int t = (int)tile - 1;
+        unsigned w = w_first;
+        while (true) {
+            unsigned f = w >> FLAG_SHIFT;
+            while (f != partial && f != complete) {
+                w = get_status(status + (size_t)t * DIGITS + d);
+                f = w >> FLAG_SHIFT;
             }
+            before += w & COUNT_MASK;
+            if (f == complete || --t < 0) break;
+            w = get_status(status + (size_t)t * DIGITS + d);
         }
     }
     if (live) put_status(tile_status + d, complete, before + my_count);
