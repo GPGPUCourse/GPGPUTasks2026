@@ -13,6 +13,23 @@
 
 #include <fstream>
 
+
+void scan(const gpu::gpu_mem_32u& input, gpu::gpu_mem_32u& output, int n, int bit, ocl::KernelSource& scan_groups, ocl::KernelSource& add_prefixes)
+{
+    int num_of_groups = (n + GROUP_SIZE - 1) / GROUP_SIZE;
+
+    gpu::gpu_mem_32u group_sums(num_of_groups);
+    const gpu::WorkSize work_size(GROUP_SIZE, n);
+    scan_groups.exec(work_size, input, output, group_sums, n, bit);
+
+    if (num_of_groups > 1) {
+        gpu::gpu_mem_32u group_prefixes(num_of_groups);
+        scan(group_sums, group_prefixes, num_of_groups, -1, scan_groups, add_prefixes);
+        add_prefixes.exec(work_size, output, group_prefixes, n);
+    }
+
+}
+
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -88,35 +105,44 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
     gpu::gpu_mem_32u buffer_output_gpu(n);
+    gpu::gpu_mem_32u buffer_prefix(n);
+    gpu::gpu_mem_32u buffer_1(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
+
     buffer_output_gpu.fill(255);
+    buffer_1.fill(255);
+    buffer_prefix.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
+    const gpu::WorkSize work_size(GROUP_SIZE, n);
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
+            // TOD
+            for (int bit = 0; bit < 31; ++bit) {
+                if (bit == 0) {
+                    scan(input_gpu, buffer_prefix, n, bit, ocl_radixSort01LocalCounting, ocl_radixSort02GlobalPrefixesScanSumReduction);
+                    ocl_radixSort04Scatter.exec(work_size, buffer_prefix, input_gpu, buffer_output_gpu, n, bit);
+                }
+                else if (bit % 2 == 0) {
+                    scan(buffer_1, buffer_prefix, n, bit, ocl_radixSort01LocalCounting, ocl_radixSort02GlobalPrefixesScanSumReduction);
+                    ocl_radixSort04Scatter.exec(work_size, buffer_prefix, buffer_1, buffer_output_gpu, n, bit);
+                }
+                else {
+                    scan(buffer_output_gpu, buffer_prefix, n, bit, ocl_radixSort01LocalCounting, ocl_radixSort02GlobalPrefixesScanSumReduction);
+                    ocl_radixSort04Scatter.exec(work_size, buffer_prefix, buffer_output_gpu, buffer_1, n, bit);
+                }
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
