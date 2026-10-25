@@ -56,6 +56,17 @@ __device__ __forceinline__ unsigned same_digit(unsigned kd, unsigned mask)
     return (m[0] & m[1] & m[2]) & (m[3] & m[4] & m[5]) & (m[6] & m[7] & mask);
 }
 
+// every lane of a group adds to the 16-bit counter of digit kd: the highest lane the group size, the others 0
+__device__ __forceinline__ unsigned group_add(unsigned counts_base, unsigned kd, unsigned peers, unsigned lane)
+{
+    const unsigned leader = 31 - __clz(peers);
+    const unsigned addr = counts_base + (kd & (DIGITS / 2 - 1)) * 4u;
+    const unsigned add = lane == leader ? (unsigned)__popc(peers) << ((kd >> 7) * 16) : 0u;
+    unsigned old;
+    asm volatile("atom.shared.add.u32 %0, [%1], %2;" : "=r"(old) : "r"(addr), "r"(add) : "memory");
+    return old;
+}
+
 __device__ __forceinline__ unsigned warp_inclusive_scan(unsigned v)
 {
     const int lane = threadIdx.x & 31;
@@ -176,21 +187,53 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
 
     // order of the keys of one digit inside a warp's run: (item, lane)
     unsigned rank[ITEMS];
+    if (full) {
+        const unsigned zero = (unsigned)pass >> 2;  // 0
+        const unsigned counts_base = (unsigned)__cvta_generic_to_shared(&s_counts[warp][0]);
+        unsigned kd = digit_of(key[0], pass);
+        unsigned peers = same_digit(kd, 0xffffffffu);
+        unsigned raw = group_add(counts_base, kd, peers, (unsigned)lane);
+        unsigned kd_next = digit_of(key[1], pass);
+        unsigned peers_next = same_digit(kd_next, 0xffffffffu);
+        unsigned raw_prev = 0;
 #pragma unroll
-    for (int i = 0; i < ITEMS; ++i) {
-        const unsigned idx = warp_base + i * 32 + lane;
-        const bool valid = full || idx < n;
-        const unsigned active = full ? 0xffffffffu : __ballot_sync(0xffffffffu, valid);
-        rank[i] = 0;
-        if (valid) {
-            const unsigned kd = digit_of(key[i], pass);
-            const unsigned peers = same_digit(kd, active);
+        for (int i = 0; i < ITEMS; ++i) {
+            const unsigned src = i + 1 < ITEMS ? raw | (peers_next & zero) : raw;
             const int leader = 31 - __clz(peers);
-            unsigned base = 0;
-            const unsigned half = (kd >> 7) * 16;
-            if (lane == leader) base = atomicAdd(&s_counts[warp][kd & (DIGITS / 2 - 1)], (unsigned)__popc(peers) << half);
-            base = __shfl_sync(peers, base, leader);
-            rank[i] = ((base >> half) & 0xffffu) + __popc(peers & lane_lt);
+            const unsigned base = __shfl_sync(0xffffffffu, src, leader);
+            rank[i] = ((base >> ((kd >> 7) * 16)) & 0xffffu) + __popc(peers & lane_lt);
+            if (i + 1 < ITEMS) {
+                const unsigned raw_next = group_add(counts_base + (base & zero), kd_next, peers_next, (unsigned)lane);
+                unsigned kd_after = 0, peers_after = 0;
+                if (i + 2 < ITEMS) {
+                    kd_after = digit_of(key[i + 2] | (raw_prev & zero), pass);
+                    peers_after = same_digit(kd_after, 0xffffffffu);
+                }
+                raw_prev = raw;
+                raw = raw_next;
+                kd = kd_next;
+                peers = peers_next;
+                kd_next = kd_after;
+                peers_next = peers_after;
+            }
+        }
+    } else {
+#pragma unroll
+        for (int i = 0; i < ITEMS; ++i) {
+            const unsigned idx = warp_base + i * 32 + lane;
+            const bool valid = idx < n;
+            const unsigned active = __ballot_sync(0xffffffffu, valid);
+            rank[i] = 0;
+            if (valid) {
+                const unsigned kd = digit_of(key[i], pass);
+                const unsigned peers = same_digit(kd, active);
+                const int leader = 31 - __clz(peers);
+                unsigned base = 0;
+                const unsigned half = (kd >> 7) * 16;
+                if (lane == leader) base = atomicAdd(&s_counts[warp][kd & (DIGITS / 2 - 1)], (unsigned)__popc(peers) << half);
+                base = __shfl_sync(peers, base, leader);
+                rank[i] = ((base >> half) & 0xffffu) + __popc(peers & lane_lt);
+            }
         }
     }
     __syncthreads();
