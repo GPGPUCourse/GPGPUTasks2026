@@ -4,6 +4,10 @@
 #define GROUP_SIZE   256
 #define GROUP_SIZE_X 16
 #define GROUP_SIZE_Y 16
+#define RADIX_BITS 4
+#define RADIX_BUCKETS (1 << RADIX_BITS)
+#define RADIX_BLOCK_SIZE (4 * GROUP_SIZE)
+#define SCAN_BLOCK_SIZE (4 * GROUP_SIZE)
 
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
 
