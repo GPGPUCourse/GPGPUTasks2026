@@ -68,11 +68,22 @@ void run(int argc, char** argv)
         std::cout << "CPU std::sort effective RAM bandwidth: " << memory_size_gb / elapsed << " GB/s (" << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
-    const unsigned int groups = (unsigned)((n + GROUP_SIZE - 1) / GROUP_SIZE);
+    // Группа = отрезок из 256 подряд идущих элементов массива
+    const unsigned int group_count = (unsigned)((n + GROUP_SIZE - 1) / GROUP_SIZE);
+    // Супер-группа = блок из 256 групп
+    const unsigned int super_group_count = (group_count + GROUP_SIZE - 1) / GROUP_SIZE;
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    // buffer1 - локальные гистограммы групп (groups * 256), buffer2 - [0..255] суммы цифр + [256..] базы групп для цифр
-    gpu::gpu_mem_32u buffer1_gpu(groups * GROUP_SIZE), buffer2_gpu(256 + groups * GROUP_SIZE), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    // Гистограммы групп: для каждой группы - сколько в ней элементов с каждой из 256 цифр текущего прохода
+    gpu::gpu_mem_32u group_histograms_gpu(group_count * GROUP_SIZE);
+    // array_histograms_gpu - гистограмма всего массива: сколько всего элементов с каждой цифрой в текущем проходе (одна строка)
+    // super_group_histograms_gpu - гистограмма супер-группы [super_group * 256 + digit]
+    // group_histograms_gpu - гистограмма группы [group * 256 + digit] (заполняет кернел 01)
+    // group_bases_gpu - база группы g для цифры d: с какой позиции группа g пишет свои элементы с цифрой d
+    gpu::gpu_mem_32u array_histograms_gpu(GROUP_SIZE);
+    gpu::gpu_mem_32u super_group_histograms_gpu((size_t)super_group_count * GROUP_SIZE);
+    gpu::gpu_mem_32u group_bases_gpu((size_t)group_count * GROUP_SIZE);
+    gpu::gpu_mem_32u ping_pong_a_gpu(n), ping_pong_b_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -80,11 +91,11 @@ void run(int argc, char** argv)
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
-    buffer_output_gpu.fill(255);
+    group_histograms_gpu.fill(255);
+    group_bases_gpu.fill(255);
+
+    const gpu::gpu_mem_32u* srcs[4] = {&input_gpu,   &ping_pong_a_gpu, &ping_pong_b_gpu, &ping_pong_a_gpu};
+    gpu::gpu_mem_32u*       dsts[4] = {&ping_pong_a_gpu, &ping_pong_b_gpu, &ping_pong_a_gpu, &buffer_output_gpu};
 
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) {
@@ -92,16 +103,15 @@ void run(int argc, char** argv)
         for (unsigned int pass = 0; pass < 4; ++pass) {
             const unsigned int un = (unsigned)n;
             const unsigned int shift = 8u * pass;
-            const gpu::gpu_mem_32u* srcs[4] = {&input_gpu,   &buffer3_gpu, &buffer4_gpu, &buffer3_gpu};
-            gpu::gpu_mem_32u*       dsts[4] = {&buffer3_gpu, &buffer4_gpu, &buffer3_gpu, &buffer_output_gpu};
 
             const gpu::gpu_mem_32u& src = *srcs[pass];
             gpu::gpu_mem_32u&       dst = *dsts[pass];
 
-            ocl_radixSort01LocalCounting.exec(gpu::WorkSize(GROUP_SIZE, n), src, buffer1_gpu, un, shift);
-            ocl_radixSort02GlobalPrefixesScanSumReduction.exec(gpu::WorkSize(1, 256), buffer1_gpu, buffer2_gpu, groups);
-            ocl_radixSort03GlobalPrefixesScanAccumulation.exec(gpu::WorkSize(1, 256), buffer2_gpu, buffer1_gpu, buffer2_gpu, groups);
-            ocl_radixSort04Scatter.exec(gpu::WorkSize(1, groups), src, buffer2_gpu, dst, un, shift);
+            ocl_radixSort01LocalCounting.exec(gpu::WorkSize(GROUP_SIZE, n), src, group_histograms_gpu, un, shift);
+            ocl_radixSort02GlobalPrefixesScanSumReduction.exec(gpu::WorkSize(1, (size_t)GROUP_SIZE * super_group_count), group_histograms_gpu, super_group_histograms_gpu, group_count, 0u);
+            ocl_radixSort02GlobalPrefixesScanSumReduction.exec(gpu::WorkSize(1, GROUP_SIZE), super_group_histograms_gpu, array_histograms_gpu, super_group_count, 1u);
+            ocl_radixSort03GlobalPrefixesScanAccumulation.exec(gpu::WorkSize(1, (size_t)GROUP_SIZE * super_group_count), array_histograms_gpu, super_group_histograms_gpu, group_histograms_gpu, group_bases_gpu, group_count);
+            ocl_radixSort04Scatter.exec(gpu::WorkSize(1, group_count), src, group_bases_gpu, dst, un, shift);
         }
         times.push_back(t.elapsed());
     }
@@ -112,19 +122,21 @@ void run(int argc, char** argv)
     double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
     std::cout << "GPU radix-sort median effective VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s (" << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
-    // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
+    // потому что на ci опять че-то умерло
+    std::cout << "VERIFY: reading result back..." << std::endl;
     std::vector<unsigned int> gpu_sorted = buffer_output_gpu.readVector();
 
-    // Сверяем результат
+    std::cout << "VERIFY: comparing with std::sort..." << std::endl;
     for (size_t i = 0; i < n; ++i) {
         rassert(sorted[i] == gpu_sorted[i], 566324523452323, sorted[i], gpu_sorted[i], i);
     }
 
-    // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
+    std::cout << "VERIFY: checking input untouched..." << std::endl;
     std::vector<unsigned int> input_values = input_gpu.readVector();
     for (size_t i = 0; i < n; ++i) {
         rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
     }
+    std::cout << "VERIFY: all checks passed" << std::endl;
 }
 
 int main(int argc, char** argv)
