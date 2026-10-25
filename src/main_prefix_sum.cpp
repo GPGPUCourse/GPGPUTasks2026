@@ -81,11 +81,32 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
+            const gpu::WorkSize work_size(GROUP_SIZE, n);
+            ocl_fill_with_zeros.exec(work_size, prefix_sum_accum_gpu, n);
+
+            ocl_sum_reduction.exec(work_size, input_gpu, buffer1_pow2_sum_gpu, n);
+
+            bool result_in_buffer1 = true;
+            unsigned int offset = 2;
+            while (offset < n) {
+                if (result_in_buffer1) {
+                    ocl_prefix_accumulation.exec(
+                        work_size, buffer1_pow2_sum_gpu, buffer2_pow2_sum_gpu, n, offset);
+                } else {
+                    ocl_prefix_accumulation.exec(
+                        work_size, buffer2_pow2_sum_gpu, buffer1_pow2_sum_gpu, n, offset);
+                }
+                result_in_buffer1 = !result_in_buffer1;
+                offset *= 2;
+            }
+
+            if (result_in_buffer1) {
+                ocl_prefix_accumulation.exec(
+                    work_size, buffer1_pow2_sum_gpu, prefix_sum_accum_gpu, n, n);
+            } else {
+                ocl_prefix_accumulation.exec(
+                    work_size, buffer2_pow2_sum_gpu, prefix_sum_accum_gpu, n, n);
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
