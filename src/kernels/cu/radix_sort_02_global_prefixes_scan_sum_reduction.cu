@@ -15,7 +15,22 @@ __global__ void radix_sort_02_global_prefixes_scan_sum_reduction(
           unsigned int* buffer2,
     unsigned int a1)
 {
-    // TODO
+    const unsigned int id = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int out_entries = (a1 + 1u) / 2;
+    if (id >= out_entries)
+        return;
+
+    const unsigned int t0 = id * 2;
+    const unsigned int t1 = t0 + 1;
+    const unsigned int base0 = t0 * RADIX_SIZE;
+    const unsigned int base1 = t1 * RADIX_SIZE;
+    const unsigned int base_out = id * RADIX_SIZE;
+
+    for (int i = 0; i < RADIX_SIZE; i++) {
+        unsigned int v0 = buffer1[base0 + i];
+        unsigned int v1 = (t1 < a1) ? buffer1[base1 + i] : 0;
+        buffer2[base_out + i] = v0 + v1;
+    }
 }
 
 namespace cuda {

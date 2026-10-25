@@ -16,7 +16,21 @@ __global__ void radix_sort_03_global_prefixes_scan_accumulation(
     unsigned int a1,
     unsigned int a2)
 {
-    // TODO
+    const unsigned int id = blockIdx.x * blockDim.x + threadIdx.x;
+    if (id >= a1)
+        return;
+
+    const unsigned int bit = 1u << a2;
+    if (((id + 1) & bit) != 0) {
+        const unsigned int block_idx = (id + 1) >> (a2 + 1);
+        const unsigned int block_l = block_idx << 1;
+        const unsigned int carry_base = block_l * RADIX_SIZE;
+        const unsigned int out_base = id * RADIX_SIZE;
+
+        for (int i = 0; i < RADIX_SIZE; ++i) {
+            buffer2[out_base + i] += buffer1[carry_base + i];
+        }
+    }
 }
 
 namespace cuda {
