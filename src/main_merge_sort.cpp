@@ -88,9 +88,11 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
 
-        for (int lvl = 0; lvl < LOG_N; ++lvl) {
-            gpu::WorkSize work_size(GROUP_SIZE, n);
-            cuda::merge_sort(work_size, lvl == 0 ? input : output, buffer, lvl, n);
+        gpu::WorkSize work_size(GROUP_SIZE, n);
+        cuda::merge_sort_256(work_size, input, output, n);
+
+        for (int lvl = 8; lvl < LOG_N; ++lvl) {
+            cuda::merge_sort(work_size, output, buffer, lvl, n);
             std::swap(buffer, output);
         }
 
