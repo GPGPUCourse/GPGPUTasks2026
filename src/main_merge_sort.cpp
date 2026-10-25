@@ -10,6 +10,7 @@
 #include "kernels/kernels.h"
 
 #include <fstream>
+#include <algorithm>
 
 void run(int argc, char** argv)
 {
@@ -84,23 +85,26 @@ void run(int argc, char** argv)
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
-    // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
-    // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
-    // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer_output_gpu.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
+    auto current_buffer = &input_gpu, next_buffer = &buffer1_gpu;
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
-
+        current_buffer = &input_gpu;
+        next_buffer = &buffer1_gpu;
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            for (int m = 1; m < n; m *= 2) {
+                ocl_mergeSort.exec(gpu::WorkSize(32, n), *current_buffer, *next_buffer,m,n);
+                if (m == 1)
+                {
+                    current_buffer = &buffer1_gpu;
+                    next_buffer = &buffer2_gpu;
+                } else
+                    std::swap(current_buffer, next_buffer);
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -120,7 +124,7 @@ void run(int argc, char** argv)
     std::cout << "GPU merge-sort median effective VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s (" << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    std::vector<unsigned int> gpu_sorted = buffer_output_gpu.readVector();
+    std::vector<unsigned int> gpu_sorted = (*current_buffer).readVector();
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
