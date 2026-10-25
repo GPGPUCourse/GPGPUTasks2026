@@ -88,19 +88,25 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u local_sorted_gpu(n), scratch_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
+
+    const unsigned int groups = (n + GROUP_SIZE - 1) / GROUP_SIZE;
+    std::vector<unsigned int> scan_sizes{16 * groups};
+
+    while (scan_sizes.back() > 1) {
+        scan_sizes.push_back((scan_sizes.back() + GROUP_SIZE - 1) / GROUP_SIZE);
+    }
+    std::vector<gpu::gpu_mem_32u> prefixes_gpu;
+    for (unsigned int size : scan_sizes) {
+        prefixes_gpu.emplace_back(size);
+    }
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
-    buffer_output_gpu.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
@@ -110,13 +116,47 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
+            const gpu::gpu_mem_32u* values = &input_gpu;
+
+            for (unsigned int shift = 0; shift < 32; shift += 4) {
+                gpu::gpu_mem_32u& output = (shift / 4) % 2 == 0
+                    ? scratch_gpu
+                    : buffer_output_gpu;
+
+                ocl_radixSort01LocalCounting.execAsynchronized(
+                    gpu::WorkSize(GROUP_SIZE, n),
+                    *values,
+                    local_sorted_gpu,
+                    prefixes_gpu[0],
+                    n,
+                    shift);
+
+                for (size_t level = 0; level + 1 < scan_sizes.size(); ++level) {
+                    ocl_radixSort02GlobalPrefixesScanSumReduction.execAsynchronized(
+                        gpu::WorkSize(GROUP_SIZE, scan_sizes[level]),
+                        prefixes_gpu[level],
+                        prefixes_gpu[level + 1],
+                        scan_sizes[level]);
+                }
+
+                for (int level = static_cast<int>(scan_sizes.size()) - 3; level >= 0; --level) {
+                    ocl_radixSort03GlobalPrefixesScanAccumulation.execAsynchronized(
+                        gpu::WorkSize(GROUP_SIZE, scan_sizes[level]),
+                        prefixes_gpu[level + 1],
+                        prefixes_gpu[level],
+                        scan_sizes[level]);
+                }
+
+                ocl_radixSort04Scatter.exec(
+                    gpu::WorkSize(GROUP_SIZE, n),
+                    local_sorted_gpu,
+                    prefixes_gpu[0],
+                    output,
+                    n,
+                    shift);
+
+                values = &output;
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
