@@ -110,13 +110,51 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
+            const unsigned int values_count = static_cast<unsigned int>(n);
+            const unsigned int groups_count = (values_count + GROUP_SIZE - 1) / GROUP_SIZE;
+            const gpu::WorkSize values_work_size(GROUP_SIZE, values_count);
+            const gpu::WorkSize groups_work_size(GROUP_SIZE, groups_count);
+
+            // INT_MAX содержит 31 значащий бит. На каждом проходе выполняем
+            // стабильное разбиение на значения с нулевым и единичным текущим битом.
+            for (unsigned int bit = 0; bit < 31; ++bit) {
+                const gpu::gpu_mem_32u& values = bit == 0
+                    ? input_gpu
+                    : (bit % 2 == 1 ? buffer_output_gpu : buffer1_gpu);
+                gpu::gpu_mem_32u& output = bit % 2 == 0
+                    ? buffer_output_gpu
+                    : buffer1_gpu;
+
+                // В каждой рабочей группе считаем локальные префиксы нулевых
+                // битов и общее количество нулей в группе.
+                ocl_radixSort01LocalCounting.exec(
+                    values_work_size, values, buffer2_gpu, buffer3_gpu, values_count, bit);
+
+                // Строим включительный prefix sum по количествам нулей в группах.
+                ocl_radixSort02GlobalPrefixesScanSumReduction.exec(
+                    groups_work_size, buffer3_gpu, buffer4_gpu, groups_count);
+                bool prefixes_in_buffer4 = true;
+                for (unsigned int offset = 2; offset < groups_count; offset *= 2) {
+                    if (prefixes_in_buffer4) {
+                        ocl_radixSort03GlobalPrefixesScanAccumulation.exec(
+                            groups_work_size, buffer4_gpu, buffer3_gpu, groups_count, offset);
+                    } else {
+                        ocl_radixSort03GlobalPrefixesScanAccumulation.exec(
+                            groups_work_size, buffer3_gpu, buffer4_gpu, groups_count, offset);
+                    }
+                    prefixes_in_buffer4 = !prefixes_in_buffer4;
+                }
+
+                if (prefixes_in_buffer4) {
+                    ocl_radixSort04Scatter.exec(
+                        values_work_size, values, buffer2_gpu, buffer4_gpu, output,
+                        values_count, bit, groups_count);
+                } else {
+                    ocl_radixSort04Scatter.exec(
+                        values_work_size, values, buffer2_gpu, buffer3_gpu, output,
+                        values_count, bit, groups_count);
+                }
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
