@@ -7,19 +7,22 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
-//task04: prefix_sum_01_warp_reduction
 __global__ void radix_sort_01_local_counting(
     const unsigned int* input,
-          unsigned int* warp_zero_sums,
+          unsigned int* histogram,
     unsigned int n,
     unsigned int bit)
 {
     const unsigned index = blockIdx.x * blockDim.x + threadIdx.x;
 
-    const bool is_zero = index < n && (input[index] >> bit & 1) == 0;
-    const unsigned zeros = __ballot_sync(0xffffffffu, is_zero);
-    if ((threadIdx.x & 31) == 0 && (index >> 5) < (n >> 5)) {
-        warp_zero_sums[index >> 5] = __popc(zeros);
+    const unsigned warp_count = n >> 5;
+    const unsigned digit = index < n ? (input[index] >> bit) & (RADIX_BUCKETS - 1) : 0;
+#pragma unroll
+    for (unsigned bucket = 0; bucket < RADIX_BUCKETS; ++bucket) {
+        const unsigned matches = __ballot_sync(0xffffffffu, index < n && digit == bucket);
+        if ((threadIdx.x & 31) == 0 && (index >> 5) < warp_count) {
+            histogram[bucket * warp_count + (index >> 5)] = __popc(matches);
+        }
     }
 }
 

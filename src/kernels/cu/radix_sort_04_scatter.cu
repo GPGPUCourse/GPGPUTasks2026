@@ -9,20 +9,30 @@
 
 __global__ void radix_sort_04_scatter(
     const unsigned int* input,
-    const unsigned int* zero_prefixes,
+    const unsigned int* bucket_offsets,
           unsigned int* output,
     unsigned int n,
     unsigned int bit)
 {
     const unsigned index = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned value = index < n ? input[index] : 0;
+    const unsigned digit = (value >> bit) & (RADIX_BUCKETS - 1);
+    unsigned same_digit_lanes = 0;
+#pragma unroll
+    for (unsigned bucket = 0; bucket < RADIX_BUCKETS; ++bucket) {
+        const unsigned matches = __ballot_sync(0xffffffffu, index < n && digit == bucket);
+        if (digit == bucket) {
+            same_digit_lanes = matches;
+        }
+    }
+
     if (index >= n) {
         return;
     }
-    const unsigned value = input[index];
-    const unsigned zeros = zero_prefixes[index];
-    const bool is_zero = (value >> bit & 1) == 0;
-
-    const unsigned dest = is_zero ? zeros : zero_prefixes[n] + (index - zeros);
+    const unsigned lane = threadIdx.x & 31;
+    const unsigned local_rank = __popc(same_digit_lanes & (1 << lane) - 1);
+    const unsigned warp_count = n >> 5;
+    const unsigned dest = bucket_offsets[digit * warp_count + (index >> 5)] + local_rank;
     output[dest] = value;
 }
 

@@ -9,6 +9,10 @@
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
 
+#ifdef CUDA_SUPPORT
+#include <libgpu/cuda/utils.h>
+#endif
+
 #include "debug.h" // TODO очень советую использовать debug::prettyBits(...) для отладки
 
 #include <fstream>
@@ -38,7 +42,7 @@ void run(int argc, char** argv)
 
     FastRandom r;
 
-    int n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+    const int n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
     int max_value = std::numeric_limits<int>::max(); // TODO при отладке используйте минимальное max_value (например max_value=8) при котором воспроизводится бага
     std::vector<unsigned int> as(n, 0);
     std::vector<unsigned int> sorted(n, 0);
@@ -77,8 +81,15 @@ void run(int argc, char** argv)
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input(n);
     gpu::gpu_mem_32u buffer(n);
-    gpu::gpu_mem_32u zero_prefixes(n + 1);
-    gpu::gpu_mem_32u pow2_zero_sums(n);
+    const unsigned warp_count = n >> 5;
+    const unsigned histogram_size = RADIX_BUCKETS * warp_count;
+    size_t tree_size = 0;
+    for (unsigned level = 5; level < LOG_N; ++level) {
+        tree_size += histogram_size >> level;
+    }
+    gpu::gpu_mem_32u histogram(histogram_size);
+    gpu::gpu_mem_32u bucket_offsets(histogram_size);
+    gpu::gpu_mem_32u pow2_sums(std::max(size_t(1), tree_size));
     gpu::gpu_mem_32u output(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -89,21 +100,23 @@ void run(int argc, char** argv)
         timer t;
 
         const gpu::WorkSize work_group(GROUP_SIZE, n);
-        for (unsigned bit = 0; bit < LOG_INT; ++bit) {
+        const gpu::WorkSize histogram_work_group(GROUP_SIZE, histogram_size);
+        for (unsigned bit = 0; bit < LOG_INT; bit += RADIX_BITS) {
             gpu::gpu_mem_32u& cur_input = bit == 0 ? input : output;
-            cuda::radix_sort_01_local_counting(work_group, cur_input, pow2_zero_sums, n, bit);
+            cuda::radix_sort_01_local_counting(work_group, cur_input, histogram, n, bit);
+            cuda::radix_sort_02_warp_reduction(histogram_work_group, histogram, pow2_sums, histogram_size);
 
-            for (unsigned level = 6, acc = n >> 5; level < LOG_N; ++level) {
-                gpu::gpu_mem_32u cur_pow2(pow2_zero_sums, acc - (n >> (level - 1)));
-                gpu::gpu_mem_32u next_pow2(pow2_zero_sums, acc);
+            for (unsigned level = 6, acc = histogram_size >> 5; level < LOG_N; ++level) {
+                gpu::gpu_mem_32u cur_pow2(pow2_sums, acc - (histogram_size >> (level - 1)));
+                gpu::gpu_mem_32u next_pow2(pow2_sums, acc);
                 cuda::radix_sort_02_global_prefixes_scan_sum_reduction(
-                    gpu::WorkSize(GROUP_SIZE, n >> level), cur_pow2, next_pow2, n >> level);
-                acc += n >> level;
+                    gpu::WorkSize(GROUP_SIZE, histogram_size >> level), cur_pow2, next_pow2, histogram_size >> level);
+                acc += histogram_size >> level;
             }
 
             cuda::radix_sort_03_global_prefixes_scan_accumulation(
-                work_group, pow2_zero_sums, cur_input, zero_prefixes, n, bit);
-            cuda::radix_sort_04_scatter(work_group, cur_input, zero_prefixes, buffer, n, bit);
+                histogram_work_group, pow2_sums, histogram, bucket_offsets, histogram_size);
+            cuda::radix_sort_04_scatter(work_group, cur_input, bucket_offsets, buffer, n, bit);
             std::swap(output, buffer);
         }
 
