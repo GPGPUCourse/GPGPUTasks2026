@@ -10,10 +10,26 @@
 
 #include <random>
 
+unsigned int parsePositive(const char* text)
+{
+    std::string value(text);
+    if (value.empty() || value.find_first_not_of("0123456789") != std::string::npos) {
+        throw std::invalid_argument("Expected a positive integer");
+    }
+    unsigned long long parsed = std::stoull(value);
+    if (parsed == 0 || parsed > std::numeric_limits<unsigned int>::max()) {
+        throw std::invalid_argument("Expected an integer in [1, UINT_MAX]");
+    }
+    return static_cast<unsigned int>(parsed);
+}
+
 void run(int argc, char** argv)
 {
-    unsigned int n = 100*1000*1000;
-    unsigned int iterations = 10;
+    if (argc > 4) {
+        throw std::invalid_argument("Usage: main_radix_sort [device [n [iterations]]]");
+    }
+    unsigned int n = argc > 2 ? parsePositive(argv[2]) : 100*1000*1000;
+    unsigned int iterations = argc > 3 ? parsePositive(argv[3]) : 10;
 
     // chooseGPUVkDevices:
     // - Если не доступо ни одного устройства - кинет ошибку
@@ -21,7 +37,7 @@ void run(int argc, char** argv)
     // - Если доступно N>1 устройства:
     //   - Если аргументов запуска нет или переданное число не находится в диапазоне от 0 до N-1 - кинет ошибку
     //   - Если аргумент запуска есть и он от 0 до N-1 - вернет устройство под указанным номером
-    gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
+    gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), std::min(argc, 2), argv);
 
     gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
 
