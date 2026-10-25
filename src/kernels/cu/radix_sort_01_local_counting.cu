@@ -18,25 +18,18 @@ __global__ void radix_sort_01_local_counting(
 {
     __shared__ unsigned int mem[64];
     __shared__ unsigned int CNT[64];
-    __shared__ unsigned int CNT2[64];
     unsigned int i=blockDim.x*blockIdx.x+threadIdx.x;
     unsigned int threadid=threadIdx.x;
     unsigned int our=a[i];
     unsigned int ourcur=(our>>startbit)%64;
     mem[threadIdx.x]=ourcur;
+    CNT[threadIdx.x]=0;
     __syncthreads();
+    atomicAdd(CNT+ourcur,1);
     unsigned int cnt=0;
     for (int j=0;j<threadid;++j)
     {
         cnt+=(mem[j]==ourcur);
-    }
-    if (threadid==0)
-    {
-        for (int j=0;j<64;++j) CNT[j]=0;
-        for (int j=0;j<64;++j)
-        {
-            CNT[mem[j]]++;
-        }
     }
     buffer3[i]=cnt;
     __syncthreads();

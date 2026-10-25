@@ -148,6 +148,70 @@ void run(int argc, char** argv)
     for (size_t i = 0; i < n; ++i) {
         rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
     }
+    {
+        std::cout<<" Running kernel that works only for random array : "<<std::endl;
+        gpu::gpu_mem_32u buffer_gpu1(1024*150000);
+        gpu::gpu_mem_32u cou1(1024);
+        gpu::gpu_mem_32u buffer_gpu2((1<<21)*100);
+        gpu::gpu_mem_32u cou2(1<<21);
+        gpu::gpu_mem_32u prefsum(1<<21);
+        std::vector<unsigned int> cpu1(1024);
+        std::vector<unsigned int> cpu2(1<<21);
+        times.clear();
+        for (int iter = 0; iter < 10; ++iter) { // при отладке запускайте одну итерацию
+            timer t;
+
+            // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
+            // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
+            //
+            //cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,n),buffer4_gpu,n);
+            cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,1024),cou1,1024);
+            cuda::fill_buffer_with_zeros(gpu::WorkSize(1024,(1<<21)),cou2,(1<<21));
+            cuda::gorandom1(gpu::WorkSize(1024,n),input_gpu,buffer_gpu1,cou1,n);
+            cpu1=cou1.readVector();
+            for (int i=0;i<1024;++i)
+            {
+                cuda::gorandom2(gpu::WorkSize(1024,cpu1[i]),buffer_gpu1,buffer_gpu2,cou2,150000*i,cpu1[i]);
+            }
+            cuda::copytoprefsum(gpu::WorkSize(1024,(1<<21)),cou2,prefsum,(1<<21));
+            for (unsigned int st=0;st<=20;++st)
+            {
+                cuda::prefix_sum1(gpu::WorkSize(1024,(1<<(20-st))),prefsum,st,(1<<21));
+            }
+            for (int st=20;st>=0;--st)
+            {
+                cuda::prefix_sum2(gpu::WorkSize(1024,(1<<(20-st))),prefsum,st,(1<<21));
+            }
+            //cpu2=cou2.readVector();
+            //std::cout<<"cpu 2 maximum = " <<(*std::max_element(cpu2.begin()+1,cpu2.end()))<<std::endl;
+            /*for (int i=0;i<(1<<21);i+=1024)
+            {
+                std::cout<<"i = "<<i<<" cpu2[i] = "<<cpu2[i]<<std::endl;
+            }*/
+
+            cuda::goa(gpu::WorkSize(1024,(1<<21)*32),buffer_gpu2,buffer_output_gpu,cou2,prefsum);
+            times.push_back(t.elapsed());
+        }
+        std::cout << "GPU radix-sort times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+
+        // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили его переупорядоченным)
+        double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
+        std::cout << "GPU radix-sort median effective VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s (" << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
+
+        // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
+        std::vector<unsigned int> gpu_sorted = buffer_output_gpu.readVector();
+
+        // Сверяем результат
+        for (size_t i = 0; i < n; ++i) {
+            rassert(sorted[i] == gpu_sorted[i], 566324523452323, sorted[i], gpu_sorted[i], i);
+        }
+
+        // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
+        std::vector<unsigned int> input_values = input_gpu.readVector();
+        for (size_t i = 0; i < n; ++i) {
+            rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
+        }
+    }
 }
 
 int main(int argc, char** argv)
