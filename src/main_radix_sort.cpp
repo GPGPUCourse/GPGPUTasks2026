@@ -10,6 +10,7 @@
 #include "debug.h" // TODO очень советую использовать debug::prettyBits(...) для отладки
 
 #include <fstream>
+#include <unistd.h> // _exit: мгновенный выход без вызова деструкторов/teardown драйвера
 
 void run(int argc, char** argv)
 {
@@ -122,21 +123,15 @@ void run(int argc, char** argv)
     double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
     std::cout << "GPU radix-sort median effective VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s (" << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
-    // потому что на ci опять че-то умерло
-    std::cout << "VERIFY: reading result back..." << std::endl;
     std::vector<unsigned int> gpu_sorted = buffer_output_gpu.readVector();
-
-    std::cout << "VERIFY: comparing with std::sort..." << std::endl;
     for (size_t i = 0; i < n; ++i) {
         rassert(sorted[i] == gpu_sorted[i], 566324523452323, sorted[i], gpu_sorted[i], i);
     }
 
-    std::cout << "VERIFY: checking input untouched..." << std::endl;
     std::vector<unsigned int> input_values = input_gpu.readVector();
     for (size_t i = 0; i < n; ++i) {
-        rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
+        rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i], i);
     }
-    std::cout << "VERIFY: all checks passed" << std::endl;
 }
 
 int main(int argc, char** argv)
@@ -158,5 +153,7 @@ int main(int argc, char** argv)
         }
     }
 
-    return exit_code;
+    std::cout.flush();
+    std::cerr.flush();
+    _exit(exit_code);
 }
