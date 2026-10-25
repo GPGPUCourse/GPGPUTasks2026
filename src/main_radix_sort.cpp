@@ -11,7 +11,28 @@
 
 #include "debug.h" // TODO очень советую использовать debug::prettyBits(...) для отладки
 
+#include <cstdlib>
 #include <fstream>
+
+namespace {
+constexpr unsigned int workgroup_size = 256;
+constexpr unsigned int digits_per_step = 2; // Change this value to change the radix-sort step width.
+constexpr unsigned int radix_module = 1u << digits_per_step;
+constexpr unsigned int radix_passes = (32u + digits_per_step - 1u) / digits_per_step;
+
+static_assert(digits_per_step > 0 && digits_per_step <= 8,
+    "digits_per_step must be between 1 and 8");
+
+size_t packedReductionSize(size_t n)
+{
+    size_t result = 0;
+    while (n > 1) {
+        n = (n + 1) / 2;
+        result += n;
+    }
+    return result;
+}
+}
 
 void run(int argc, char** argv)
 {
@@ -28,7 +49,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -51,13 +72,26 @@ void run(int argc, char** argv)
     FastRandom r;
 
     int n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+    if (const char* n_override = std::getenv("RADIX_SORT_N")) {
+        n = std::stoi(n_override);
+    }
+    rassert(n >= 2, 4353245123413, n);
+
+    int iterations = 10;
+    if (const char* iterations_override = std::getenv("RADIX_SORT_ITERATIONS")) {
+        iterations = std::stoi(iterations_override);
+    }
+    rassert(iterations > 0, 4353245123414, iterations);
+
     int max_value = std::numeric_limits<int>::max(); // TODO при отладке используйте минимальное max_value (например max_value=8) при котором воспроизводится бага
     std::vector<unsigned int> as(n, 0);
     std::vector<unsigned int> sorted(n, 0);
     for (size_t i = 0; i < n; ++i) {
         as[i] = r.next(0, max_value);
     }
-    std::cout << "n=" << n << " max_value=" << max_value << std::endl;
+    std::cout << "n=" << n << " max_value=" << max_value
+              << " digits_per_step=" << digits_per_step
+              << " radix_module=" << radix_module << std::endl;
 
     {
         // убедимся что в массиве есть хотя бы несколько повторяющихся значений
@@ -86,57 +120,86 @@ void run(int argc, char** argv)
         std::cout << "CPU std::sort effective RAM bandwidth: " << memory_size_gb / elapsed << " GB/s (" << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
+    const unsigned int workgroup_count =
+        (static_cast<unsigned int>(n) + workgroup_size - 1u) / workgroup_size;
+    const size_t reduction_stride = packedReductionSize(workgroup_count);
+    rassert(reduction_stride * radix_module <= std::numeric_limits<unsigned int>::max(),
+        4353245123415, reduction_stride, radix_module);
+
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u scratch_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
+    gpu::gpu_mem_32u workgroup_counts_gpu(static_cast<size_t>(radix_module) * workgroup_count);
+    gpu::gpu_mem_32u reduction_sums_gpu(std::max<size_t>(1, radix_module * reduction_stride));
+    gpu::gpu_mem_32u workgroup_prefixes_gpu(static_cast<size_t>(radix_module) * workgroup_count);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
-    // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
-    // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
-    // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
-    buffer_output_gpu.fill(255);
-
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
+    for (int iter = 0; iter < iterations; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
-        // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-        // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::radix_sort_01_local_counting();
-            // cuda::radix_sort_02_global_prefixes_scan_sum_reduction();
-            // cuda::radix_sort_03_global_prefixes_scan_accumulation();
-            // cuda::radix_sort_04_scatter();
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fillBufferWithZeros.exec();
-            // vk_radixSort01LocalCounting.exec();
-            // vk_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // vk_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // vk_radixSort04Scatter.exec();
-        } else {
-            rassert(false, 4531412341, context.type());
+        gpu::gpu_mem_32u* source_gpu = &input_gpu;
+        gpu::gpu_mem_32u* destination_gpu =
+            radix_passes % 2u == 0u ? &scratch_gpu : &buffer_output_gpu;
+
+        for (unsigned int shift = 0; shift < 32u; shift += digits_per_step) {
+            const gpu::WorkSize element_work_size(workgroup_size, n);
+
+            for (unsigned int reminder = 0; reminder < radix_module; ++reminder) {
+                cuda::radix_sort_01_local_counting(element_work_size,
+                    *source_gpu, workgroup_counts_gpu,
+                    radix_module, reminder, shift, n);
+            }
+
+            for (unsigned int reminder = 0; reminder < radix_module; ++reminder) {
+                unsigned int reduction_size = workgroup_count;
+                unsigned int input_offset = reminder * workgroup_count;
+                unsigned int output_offset = static_cast<unsigned int>(reminder * reduction_stride);
+                bool input_is_workgroup_counts = true;
+
+                while (reduction_size > 1) {
+                    const unsigned int next_size = (reduction_size + 1u) / 2u;
+                    const gpu::WorkSize reduction_work_size(workgroup_size, next_size);
+
+                    if (input_is_workgroup_counts) {
+                        cuda::radix_sort_02_global_prefixes_scan_sum_reduction(
+                            reduction_work_size, workgroup_counts_gpu, reduction_sums_gpu,
+                            reduction_size, input_offset, output_offset);
+                    } else {
+                        cuda::radix_sort_02_global_prefixes_scan_sum_reduction(
+                            reduction_work_size, reduction_sums_gpu, reduction_sums_gpu,
+                            reduction_size, input_offset, output_offset);
+                    }
+
+                    input_is_workgroup_counts = false;
+                    input_offset = output_offset;
+                    output_offset += next_size;
+                    reduction_size = next_size;
+                }
+
+                const gpu::WorkSize prefix_work_size(workgroup_size, workgroup_count);
+                cuda::radix_sort_03_global_prefixes_scan_accumulation(
+                    prefix_work_size, workgroup_counts_gpu, reduction_sums_gpu,
+                    workgroup_prefixes_gpu, workgroup_count,
+                    reminder * workgroup_count,
+                    static_cast<unsigned int>(reminder * reduction_stride),
+                    reminder * workgroup_count);
+            }
+
+            cuda::radix_sort_04_scatter(element_work_size,
+                *source_gpu, workgroup_prefixes_gpu, *destination_gpu,
+                shift, radix_module, n);
+
+            source_gpu = destination_gpu;
+            destination_gpu = destination_gpu == &buffer_output_gpu
+                ? &scratch_gpu
+                : &buffer_output_gpu;
         }
 
+        rassert(source_gpu == &buffer_output_gpu, 4353245123416);
         times.push_back(t.elapsed());
     }
     std::cout << "GPU radix-sort times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
