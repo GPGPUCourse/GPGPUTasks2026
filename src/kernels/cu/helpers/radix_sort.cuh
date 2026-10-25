@@ -10,7 +10,7 @@ constexpr int WARPS = THREADS / 32;
 constexpr int BITS = 8;
 constexpr int DIGITS = 1 << BITS;
 constexpr int PASSES = 32 / BITS;
-constexpr int ITEMS = 28;                 // keys per thread in a digit pass
+constexpr int ITEMS = 27;                 // keys per thread in a digit pass
 constexpr int TILE = THREADS * ITEMS;     // keys per block in a digit pass
 constexpr int MIN_BLOCKS = 2;
 constexpr int STEP = 1;                   // tiles read at once when a block collects its offsets
@@ -133,17 +133,14 @@ static __global__ void __launch_bounds__(THREADS, MIN_BLOCKS)
 digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned n, int pass,
            const unsigned* __restrict__ offsets, unsigned* status, unsigned* counter)
 {
-    constexpr int TABLE_WORDS = WARPS * DIGITS / 2;  // 8 warps x 256 16-bit counters
-    static_assert(TABLE_WORDS == 4 * THREADS, "one uint4 per thread clears the counters");
-    static_assert(DIGITS + WARPS + 1 <= TILE, "histogram, warp sums and tile index fit in s_keys");
-    __shared__ __align__(16) unsigned s_table[TABLE_WORDS];
-    __shared__ __align__(16) unsigned s_keys[TILE];
-    unsigned (*const s_counts)[DIGITS / 2] = reinterpret_cast<unsigned (*)[DIGITS / 2]>(s_table);  // two 16-bit counters per word: digits d and d + 128
-    unsigned short (*const s_offsets)[DIGITS] = reinterpret_cast<unsigned short (*)[DIGITS]>(s_table);
-    unsigned* const s_dest = s_table;              // output offsets, written after the look-back
-    unsigned* const s_hist = s_keys;               // tile counts, read before the ranking
-    unsigned* const s_warp = s_keys + DIGITS;      // warp sums of the digit scan
-    unsigned& s_tile = s_keys[DIGITS + WARPS];     // the tile index
+    __shared__ unsigned s_counts[WARPS][DIGITS / 2];  // two 16-bit counters per word: digits d and d + 128
+    __shared__ unsigned s_digit[DIGITS];
+    unsigned* const s_hist = s_digit;  // tile counts, read before the ranking
+    unsigned* const s_warp = s_digit;  // warp sums of the digit scan
+    unsigned* const s_dest = s_digit;  // output offsets, written after the scatter
+    __shared__ unsigned s_keys[TILE];
+    unsigned& s_tile = s_keys[0];      // the tile index, read before the keys arrive
+    unsigned short (*s_offsets)[DIGITS] = reinterpret_cast<unsigned short (*)[DIGITS]>(s_counts);
 
     const int warp = threadIdx.x >> 5, lane = threadIdx.x & 31;
     const unsigned lane_lt = (1u << lane) - 1u;
@@ -151,7 +148,7 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
     if (threadIdx.x == 0) s_tile = atomicAdd(counter, 1u);
     const unsigned goff = offsets[d];
     const bool live = (d + 1 < DIGITS ? offsets[d + 1] : n) != goff;  // digit d occurs in the array
-    reinterpret_cast<uint4*>(s_table)[threadIdx.x] = make_uint4(0u, 0u, 0u, 0u);
+    for (int i = threadIdx.x; i < WARPS * DIGITS / 2; i += THREADS) (&s_counts[0][0])[i] = 0;
     s_hist[d] = 0;
     __syncthreads();
     const unsigned tile = s_tile;
@@ -248,9 +245,7 @@ digit_pass(const unsigned* __restrict__ in, unsigned* __restrict__ out, unsigned
         }
     }
     if (live) put_status(tile_status + d, complete, before + my_count);
-    const unsigned dest = goff + before - digit_start;
-    __syncthreads();
-    s_dest[d] = dest;
+    s_dest[d] = goff + before - digit_start;
     __syncthreads();
 
     if (full) {
