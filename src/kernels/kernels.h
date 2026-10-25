@@ -11,3 +11,22 @@ void radix_sort_03_global_prefixes_scan_accumulation(const gpu::WorkSize &workSi
 void radix_sort_04_scatter(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &values, const gpu::gpu_mem_32u &buffer1, const gpu::gpu_mem_32u &buffer2, const gpu::gpu_mem_32u &buffer3, gpu::gpu_mem_32u &answer, unsigned int a1, unsigned int a2);
 void goend(const gpu::WorkSize &workSize,const gpu::gpu_mem_32u &buffer2, gpu::gpu_mem_32u& totalsum,unsigned int n);
 }
+namespace ocl {
+    const ProgramBinaries& getAplusB();
+
+    const ProgramBinaries& getFillBufferWithZeros();
+    const ProgramBinaries& getRadixSort01LocalCounting();
+    const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction();
+    const ProgramBinaries& getRadixSort03GlobalPrefixesScanAccumulation();
+    const ProgramBinaries& getRadixSort04Scatter();
+}
+
+namespace avk2 {
+    const ProgramBinaries& getAplusB();
+
+    const ProgramBinaries& getFillBufferWithZeros();
+    const ProgramBinaries& getRadixSort01LocalCounting();
+    const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction();
+    const ProgramBinaries& getRadixSort03GlobalPrefixesScanAccumulation();
+    const ProgramBinaries& getRadixSort04Scatter();
+}
