@@ -88,7 +88,7 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -98,9 +98,14 @@ void run(int argc, char** argv)
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
     buffer1_gpu.fill(255);
     buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
     buffer_output_gpu.fill(255);
+
+    std::vector<uint> sizes = {static_cast<uint>(n)};
+    std::vector<gpu::gpu_mem_32u> prefixes = {buffer1_gpu};
+    while (sizes.back() > GROUP_SIZE) {
+        sizes.push_back((sizes.back() + GROUP_SIZE - 1) / GROUP_SIZE);
+        prefixes.emplace_back(sizes.back());
+    }
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
@@ -111,12 +116,23 @@ void run(int argc, char** argv)
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
             // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
+            gpu::gpu_mem_32u cur = input_gpu;
+            for (uint bit = 0; bit < 32; ++bit) {
+                ocl_radixSort01LocalCounting.exec(
+                    gpu::WorkSize(GROUP_SIZE, n), cur, buffer1_gpu, n, bit);
+
+                for (size_t level = 1; level < sizes.size(); ++level) {
+                    ocl_radixSort02GlobalPrefixesScanSumReduction.exec(gpu::WorkSize(GROUP_SIZE, sizes[level]), prefixes[level - 1], prefixes[level], sizes[level - 1]);
+                }
+
+                for (size_t level = sizes.size() - 1; level > 0; --level) {
+                    ocl_radixSort03GlobalPrefixesScanAccumulation.exec(gpu::WorkSize(GROUP_SIZE, sizes[level - 1]), prefixes[level], prefixes[level - 1], sizes[level - 1], GROUP_SIZE);
+                }
+
+                gpu::gpu_mem_32u& next = bit % 2 == 0 ? buffer2_gpu : buffer_output_gpu;
+                ocl_radixSort04Scatter.exec(gpu::WorkSize(GROUP_SIZE, n), cur, buffer1_gpu, next, n, bit);
+                cur = next;
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
