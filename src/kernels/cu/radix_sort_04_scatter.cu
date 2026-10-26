@@ -80,6 +80,7 @@ __device__ __forceinline__ unsigned int bucket_mask4(
         & ((b & 8u) ? m3 : ~m3);
 }
 
+__launch_bounds__(1024, 2)
 __global__ void radix_sort_04_scatter(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
@@ -92,7 +93,6 @@ __global__ void radix_sort_04_scatter(
     const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int computed_index = threadIdx.x;
     const unsigned char lane = threadIdx.x & 31u;
-    const unsigned int lane_before_mask_excluding = (1u << lane) - 1u;
     const bool valid = index < n;
     const unsigned int warp = threadIdx.x / 32;
 
@@ -117,7 +117,7 @@ __global__ void radix_sort_04_scatter(
         unsigned int mask3 = __ballot_sync(0xffffffff, (bucket & 4u) != 0);
         unsigned int mask4 = __ballot_sync(0xffffffff, (bucket & 8u) != 0);
         const unsigned int own_mask = bucket_mask4(bucket, valid_mask, mask1, mask2, mask3, mask4);
-        local_order_in_warp_bucket = __popc(own_mask & lane_before_mask_excluding);
+        local_order_in_warp_bucket = __popc(own_mask & ((1u << lane) - 1u));
 
         if (lane < 16) {
             const unsigned int mask = bucket_mask4(lane, valid_mask, mask1, mask2, mask3, mask4);
