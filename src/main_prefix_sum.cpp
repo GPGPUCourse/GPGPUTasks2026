@@ -78,28 +78,26 @@ void run(int argc, char** argv)
     for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
-        // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-        // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fill_with_zeros.exec();
-            // vk_sum_reduction.exec();
-            // vk_prefix_accumulation.exec();
-        } else {
-            rassert(false, 4531412341, context.type());
+        // WorkSize округляет число потоков вверх до кратного GROUP_SIZE.
+        gpu::WorkSize work_size(GROUP_SIZE, n);
+        ocl_fill_with_zeros.exec(work_size, prefix_sum_accum_gpu, n);
+
+        const gpu::gpu_mem_32u* current = &input_gpu;
+        gpu::gpu_mem_32u* next = &buffer1_pow2_sum_gpu;
+        unsigned int current_n = n;
+        for (unsigned int pow2 = 0; ; ++pow2) {
+            ocl_prefix_accumulation.exec(work_size, *current, prefix_sum_accum_gpu, n, pow2);
+            if (current_n == 1) {
+                break;
+            }
+
+            unsigned int next_n = current_n / 2 + current_n % 2;
+            gpu::WorkSize reduction_work_size(GROUP_SIZE, next_n);
+            ocl_sum_reduction.exec(reduction_work_size, *current, *next, current_n);
+
+            current = next;
+            next = (next == &buffer1_pow2_sum_gpu) ? &buffer2_pow2_sum_gpu : &buffer1_pow2_sum_gpu;
+            current_n = next_n;
         }
 
         times.push_back(t.elapsed());
