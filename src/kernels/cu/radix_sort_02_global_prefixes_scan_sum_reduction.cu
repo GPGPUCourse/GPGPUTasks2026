@@ -8,24 +8,46 @@
 #include "../defines.h"
 
 __global__ void radix_sort_02_global_prefixes_scan_sum_reduction(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    // TODO try char
-    const unsigned int* buffer1,
-          unsigned int* buffer2,
-    unsigned int a1)
+    const unsigned int* data,
+          unsigned int* block_sums,
+    unsigned int n)
 {
-    // TODO
+    __shared__ unsigned int scratch[SCAN_WG_SIZE];
+
+    const unsigned int lid = threadIdx.x;
+    const unsigned int base = blockIdx.x * SCAN_TILE;
+
+    unsigned int sum = 0;
+    for (unsigned int k = 0; k < SCAN_IPT; ++k) {
+        const unsigned int i = base + lid + k * SCAN_WG_SIZE;
+        if (i < n) {
+            sum += data[i];
+        }
+    }
+
+    scratch[lid] = sum;
+    __syncthreads();
+
+    for (unsigned int stride = SCAN_WG_SIZE / 2; stride > 0; stride >>= 1) {
+        if (lid < stride) {
+            scratch[lid] += scratch[lid + stride];
+        }
+        __syncthreads();
+    }
+
+    if (lid == 0) {
+        block_sums[blockIdx.x] = scratch[0];
+    }
 }
 
 namespace cuda {
 void radix_sort_02_global_prefixes_scan_sum_reduction(const gpu::WorkSize &workSize,
-    const gpu::gpu_mem_32u &buffer1, gpu::gpu_mem_32u &buffer2, unsigned int a1)
+    const gpu::gpu_mem_32u &data, gpu::gpu_mem_32u &block_sums, unsigned int n)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::radix_sort_02_global_prefixes_scan_sum_reduction<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(buffer1.cuptr(), buffer2.cuptr(), a1);
+    ::radix_sort_02_global_prefixes_scan_sum_reduction<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(data.cuptr(), block_sums.cuptr(), n);
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda

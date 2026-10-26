@@ -7,4 +7,17 @@
 
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
 
+#define RADIX_BITS     4
+#define RADIX          (1 << RADIX_BITS)
+#define RADIX_MASK     (RADIX - 1)
+#define RADIX_NPASSES  (32 / RADIX_BITS)
+
+#define SORT_WG_SIZE   256
+#define SORT_IPT       4
+#define SORT_TILE      (SORT_WG_SIZE * SORT_IPT)
+
+#define SCAN_WG_SIZE   256
+#define SCAN_IPT       4
+#define SCAN_TILE      (SCAN_WG_SIZE * SCAN_IPT)
+
 #endif // pragma once
