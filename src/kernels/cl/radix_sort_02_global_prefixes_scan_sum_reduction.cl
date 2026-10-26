@@ -7,11 +7,25 @@
 
 __attribute__((reqd_work_group_size(1, 1, 1)))
 __kernel void radix_sort_02_global_prefixes_scan_sum_reduction(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* buffer1,
-    __global       uint* buffer2,
-    unsigned int a1)
+    __global const uint* group_counts,
+    __global       uint* group_offsets,
+    unsigned int group_count)
 {
-    // TODO
+    uint total_zeros = 0;
+    for (uint group = 0; group < group_count; ++group) {
+        total_zeros += group_counts[group * 2];
+    }
+
+    uint zero_prefix = 0;
+    uint one_prefix = 0;
+    for (uint group = 0; group < group_count; ++group) {
+        const uint zeros = group_counts[group * 2];
+        const uint ones = group_counts[group * 2 + 1];
+        group_offsets[group * 2] = zero_prefix;
+        group_offsets[group * 2 + 1] = total_zeros + one_prefix;
+        zero_prefix += zeros;
+        one_prefix += ones;
+    }
+
+    group_offsets[group_count * 2] = total_zeros;
 }
