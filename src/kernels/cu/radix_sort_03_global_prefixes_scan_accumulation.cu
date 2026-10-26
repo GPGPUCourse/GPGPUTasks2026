@@ -10,13 +10,29 @@
 __global__ void radix_sort_03_global_prefixes_scan_accumulation(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    // TODO try char
-    const unsigned int* buffer1,
-          unsigned int* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+    const unsigned int* counter,
+          unsigned int* pref_sum,
+    unsigned int cur_group_count,
+    unsigned int level)
 {
-    // TODO
+    unsigned int index = blockDim.x * blockIdx.x + threadIdx.x;
+    if (index >= cur_group_count * 16) {
+        return;
+    }
+    unsigned int group = index / 16;
+    unsigned int digit = index % 16;
+
+    if (level == 0) {
+        pref_sum[group * 16 + digit] += counter[group * 16 + digit];
+        if (group % 2 != 0) {
+            pref_sum[group * 16 + digit] += counter[(group - 1) * 16 + digit];
+        }
+    } else {
+        if (((group >> level) & 1) == 1) {
+            unsigned int prev_block = (group >> level) - 1;
+            pref_sum[group * 16 + digit] += counter[prev_block * 16 + digit];
+        }
+    }   
 }
 
 namespace cuda {

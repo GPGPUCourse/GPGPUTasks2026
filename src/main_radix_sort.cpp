@@ -12,6 +12,8 @@
 #include "debug.h" // TODO очень советую использовать debug::prettyBits(...) для отладки
 
 #include <fstream>
+#include <algorithm>
+#include <iostream>
 
 void run(int argc, char** argv)
 {
@@ -28,7 +30,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -87,24 +89,27 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
+    unsigned int group_count = (n + GROUP_SIZE - 1) / GROUP_SIZE;
+    int counter_count = group_count * 16;
+    unsigned int size = std::max(n, counter_count);
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
-    gpu::gpu_mem_32u buffer_output_gpu(n);
+    gpu::gpu_mem_32u input_gpu_1(n), input_gpu_2(n);
+    gpu::gpu_mem_32u local_counter(size), cur_counter(size), next_counter((size + 15) / 16), pref_sum(size);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
-    buffer_output_gpu.fill(255);
+    // local_counter.fill(255);
+    // cur_counter.fill(255);
+    // next_counter.fill(255);
+    // pref_sum.fill(255);
+    // buffer_output_gpu.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
+    for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
@@ -118,13 +123,38 @@ void run(int argc, char** argv)
             // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
             // ocl_radixSort04Scatter.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::radix_sort_01_local_counting();
-            // cuda::radix_sort_02_global_prefixes_scan_sum_reduction();
-            // cuda::radix_sort_03_global_prefixes_scan_accumulation();
-            // cuda::radix_sort_04_scatter();
+            gpu::WorkSize WorkSize(GROUP_SIZE, n);
+            gpu::WorkSize WorkSize_03(GROUP_SIZE, group_count * 16);
+            input_gpu.copyToN(input_gpu_1, n);
+
+            for (unsigned int bit_shift = 0; bit_shift <= 28; bit_shift += 4) {
+                unsigned int cur_group_count = group_count;
+                unsigned int next_group_count = (cur_group_count + 1) / 2;
+
+                cuda::radix_sort_01_local_counting(WorkSize, input_gpu_1, local_counter, n, bit_shift);
+                cur_counter = local_counter;
+                cuda::fill_buffer_with_zeros(WorkSize, pref_sum, size);
+                
+                for (unsigned int level = 0; ; ++level) {
+                    cuda::radix_sort_03_global_prefixes_scan_accumulation(WorkSize_03, cur_counter, pref_sum, group_count, level);
+                    if (next_group_count == 1) {
+                        break;
+                    }
+
+                    next_group_count = (cur_group_count + 1) / 2;
+                    gpu::WorkSize WorkSize_02(GROUP_SIZE, next_group_count * 16);
+                    cuda::radix_sort_02_global_prefixes_scan_sum_reduction(WorkSize_02, cur_counter, next_counter, cur_group_count);
+
+                    gpu::gpu_mem_32u tmp = cur_counter;
+                    cur_counter = next_counter;
+                    next_counter = tmp;
+                    cur_group_count = next_group_count;
+                }
+                cuda::radix_sort_04_scatter(WorkSize, input_gpu_1, pref_sum, local_counter, input_gpu_2, n, bit_shift);
+                gpu::gpu_mem_32u tmp = input_gpu_1;
+                input_gpu_1 = input_gpu_2;
+                input_gpu_2 = tmp;
+            }
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -146,7 +176,7 @@ void run(int argc, char** argv)
     std::cout << "GPU radix-sort median effective VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s (" << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    std::vector<unsigned int> gpu_sorted = buffer_output_gpu.readVector();
+    std::vector<unsigned int> gpu_sorted = input_gpu_1.readVector();
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {

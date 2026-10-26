@@ -10,12 +10,30 @@
 __global__ void radix_sort_01_local_counting(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* buffer1,
-          unsigned int* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+    const unsigned int* array,
+          unsigned int* counter,
+    unsigned int n,
+    unsigned int bit_shift)
 {
-    // TODO
+    unsigned int group = blockIdx.x;
+    unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int local_idx = threadIdx.x;
+
+    __shared__ unsigned int shared_counter[16];
+    if (local_idx < 16) {
+        shared_counter[local_idx] = 0;
+    }
+    __syncthreads();
+
+    if (index < n) {
+        unsigned int value = array[index];
+        unsigned int digit = (value >> bit_shift) & 15;
+        atomicAdd(&shared_counter[digit], 1);
+    }
+    __syncthreads();
+    if (local_idx < 16) {
+        counter[group * 16 + local_idx] = shared_counter[local_idx];
+    }
 }
 
 namespace cuda {
