@@ -52,6 +52,19 @@ void run(int argc, char** argv)
 
     int n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
     int max_value = std::numeric_limits<int>::max(); // TODO при отладке используйте минимальное max_value (например max_value=8) при котором воспроизводится бага
+
+    unsigned int bit_count = 0;
+
+    for (unsigned int v = static_cast<unsigned int>(max_value);
+        v > 0;
+        v >>= 1) {
+        ++bit_count;
+    }
+
+    if (bit_count == 0) {
+        bit_count = 1;
+    }
+
     std::vector<unsigned int> as(n, 0);
     std::vector<unsigned int> sorted(n, 0);
     for (size_t i = 0; i < n; ++i) {
@@ -88,19 +101,34 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u work_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
+
+    gpu::gpu_mem_32u local_one_rank_gpu(n);
+
+    const unsigned int num_groups =
+        (n + GROUP_SIZE - 1) / GROUP_SIZE;
+
+    gpu::gpu_mem_32u block_one_counts_gpu(num_groups);
+    gpu::gpu_mem_32u global_one_prefix_gpu(num_groups);
+
+    std::vector<gpu::gpu_mem_32u> levels;
+
+    for (unsigned int current_n = num_groups; current_n > 1;) {
+        current_n = (current_n + 1) / 2;
+        levels.emplace_back(current_n);
+    }
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
-    buffer_output_gpu.fill(255);
+    //buffer1_gpu.fill(255);
+    //buffer2_gpu.fill(255);
+    //buffer3_gpu.fill(255);
+    //buffer4_gpu.fill(255);
+    //buffer_output_gpu.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
@@ -111,10 +139,46 @@ void run(int argc, char** argv)
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
             // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            const gpu::gpu_mem_32u* current_input = &input_gpu;
+
+            gpu::gpu_mem_32u* current_output = (bit_count % 2u != 0u) ? &buffer_output_gpu : &work_gpu;
+
+            for (unsigned int bit = 0; bit < bit_count; ++bit) {
+                ocl_radixSort01LocalCounting.exec(gpu::WorkSize(GROUP_SIZE, n), *current_input,local_one_rank_gpu, block_one_counts_gpu, static_cast<unsigned int>(n), bit);
+
+                unsigned int current_n = num_groups;
+
+                for (size_t level = 0; level < levels.size(); ++level) {
+                    const unsigned int next_n = (current_n + 1) / 2;
+
+                    const gpu::gpu_mem_32u& src = (level == 0) ? block_one_counts_gpu : levels[level - 1];
+
+                    ocl_radixSort02GlobalPrefixesScanSumReduction.exec(gpu::WorkSize(GROUP_SIZE, next_n), src, levels[level], current_n);
+
+                    current_n = next_n;
+                }
+
+                ocl_fillBufferWithZeros.exec(gpu::WorkSize(GROUP_SIZE, num_groups), global_one_prefix_gpu, num_groups);
+
+                ocl_radixSort03GlobalPrefixesScanAccumulation.exec(gpu::WorkSize(GROUP_SIZE, num_groups), block_one_counts_gpu, global_one_prefix_gpu, num_groups, 0u);
+
+                for (size_t level = 0; level < levels.size(); ++level) {
+                    const unsigned int pow2 = static_cast<unsigned int>(level + 1);
+
+                    ocl_radixSort03GlobalPrefixesScanAccumulation.exec(gpu::WorkSize(GROUP_SIZE, num_groups), levels[level], global_one_prefix_gpu, num_groups, pow2);
+                }
+
+                ocl_radixSort04Scatter.exec(gpu::WorkSize(GROUP_SIZE, n), *current_input, local_one_rank_gpu, block_one_counts_gpu, global_one_prefix_gpu, *current_output, static_cast<unsigned int>(n), num_groups, bit);
+
+                if (bit + 1 < bit_count) {
+                    current_input = current_output;
+
+                    current_output = (current_output == &buffer_output_gpu) ? &work_gpu : &buffer_output_gpu;
+                }
+            }
             // ocl_fillBufferWithZeros.exec();
             // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
+            //ocl_radixSort02GlobalPrefixesScanSumReduction.exec(gpu::WorkSize(GROUP_SIZE, (current_n + 1) / 2));
             // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
             // ocl_radixSort04Scatter.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
