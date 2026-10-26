@@ -123,8 +123,6 @@ __global__ void radix_sort_04_scatter(
     }
     __syncthreads();
 
-
-
     if (valid) {
         unsigned int block_base = counters[bucket + BUCKET_COUNT * blockIdx.x];
         unsigned int res_index = block_base + threadIdx.x - group_bucket_counters[bucket];
