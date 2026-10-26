@@ -133,6 +133,7 @@ __global__ void radix_sort_04_scatter(
 
     unsigned int number = data[computed_index];
     unsigned int bucket = get_bucket(number, offset);
+
     __syncthreads();
 
     if (valid) {
