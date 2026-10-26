@@ -8,13 +8,23 @@
 #include "../defines.h"
 
 __global__ void prefix_sum_01_reduction(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
     const unsigned int* pow2_sum, // contains n values
-          unsigned int* next_pow2_sum, // will contain (n+1)/2 values
+    unsigned int* next_pow2_sum, // will contain (n+1)/2 values
     unsigned int n)
 {
-    // TODO
+    const unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int out_n = (n + 1u) / 2u;
+
+    if (idx < out_n) {
+        const unsigned int left_idx = 2u * idx;
+        const unsigned int right_idx = left_idx + 1u;
+
+        unsigned int sum = pow2_sum[left_idx];
+        if (right_idx < n) {
+            sum += pow2_sum[right_idx];
+        }
+        next_pow2_sum[idx] = sum;
+    }
 }
 
 namespace cuda {
