@@ -149,7 +149,6 @@ void run(int argc, char** argv)
                     *source,
                     levels_gpu[0],
                     n,
-                    
                     bit);
 
                 for (size_t level = 1; level < levels_gpu.size(); ++level) {
