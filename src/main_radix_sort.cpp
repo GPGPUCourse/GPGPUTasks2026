@@ -87,8 +87,7 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    constexpr unsigned int elements_per_thread = 256;
-    const unsigned int chunk_count = n / elements_per_thread + (n % elements_per_thread != 0);
+    const unsigned int chunk_count = n / GROUP_SIZE + (n % GROUP_SIZE != 0);
     const unsigned int prefix_count = chunk_count * RADIX_SIZE;
 
     gpu::gpu_mem_32u input_gpu(n), temp_gpu(n), buffer_output_gpu(n);
@@ -100,6 +99,7 @@ void run(int argc, char** argv)
         entries = (entries + 1) / 2;
         histogram_levels_gpu.emplace_back(static_cast<size_t>(entries) * RADIX_SIZE);
     }
+    gpu::WorkSize values_work_size(GROUP_SIZE, n);
     gpu::WorkSize chunks_work_size(GROUP_SIZE, chunk_count);
     gpu::WorkSize prefixes_work_size(GROUP_SIZE, prefix_count);
 
@@ -120,7 +120,7 @@ void run(int argc, char** argv)
         const gpu::gpu_mem_32u* src = &input_gpu;
         for (unsigned int batch_num = 0; batch_num < 32 / BITS_PER_PASS; ++batch_num) {
             cuda::fill_buffer_with_zeros(prefixes_work_size, prefixes_gpu, prefix_count);
-            cuda::radix_sort_01_local_counting(chunks_work_size, *src, histogram_levels_gpu.front(), n, elements_per_thread, batch_num);
+            cuda::radix_sort_01_local_counting(values_work_size, *src, histogram_levels_gpu.front(), n, batch_num);
 
             for (size_t level = 0; level + 1 < histogram_levels_gpu.size(); ++level) {
                 unsigned int count = static_cast<unsigned int>(histogram_levels_gpu[level].number() / RADIX_SIZE);
@@ -132,7 +132,7 @@ void run(int argc, char** argv)
             }
 
             gpu::gpu_mem_32u& dst = batch_num % 2 == 0 ? temp_gpu : buffer_output_gpu;
-            cuda::radix_sort_04_scatter(chunks_work_size, *src, prefixes_gpu,dst, n, elements_per_thread, batch_num);
+            cuda::radix_sort_04_scatter(values_work_size, *src, prefixes_gpu, dst, n, batch_num);
             src = &dst;
         }
         times.push_back(t.elapsed());

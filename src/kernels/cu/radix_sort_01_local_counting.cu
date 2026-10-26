@@ -8,46 +8,41 @@
 #include "../defines.h"
 
 __global__ void radix_sort_01_local_counting(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* buffer1,
-          unsigned int* buffer2,
-    unsigned int a1,
-    unsigned int a2,
-    unsigned int batch_num)
+    const unsigned int* values, unsigned int* histograms,
+    unsigned int n, unsigned int batch_num)
 {
-    const unsigned int id = blockIdx.x * blockDim.x + threadIdx.x;
-    const unsigned int start = id * a2;
-
-    if (start >= a1)
+    const unsigned int bid = blockIdx.x;
+    const unsigned int start = bid * GROUP_SIZE;
+    if (start >= n)
         return;
 
-    const unsigned int end = min(start + a2, a1);
+    __shared__ unsigned int counts[RADIX_SIZE];
 
-    const unsigned int out_base = id * RADIX_SIZE;
+    const unsigned int tid = threadIdx.x;
+    if (tid < RADIX_SIZE)
+        counts[tid] = 0;
+    __syncthreads();
 
-    unsigned int cnts[RADIX_SIZE];
-    for (int i = 0; i < RADIX_SIZE; i++)
-        cnts[i] = 0;
-
-    for (unsigned int i = start; i < end; i++) {
-        unsigned int val = buffer1[i];
-        unsigned int d = (val >> (batch_num * BITS_PER_PASS)) & (RADIX_SIZE - 1);
-        cnts[d]++;
+    if (tid < n - start) {
+        const unsigned int digit = (values[start + tid] >> (batch_num * BITS_PER_PASS)) & (RADIX_SIZE - 1);
+        atomicAdd(&counts[digit], 1u);
     }
+    __syncthreads();
 
-    for (unsigned int i = 0; i < RADIX_SIZE; i++)
-        buffer2[out_base + i] = cnts[i];
+    if (tid < RADIX_SIZE)
+        histograms[bid * RADIX_SIZE + tid] = counts[tid];
 }
 
 namespace cuda {
-void radix_sort_01_local_counting(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32u &buffer1, gpu::gpu_mem_32u &buffer2, unsigned int a1, unsigned int a2, unsigned int batch_num)
+void radix_sort_01_local_counting(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32u& values, gpu::gpu_mem_32u& histograms,
+    unsigned int n, unsigned int batch_num)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::radix_sort_01_local_counting<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(buffer1.cuptr(), buffer2.cuptr(), a1, a2, batch_num);
+    ::radix_sort_01_local_counting<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+        values.cuptr(), histograms.cuptr(), n, batch_num);
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda
