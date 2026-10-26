@@ -18,7 +18,7 @@
 #define SUB_NPASSES    (RADIX_BITS / SUB_BITS)
 
 #define SORT_WG_SIZE   256
-#define SORT_IPT       4
+#define SORT_IPT       24
 #define SORT_TILE      (SORT_WG_SIZE * SORT_IPT)
 
 #define SCAN_WG_SIZE   256
