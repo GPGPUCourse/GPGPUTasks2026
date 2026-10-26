@@ -8,14 +8,41 @@
 #include "../defines.h"
 
 __global__ void radix_sort_01_local_counting(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
     const unsigned int* buffer1,
           unsigned int* buffer2,
     unsigned int a1,
     unsigned int a2)
 {
-    // TODO
+    const unsigned int n = a1;
+    const unsigned int shift = a2;
+    const unsigned int nGroups = (n + GROUP_SIZE - 1) / GROUP_SIZE;
+
+    __shared__ unsigned int hist[NBINS];
+
+    const unsigned int i = threadIdx.x;
+    const unsigned int lane = i % 32;
+    const unsigned int index = blockIdx.x * GROUP_SIZE + i;
+
+    if (i < NBINS)
+        hist[i] = 0;
+    __syncthreads();
+
+    const bool valid = index < n;
+    const unsigned int d = valid ? ((buffer1[index] >> shift) & (NBINS - 1)) : 0;
+
+    unsigned int mask = __ballot_sync(0xFFFFFFFFu, valid);
+    for (int b = 0; b < RADIX_BITS; ++b) {
+        const bool bit = (d >> b) & 1u;
+        const unsigned int bal = __ballot_sync(0xFFFFFFFFu, bit);
+        mask &= bit ? bal : ~bal;
+    }
+
+    if (valid && (mask & ((1u << lane) - 1u)) == 0)
+        atomicAdd(&hist[d], __popc(mask));
+    __syncthreads();
+
+    if (i < NBINS)
+        buffer2[i * nGroups + blockIdx.x] = hist[i];
 }
 
 namespace cuda {

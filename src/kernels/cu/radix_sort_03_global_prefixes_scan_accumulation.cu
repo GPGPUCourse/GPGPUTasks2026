@@ -8,15 +8,25 @@
 #include "../defines.h"
 
 __global__ void radix_sort_03_global_prefixes_scan_accumulation(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
     // TODO try char
     const unsigned int* buffer1,
           unsigned int* buffer2,
     unsigned int a1,
     unsigned int a2)
 {
-    // TODO
+    const unsigned int n = a1;
+    const unsigned int k = a2;
+    const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+    if (index >= n)
+        return;
+
+    const unsigned int j = (index + 1) >> k;
+    const unsigned int add = (j & 1u) ? buffer1[j - 1] : 0;
+
+    if (k == 0)
+        buffer2[index] = add;
+    else if (add)
+        buffer2[index] += add;
 }
 
 namespace cuda {
