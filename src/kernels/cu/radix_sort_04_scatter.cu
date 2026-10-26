@@ -80,7 +80,6 @@ __device__ __forceinline__ unsigned int bucket_mask4(
         & ((b & 8u) ? m3 : ~m3);
 }
 
-__launch_bounds__(1024, 2)
 __global__ void radix_sort_04_scatter(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
@@ -91,62 +90,46 @@ __global__ void radix_sort_04_scatter(
     unsigned int n)
 {
     const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
-    const unsigned int computed_index = threadIdx.x;
     const unsigned char lane = threadIdx.x & 31u;
     const bool valid = index < n;
     const unsigned int warp = threadIdx.x / 32;
 
     __shared__ unsigned int data[SCATTER_GROUP_SIZE];
 
-    if (valid)
-        data[computed_index] = input[index];
-    else
-        data[computed_index] = 0;
-    // also used as localbase
     __shared__ unsigned int group_bucket_counters[(16 * SCATTER_GROUP_WARPS - 1) / NUM_BANKS + 16 * SCATTER_GROUP_WARPS];
     unsigned int local_order_in_warp_bucket = 0;
 
-    for (unsigned int local_sort_offset = offset; local_sort_offset < offset + RADIX_BITS; local_sort_offset += 4) {
-
-        unsigned int number = data[computed_index];
-        unsigned int bucket = get_bucket_with_dim(number, local_sort_offset, 4);
-
-        const unsigned int valid_mask = __ballot_sync(0xffffffffu, valid);
-        unsigned int mask1 = __ballot_sync(0xffffffff, (bucket & 1u) != 0);
-        unsigned int mask2 = __ballot_sync(0xffffffff, (bucket & 2u) != 0);
-        unsigned int mask3 = __ballot_sync(0xffffffff, (bucket & 4u) != 0);
-        unsigned int mask4 = __ballot_sync(0xffffffff, (bucket & 8u) != 0);
-        const unsigned int own_mask = bucket_mask4(bucket, valid_mask, mask1, mask2, mask3, mask4);
-        local_order_in_warp_bucket = __popc(own_mask & ((1u << lane) - 1u));
-
-        if (lane < 16) {
-            const unsigned int mask = bucket_mask4(lane, valid_mask, mask1, mask2, mask3, mask4);
-
-            group_bucket_counters[compute_index(lane * SCATTER_GROUP_WARPS + warp)] = __popc(mask);
-        }
-
-        warp_local_scan(group_bucket_counters, 16 * SCATTER_GROUP_WARPS);
-        if (valid)
-            data[group_bucket_counters[compute_index(bucket * SCATTER_GROUP_WARPS + warp)] + local_order_in_warp_bucket] = number;
-        __syncthreads();
-    }
-
-    unsigned int number = data[computed_index];
+    unsigned int number = valid ? input[index] : 0u;
     unsigned int bucket = get_bucket(number, offset);
+    const unsigned int valid_mask = __ballot_sync(0xffffffffu, valid);
+    unsigned int mask1 = __ballot_sync(0xffffffff, (bucket & 1u) != 0);
+    unsigned int mask2 = __ballot_sync(0xffffffff, (bucket & 2u) != 0);
+    unsigned int mask3 = __ballot_sync(0xffffffff, (bucket & 4u) != 0);
+    unsigned int mask4 = __ballot_sync(0xffffffff, (bucket & 8u) != 0);
+    const unsigned int own_mask = bucket_mask4(bucket, valid_mask, mask1, mask2, mask3, mask4);
+    local_order_in_warp_bucket = __popc(own_mask & ((1u << lane) - 1u));
 
-    __syncthreads();
+    if (lane < 16) {
+        const unsigned int mask = bucket_mask4(lane, valid_mask, mask1, mask2, mask3, mask4);
 
-    if (valid) {
-        if (threadIdx.x == 0 || bucket != get_bucket(data[threadIdx.x - 1], offset)) {
-            group_bucket_counters[bucket] = threadIdx.x;
-        }
+        group_bucket_counters[compute_index(lane * SCATTER_GROUP_WARPS + warp)] = __popc(mask);
     }
+
+    warp_local_scan(group_bucket_counters, 16 * SCATTER_GROUP_WARPS);
+    if (valid)
+        data[group_bucket_counters[compute_index(bucket * SCATTER_GROUP_WARPS + warp)] + local_order_in_warp_bucket] = number;
+
     __syncthreads();
 
     if (valid) {
-        unsigned int block_base = counters[bucket + BUCKET_COUNT * blockIdx.x];
-        unsigned int res_index = block_base + threadIdx.x - group_bucket_counters[bucket];
-        output[res_index] = number;
+        number = data[threadIdx.x];
+        bucket = get_bucket(number, offset);
+
+        const unsigned int local_base = group_bucket_counters[compute_index(bucket * SCATTER_GROUP_WARPS)];
+
+        const unsigned int block_base = counters[bucket + BUCKET_COUNT * blockIdx.x];
+
+        output[block_base + threadIdx.x - local_base] = number;
     }
 }
 
