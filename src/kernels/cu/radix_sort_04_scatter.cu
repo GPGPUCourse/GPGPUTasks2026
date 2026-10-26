@@ -48,22 +48,19 @@ __device__ __forceinline__ void warp_local_scan(
 
 #pragma unroll
         for (unsigned int k = 1; k < 32; k *= 2) {
-            unsigned int increment =
-                __shfl_up_sync(0xffffffffu, warp_prefix, k);
+            unsigned int increment = __shfl_up_sync(0xffffffffu, warp_prefix, k);
             if (lane >= k)
                 warp_prefix += increment;
         }
 
         if (lane < num_warps)
             warp_sums[lane] = warp_prefix - warp_value;
-
     }
 
     __syncthreads();
 
     if (threadIdx.x < data_size)
-        temp[compute_index(threadIdx.x)] =
-            warp_sums[warp] + prefix - value;
+        temp[compute_index(threadIdx.x)] = warp_sums[warp] + prefix - value;
 
     __syncthreads();
 }
@@ -78,25 +75,26 @@ __global__ void radix_sort_04_scatter(
     unsigned int n)
 {
     const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int computed_index = compute_index(threadIdx.x);
     const unsigned char lane = threadIdx.x & 31u;
     const unsigned int lane_before_mask_excluding = (1u << lane) - 1u;
     const bool valid = index < n;
     const unsigned int warp = threadIdx.x / 32;
 
-    __shared__ unsigned int data[SCATTER_GROUP_SIZE];
-    __shared__ unsigned int local_base[(BUCKET_COUNT - 1) / NUM_BANKS + BUCKET_COUNT];
+    __shared__ unsigned int data[(SCATTER_GROUP_SIZE - 1) / NUM_BANKS + SCATTER_GROUP_SIZE];
+    __shared__ unsigned int local_base[BUCKET_COUNT];
 
     if (valid)
-        data[threadIdx.x] = input[index];
+        data[computed_index] = input[index];
     else
-        data[threadIdx.x] = 0;
+        data[computed_index] = 0;
 
     __shared__ unsigned int group_bucket_counters[(16 * SCATTER_GROUP_WARPS - 1) / NUM_BANKS + 16 * SCATTER_GROUP_WARPS];
     unsigned int local_order_in_warp_bucket = 0;
 
     for (unsigned int local_sort_offset = offset; local_sort_offset < offset + RADIX_BITS; local_sort_offset += 4) {
 
-        unsigned int number = data[threadIdx.x];
+        unsigned int number = data[computed_index];
         unsigned int bucket = get_bucket_with_dim(number, local_sort_offset, 4);
 
 #pragma unroll
@@ -111,26 +109,24 @@ __global__ void radix_sort_04_scatter(
 
         warp_local_scan(group_bucket_counters, 16 * SCATTER_GROUP_WARPS);
         if (valid)
-            data[group_bucket_counters[compute_index(bucket * SCATTER_GROUP_WARPS + warp)] + local_order_in_warp_bucket] = number;
+            data[compute_index(group_bucket_counters[compute_index(bucket * SCATTER_GROUP_WARPS + warp)] + local_order_in_warp_bucket)] = number;
         __syncthreads();
     }
 
-    unsigned int number = data[threadIdx.x];
+    unsigned int number = data[computed_index];
     unsigned int bucket = get_bucket(number, offset);
     __syncthreads();
 
     if (valid) {
-
-        if (threadIdx.x == 0 ||
-            bucket != get_bucket(data[threadIdx.x - 1], offset)) {
-            local_base[compute_index(bucket)] = threadIdx.x;
+        if (threadIdx.x == 0 || bucket != get_bucket(data[compute_index(threadIdx.x - 1)], offset)) {
+            local_base[bucket] = threadIdx.x;
         }
     }
     __syncthreads();
 
     if (valid) {
         unsigned int block_base = counters[bucket * get_reducted_groups_count(n) + blockIdx.x];
-        unsigned int res_index = block_base + threadIdx.x - local_base[compute_index(bucket)];
+        unsigned int res_index = block_base + threadIdx.x - local_base[bucket];
         output[res_index] = number;
     }
 }
