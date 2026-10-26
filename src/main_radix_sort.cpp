@@ -125,8 +125,7 @@ void run(int argc, char** argv)
                     gpu::WorkSize(GROUP_SIZE, count), block_sums[level], block_sums[level - 1], count);
             }
 
-            ocl_radixSort03GlobalPrefixesScanAccumulation.exec(work_size, block_sums[0], prefixes_gpu, n);
-            ocl_radixSort04Scatter.exec(work_size, *source, prefixes_gpu, target, n, bit);
+            ocl_radixSort04Scatter.exec(work_size, *source, prefixes_gpu, block_sums[0], target, n, bit);
             source = &target;
         }
 

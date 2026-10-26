@@ -11,6 +11,7 @@ __kernel void radix_sort_04_scatter(
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
     __global const uint* input,
     __global const uint* prefixes,
+    __global const uint* block_prefixes,
     __global       uint* output,
     unsigned int n,
     unsigned int bit)
@@ -22,10 +23,13 @@ __kernel void radix_sort_04_scatter(
     }
 
     const uint value = input[i];
+    const uint group = get_group_id(0);
+    const uint prefix = prefixes[i] + (group > 0 ? block_prefixes[group - 1] : 0);
+    const uint total_zeros = block_prefixes[get_num_groups(0) - 1];
 
     const uint position = ((value >> bit) & 1) == 0
-        ? prefixes[i] - 1
-        : prefixes[n - 1] + i - prefixes[i];
+        ? prefix - 1
+        : total_zeros + i - prefix;
 
     output[position] = value;
 }
