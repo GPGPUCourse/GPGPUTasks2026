@@ -88,13 +88,14 @@ void run(int argc, char** argv)
 
     const unsigned int uint4_work_size = n / 4 + (n % 4 == 0 ? 0 : 1);
     const size_t num_groups_reductors = get_reducted_groups_count(n);
-
-    gpu::gpu_mem_32u counters(num_groups_reductors * BUCKET_COUNT);
+    const unsigned int counters_size = num_groups_reductors * BUCKET_COUNT;
+    gpu::gpu_mem_32u counters(counters_size);
+    gpu::gpu_mem_32u transposed_counters(counters_size);
 
     std::vector<gpu::gpu_mem_32u> reductors;
     reductors.push_back(counters);
 
-    for (unsigned int size = num_groups_reductors * BUCKET_COUNT; size > 1;) {
+    for (unsigned int size = counters_size; size > 1;) {
         size = size / PREFIX_SUM_GROPU_DATA_SIZE + (size % PREFIX_SUM_GROPU_DATA_SIZE != 0);
         reductors.emplace_back(size);
     }
@@ -139,8 +140,11 @@ void run(int argc, char** argv)
                         gpu::WorkSize(SCAN_GROUP_SIZE, 1, threads, 1), reductors[i - 1], reductors[i], size);
                 }
 
+                cuda::matrix_transpose_coalesced_via_local_memory(
+                    gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, num_groups_reductors, BUCKET_COUNT), counters, transposed_counters, num_groups_reductors, BUCKET_COUNT);
+
                 cuda::radix_sort_04_scatter(
-                    gpu::WorkSize(SCATTER_GROUP_SIZE, 1, n, 1), *input, counters, *output, offset, n);
+                    gpu::WorkSize(SCATTER_GROUP_SIZE, 1, n, 1), *input, transposed_counters, *output, offset, n);
             }
 
         } else {

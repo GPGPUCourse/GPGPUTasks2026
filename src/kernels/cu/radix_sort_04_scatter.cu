@@ -82,13 +82,12 @@ __global__ void radix_sort_04_scatter(
     const unsigned int warp = threadIdx.x / 32;
 
     __shared__ unsigned int data[(SCATTER_GROUP_SIZE - 1) / NUM_BANKS + SCATTER_GROUP_SIZE];
-    __shared__ unsigned int local_base[BUCKET_COUNT];
 
     if (valid)
         data[computed_index] = input[index];
     else
         data[computed_index] = 0;
-
+    // also used as localbase
     __shared__ unsigned int group_bucket_counters[(16 * SCATTER_GROUP_WARPS - 1) / NUM_BANKS + 16 * SCATTER_GROUP_WARPS];
     unsigned int local_order_in_warp_bucket = 0;
 
@@ -119,14 +118,16 @@ __global__ void radix_sort_04_scatter(
 
     if (valid) {
         if (threadIdx.x == 0 || bucket != get_bucket(data[compute_index(threadIdx.x - 1)], offset)) {
-            local_base[bucket] = threadIdx.x;
+            group_bucket_counters[bucket] = threadIdx.x;
         }
     }
     __syncthreads();
 
+
+
     if (valid) {
-        unsigned int block_base = counters[bucket * get_reducted_groups_count(n) + blockIdx.x];
-        unsigned int res_index = block_base + threadIdx.x - local_base[bucket];
+        unsigned int block_base = counters[bucket + BUCKET_COUNT * blockIdx.x];
+        unsigned int res_index = block_base + threadIdx.x - group_bucket_counters[bucket];
         output[res_index] = number;
     }
 }

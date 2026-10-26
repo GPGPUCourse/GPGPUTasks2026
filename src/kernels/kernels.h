@@ -21,6 +21,8 @@ void radix_sort_02_global_prefixes_scan_sum_reduction(const gpu::WorkSize& workS
 
 void radix_sort_04_scatter(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32u& input, gpu::gpu_mem_32u& counters, const gpu::gpu_mem_32u& output, unsigned int offset, unsigned int n);
+void matrix_transpose_coalesced_via_local_memory(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32u& matrix, gpu::gpu_mem_32u& transposed_matrix, unsigned int w, unsigned int h);
 }
 
 namespace ocl {
