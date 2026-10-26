@@ -88,18 +88,26 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u buffer_pingpong_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
+    const unsigned int radix_bits = 4;
+    const unsigned int tiles = (n + GROUP_SIZE - 1) / GROUP_SIZE;
+    gpu::gpu_mem_32u counts_gpu(tiles << radix_bits);
+    std::vector<gpu::gpu_mem_32u> block_sums_gpu;
+    for (unsigned int count = counts_gpu.number(); count > 0;) {
+        count = (count - 1) / (2 * GROUP_SIZE) + 1;
+        block_sums_gpu.emplace_back(count);
+        if (count == 1) {
+            break;
+        }
+    }
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
+    buffer_pingpong_gpu.fill(255);
     buffer_output_gpu.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
@@ -110,13 +118,29 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
+            gpu::WorkSize tiles_work_size(GROUP_SIZE, tiles * GROUP_SIZE);
+            for (unsigned int shift = 0; shift < 32; shift += radix_bits) {
+                const auto& src = shift == 0 ? input_gpu : (shift / radix_bits % 2 == 1 ? buffer_pingpong_gpu : buffer_output_gpu);
+                auto& dst = shift / radix_bits % 2 == 0 ? buffer_pingpong_gpu : buffer_output_gpu;
+
+                ocl_radixSort01LocalCounting.execAsynchronized(tiles_work_size, src, counts_gpu, n, shift);
+
+                for (size_t level = 0; level < block_sums_gpu.size(); ++level) {
+                    auto& data = level == 0 ? counts_gpu : block_sums_gpu[level - 1];
+                    unsigned int count = data.number();
+                    gpu::WorkSize work_size(GROUP_SIZE, block_sums_gpu[level].number() * GROUP_SIZE);
+                    ocl_radixSort02GlobalPrefixesScanSumReduction.execAsynchronized(work_size, data, data, block_sums_gpu[level], count);
+                }
+                for (size_t level = block_sums_gpu.size(); level > 1; --level) {
+                    auto& data = level == 2 ? counts_gpu : block_sums_gpu[level - 3];
+                    unsigned int count = data.number();
+                    gpu::WorkSize work_size(GROUP_SIZE, block_sums_gpu[level - 2].number() * GROUP_SIZE);
+                    ocl_radixSort03GlobalPrefixesScanAccumulation.execAsynchronized(work_size, block_sums_gpu[level - 2], data, count);
+                }
+
+                ocl_radixSort04Scatter.execAsynchronized(tiles_work_size, src, counts_gpu, dst, n, shift);
+            }
+            OCL_SAFE_CALL(clFinish(context.cl()->queue()));
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
