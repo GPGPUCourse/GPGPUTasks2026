@@ -110,6 +110,8 @@ void run(int argc, char** argv)
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) {
+        // Каждый прогон начинается с одних и тех же исходных данных.
+        input_gpu.copyToN(input_gpu_1, n);
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
@@ -124,36 +126,40 @@ void run(int argc, char** argv)
             // ocl_radixSort04Scatter.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
             gpu::WorkSize WorkSize(GROUP_SIZE, n);
-            gpu::WorkSize WorkSize_03(GROUP_SIZE, group_count * 16);
-            input_gpu.copyToN(input_gpu_1, n);
-
             for (unsigned int bit_shift = 0; bit_shift <= 28; bit_shift += 4) {
                 unsigned int cur_group_count = group_count;
-                unsigned int next_group_count = (cur_group_count + 1) / 2;
+                const gpu::gpu_mem_32u* current_counter = &local_counter;
+                gpu::gpu_mem_32u* reduction_output = &cur_counter;
+                gpu::gpu_mem_32u* reduction_scratch = &next_counter;
 
                 cuda::radix_sort_01_local_counting(WorkSize, input_gpu_1, local_counter, n, bit_shift);
-                cur_counter = local_counter;
                 cuda::fill_buffer_with_zeros(WorkSize, pref_sum, size);
                 
                 for (unsigned int level = 0; ; ++level) {
-                    cuda::radix_sort_03_global_prefixes_scan_accumulation(WorkSize_03, cur_counter, pref_sum, group_count, level);
-                    if (next_group_count == 1) {
+                    unsigned int prefix_group_count = group_count;
+                    if (level > 0) {
+                        const unsigned int block_size = 1u << level;
+                        const unsigned int segment_size = block_size * 2;
+                        const unsigned int remainder = group_count % segment_size;
+                        prefix_group_count = (group_count / segment_size) * block_size +
+                            (remainder > block_size ? remainder - block_size : 0);
+                    }
+                    gpu::WorkSize WorkSize_03(GROUP_SIZE, prefix_group_count * 16);
+                    cuda::radix_sort_03_global_prefixes_scan_accumulation(WorkSize_03, *current_counter, pref_sum, group_count, level);
+                    if (cur_group_count <= 2) {
                         break;
                     }
 
-                    next_group_count = (cur_group_count + 1) / 2;
+                    const unsigned int next_group_count = (cur_group_count + 1) / 2;
                     gpu::WorkSize WorkSize_02(GROUP_SIZE, next_group_count * 16);
-                    cuda::radix_sort_02_global_prefixes_scan_sum_reduction(WorkSize_02, cur_counter, next_counter, cur_group_count);
+                    cuda::radix_sort_02_global_prefixes_scan_sum_reduction(WorkSize_02, *current_counter, *reduction_output, cur_group_count);
 
-                    gpu::gpu_mem_32u tmp = cur_counter;
-                    cur_counter = next_counter;
-                    next_counter = tmp;
+                    current_counter = reduction_output;
+                    std::swap(reduction_output, reduction_scratch);
                     cur_group_count = next_group_count;
                 }
                 cuda::radix_sort_04_scatter(WorkSize, input_gpu_1, pref_sum, local_counter, input_gpu_2, n, bit_shift);
-                gpu::gpu_mem_32u tmp = input_gpu_1;
-                input_gpu_1 = input_gpu_2;
-                input_gpu_2 = tmp;
+                std::swap(input_gpu_1, input_gpu_2);
             }
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
@@ -171,9 +177,9 @@ void run(int argc, char** argv)
     }
     std::cout << "GPU radix-sort times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 
-    // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили его переупорядоченным)
-    double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
-    std::cout << "GPU radix-sort median effective VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s (" << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
+    // Lower-bound traffic estimate: each of the eight passes reads and writes the values array once.
+    double memory_size_gb = sizeof(unsigned int) * 2.0 * n * 8 / 1024.0 / 1024.0 / 1024.0;
+    std::cout << "GPU radix-sort estimated effective VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s (" << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
     std::vector<unsigned int> gpu_sorted = input_gpu_1.readVector();

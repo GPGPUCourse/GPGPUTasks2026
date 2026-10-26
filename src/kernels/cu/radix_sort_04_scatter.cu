@@ -18,37 +18,61 @@ __global__ void radix_sort_04_scatter(
     unsigned int bit_shift)
 {
     __shared__ unsigned int shared_bucket_offset[16];
+    __shared__ unsigned int shared_digit_total[16];
+    constexpr unsigned int warp_size = 32;
+    constexpr unsigned int warp_count = GROUP_SIZE / warp_size;
+    __shared__ unsigned int shared_warp_histogram[warp_count * 16];
+
     const unsigned int group_count = (n + blockDim.x - 1) / blockDim.x;
     const unsigned int last_group_offset = (group_count - 1) * 16;
 
+    // Load global digit totals once per block, then build bucket starts locally.
     if (threadIdx.x < 16) {
-        const unsigned int digit = threadIdx.x;
-        unsigned int bucket_offset = 0;
-        for (unsigned int previous_digit = 0; previous_digit < digit; ++previous_digit) {
-            bucket_offset += pref_sum[last_group_offset + previous_digit];
-        }
-        shared_bucket_offset[digit] = bucket_offset;
+        shared_digit_total[threadIdx.x] = pref_sum[last_group_offset + threadIdx.x];
+    }
+    for (unsigned int i = threadIdx.x; i < warp_count * 16; i += blockDim.x) {
+        shared_warp_histogram[i] = 0;
     }
     __syncthreads();
 
+    if (threadIdx.x < 16) {
+        unsigned int bucket_offset = 0;
+        for (unsigned int previous_digit = 0; previous_digit < threadIdx.x; ++previous_digit) {
+            bucket_offset += shared_digit_total[previous_digit];
+        }
+        shared_bucket_offset[threadIdx.x] = bucket_offset;
+    }
+
     const unsigned int index = blockIdx.x * blockDim.x + threadIdx.x;
-    if (index >= n) {
+    const bool valid = index < n;
+    const unsigned int value = valid ? values[index] : 0;
+    // 16 is a sentinel for inactive lanes; valid radix digits are 0..15.
+    const unsigned int digit = valid ? ((value >> bit_shift) & 15) : 16;
+    const unsigned int warp = threadIdx.x / warp_size;
+
+    if (valid) {
+        atomicAdd(&shared_warp_histogram[warp * 16 + digit], 1);
+    }
+    __syncthreads();
+
+    // All lanes participate. match_any returns the lanes with this digit,
+    // making the rank within a warp stable and independent of scheduling.
+    const unsigned int matching_lanes = __match_any_sync(0xffffffffu, digit);
+    const unsigned int lane = threadIdx.x & (warp_size - 1);
+    const unsigned int earlier_lanes = (1u << lane) - 1u;
+    unsigned int local_offset = __popc(matching_lanes & earlier_lanes);
+
+    if (!valid) {
         return;
     }
 
-    const unsigned int value = values[index];
     const unsigned int group = blockIdx.x;
-    const unsigned int digit = (value >> bit_shift) & 15;
     const unsigned int group_digit_index = group * 16 + digit;
 
     const unsigned int group_offset = pref_sum[group_digit_index] - local_count[group_digit_index];
 
-    unsigned int local_offset = 0;
-    const unsigned int group_begin = group * blockDim.x;
-    for (unsigned int previous = 0; previous < threadIdx.x; ++previous) {
-        const unsigned int prev_value = values[group_begin + previous];
-        const unsigned int prev_digit = (prev_value >> bit_shift) & 15;
-        local_offset += (prev_digit == digit);
+    for (unsigned int previous_warp = 0; previous_warp < warp; ++previous_warp) {
+        local_offset += shared_warp_histogram[previous_warp * 16 + digit];
     }
 
     const unsigned int dest =
