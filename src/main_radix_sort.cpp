@@ -42,12 +42,6 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_radixSort03GlobalPrefixesScanAccumulation(ocl::getRadixSort03GlobalPrefixesScanAccumulation());
     ocl::KernelSource ocl_radixSort04Scatter(ocl::getRadixSort04Scatter());
 
-    avk2::KernelSource vk_fillBufferWithZeros(avk2::getFillBufferWithZeros());
-    avk2::KernelSource vk_radixSort01LocalCounting(avk2::getRadixSort01LocalCounting());
-    avk2::KernelSource vk_radixSort02GlobalPrefixesScanSumReduction(avk2::getRadixSort02GlobalPrefixesScanSumReduction());
-    avk2::KernelSource vk_radixSort03GlobalPrefixesScanAccumulation(avk2::getRadixSort03GlobalPrefixesScanAccumulation());
-    avk2::KernelSource vk_radixSort04Scatter(avk2::getRadixSort04Scatter());
-
     FastRandom r;
 
     int n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
@@ -88,53 +82,52 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u prefixes_gpu(n), buffer_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
+    std::vector<gpu::gpu_mem_32u> block_sums;
+    unsigned int level_size = n;
+    do {
+        level_size = (level_size + GROUP_SIZE - 1) / GROUP_SIZE;
+        block_sums.emplace_back(level_size);
+    } while (level_size > 1);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
+    prefixes_gpu.fill(255);
+    buffer_gpu.fill(255);
     buffer_output_gpu.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
+    const gpu::WorkSize work_size(GROUP_SIZE, n);
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
-        // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-        // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::radix_sort_01_local_counting();
-            // cuda::radix_sort_02_global_prefixes_scan_sum_reduction();
-            // cuda::radix_sort_03_global_prefixes_scan_accumulation();
-            // cuda::radix_sort_04_scatter();
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fillBufferWithZeros.exec();
-            // vk_radixSort01LocalCounting.exec();
-            // vk_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // vk_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // vk_radixSort04Scatter.exec();
-        } else {
-            rassert(false, 4531412341, context.type());
+        const gpu::gpu_mem_32u* source = &input_gpu;
+
+        for (unsigned int bit = 0; bit < 32; ++bit) {
+            gpu::gpu_mem_32u& target = bit % 2 == 0 ? buffer_gpu : buffer_output_gpu;
+            ocl_radixSort01LocalCounting.exec(work_size, *source, prefixes_gpu, n, bit);
+            ocl_radixSort02GlobalPrefixesScanSumReduction.exec(work_size, prefixes_gpu, block_sums[0], n);
+
+            for (size_t level = 1; level < block_sums.size(); ++level) {
+                unsigned int count = block_sums[level - 1].number();
+                ocl_radixSort02GlobalPrefixesScanSumReduction.exec(
+                    gpu::WorkSize(GROUP_SIZE, count), block_sums[level - 1], block_sums[level], count);
+            }
+
+            for (size_t level = block_sums.size() - 1; level > 0; --level) {
+                unsigned int count = block_sums[level - 1].number();
+                ocl_radixSort03GlobalPrefixesScanAccumulation.exec(
+                    gpu::WorkSize(GROUP_SIZE, count), block_sums[level], block_sums[level - 1], count);
+            }
+
+            ocl_radixSort03GlobalPrefixesScanAccumulation.exec(work_size, block_sums[0], prefixes_gpu, n);
+            ocl_radixSort04Scatter.exec(work_size, *source, prefixes_gpu, target, n, bit);
+            source = &target;
         }
 
         times.push_back(t.elapsed());
