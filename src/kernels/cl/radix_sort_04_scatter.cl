@@ -5,15 +5,23 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-__attribute__((reqd_work_group_size(1, 1, 1)))
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void radix_sort_04_scatter(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
     __global const uint* buffer1,
     __global const uint* buffer2,
-                   uint* buffer3,
-    unsigned int a1,
-    unsigned int a2)
+    __global       uint* buffer3,
+    unsigned int n,
+    unsigned int l)
 {
-    // TODO
+    const unsigned int i = get_global_id(0);
+    if (i >= n)
+        return;
+
+    const uint key = buffer1[i];
+    const uint b = (key >> l) & 1;
+    const uint ones_before = buffer2[i] - b;
+    const uint total_zeros = n - buffer2[n - 1];
+
+    const uint pos = b ? (total_zeros + ones_before) : (i - ones_before);
+    buffer3[pos] = key;
 }
