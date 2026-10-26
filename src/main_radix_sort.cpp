@@ -13,6 +13,75 @@
 
 #include <fstream>
 
+void scan_gpu(
+    const gpu::gpu_mem_32u& input_gpu,
+    gpu::gpu_mem_32u& output_gpu,
+    unsigned int n,
+    ocl::KernelSource& scan_blocks,
+    ocl::KernelSource& add_offsets)
+{
+    if (n == 0)
+        return;
+
+    const unsigned int blocks = (n - 1) / GROUP_SIZE + 1;
+
+    gpu::gpu_mem_32u block_sums_gpu(blocks);
+    gpu::WorkSize work_size(GROUP_SIZE, n);
+
+    scan_blocks.exec(
+        work_size,
+        input_gpu,
+        output_gpu,
+        block_sums_gpu,
+        n);
+
+    if (blocks == 1)
+        return;
+
+    gpu::gpu_mem_32u block_prefixes_gpu(blocks);
+
+    scan_gpu(
+        block_sums_gpu,
+        block_prefixes_gpu,
+        blocks,
+        scan_blocks,
+        add_offsets);
+
+    add_offsets.exec(
+        work_size,
+        output_gpu,
+        block_prefixes_gpu,
+        n);
+}
+
+void radix_sort_gpu(
+    const gpu::gpu_mem_32u& input,
+    gpu::gpu_mem_32u& output,
+    gpu::gpu_mem_32u& temporary,
+    gpu::gpu_mem_32u& local_prefixes,
+    gpu::gpu_mem_32u& block_sums,
+    gpu::gpu_mem_32u& block_prefixes,
+    unsigned int n,
+    ocl::KernelSource& local_counting,
+    ocl::KernelSource& scan_blocks,
+    ocl::KernelSource& add_offsets,
+    ocl::KernelSource& scatter)
+{
+    if (n == 0)
+        return;
+    const unsigned int blocks = (n - 1) / GROUP_SIZE + 1;
+    const gpu::gpu_mem_32u* source = &input;
+    for (unsigned int bit = 0; bit < 32; ++bit) {
+        gpu::gpu_mem_32u& destination = bit % 2 == 0 ? temporary : output;
+        local_counting.exec(gpu::WorkSize(GROUP_SIZE, n),
+            *source, local_prefixes, block_sums, n, bit);
+        scan_gpu(block_sums, block_prefixes, blocks, scan_blocks, add_offsets);
+        scatter.exec(gpu::WorkSize(GROUP_SIZE, n),
+            *source, local_prefixes, block_prefixes, destination, n, bit);
+        source = &destination;
+    }
+}
+
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -88,7 +157,8 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    const unsigned int blocks = (n - 1) / GROUP_SIZE + 1;
+    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(blocks), buffer4_gpu(blocks); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -110,13 +180,12 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
+            radix_sort_gpu(input_gpu, buffer_output_gpu, buffer1_gpu,
+                buffer2_gpu, buffer3_gpu, buffer4_gpu, n,
+                ocl_radixSort01LocalCounting,
+                ocl_radixSort02GlobalPrefixesScanSumReduction,
+                ocl_radixSort03GlobalPrefixesScanAccumulation,
+                ocl_radixSort04Scatter);
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
