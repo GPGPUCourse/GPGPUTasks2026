@@ -20,9 +20,7 @@ __global__ void radix_sort_01_local_counting(
     const unsigned int group = blockIdx.x;
     const unsigned int base = group * SORT_TILE;
 
-    for (unsigned int b = lid; b < RADIX; b += SORT_WG_SIZE) {
-        hist[b] = 0;
-    }
+    hist[lid] = 0;
     __syncthreads();
 
     for (unsigned int k = 0; k < SORT_IPT; ++k) {
@@ -33,9 +31,7 @@ __global__ void radix_sort_01_local_counting(
     }
     __syncthreads();
 
-    for (unsigned int b = lid; b < RADIX; b += SORT_WG_SIZE) {
-        counters[b * n_groups + group] = hist[b];
-    }
+    counters[lid * n_groups + group] = hist[lid];
 }
 
 namespace cuda {
