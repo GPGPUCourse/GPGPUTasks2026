@@ -151,7 +151,7 @@ void run(int argc, char** argv)
                 for (size_t i = 0; i < n_levels; i++)
                 {
                     gpu::WorkSize work_size(GROUP_SIZE, (i + 1 == n_levels) ? GROUP_SIZE : level_worksizes[i + 1] * GROUP_SIZE);
-                    ocl_radixSort03GlobalPrefixesScanAccumulation.exec(
+                    ocl_radixSort02GlobalPrefixesScanSumReduction.exec(
                         work_size,
                         *level_buffers[i],
                         (i + 1 < n_levels) ? *level_buffers[i + 1] : dummy_gpu,
@@ -162,7 +162,7 @@ void run(int argc, char** argv)
     
                 for (int i = n_levels - 2; i >= 0; i--) {
                     gpu::WorkSize work_size(GROUP_SIZE, ((level_worksizes[i] + GROUP_SIZE - 1) / GROUP_SIZE) * GROUP_SIZE * RADIX);
-                    ocl_radixSort02GlobalPrefixesScanSumReduction.exec(
+                    ocl_radixSort03GlobalPrefixesScanAccumulation.exec(
                         work_size,
                         *level_buffers[i],
                         *level_buffers[i + 1],
