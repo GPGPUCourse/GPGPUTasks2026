@@ -50,7 +50,7 @@ void run(int argc, char** argv)
 
     FastRandom r;
 
-    int n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+    int n = 100*1000*1000; // // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
     int max_value = std::numeric_limits<int>::max(); // TODO при отладке используйте минимальное max_value (например max_value=8) при котором воспроизводится бага
 
     unsigned int bit_count = 0;
@@ -108,13 +108,14 @@ void run(int argc, char** argv)
 
     const unsigned int num_groups =
         (n + GROUP_SIZE - 1) / GROUP_SIZE;
+    const unsigned int hist_size = 16u * num_groups;
 
-    gpu::gpu_mem_32u block_one_counts_gpu(num_groups);
-    gpu::gpu_mem_32u global_one_prefix_gpu(num_groups);
+    gpu::gpu_mem_32u block_one_counts_gpu(hist_size);
+    gpu::gpu_mem_32u global_one_prefix_gpu(hist_size);
 
     std::vector<gpu::gpu_mem_32u> levels;
-
-    for (unsigned int current_n = num_groups; current_n > 1;) {
+    
+    for (unsigned int current_n = hist_size; current_n > 1;) {
         current_n = (current_n + 1) / 2;
         levels.emplace_back(current_n);
     }
@@ -138,49 +139,54 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
+            const unsigned int passes = (bit_count + 3u) / 4u;
             const gpu::gpu_mem_32u* current_input = &input_gpu;
+            gpu::gpu_mem_32u* current_output =
+                (passes & 1u) ? &buffer_output_gpu : &work_gpu;
 
-            gpu::gpu_mem_32u* current_output = (bit_count % 2u != 0u) ? &buffer_output_gpu : &work_gpu;
+            for (unsigned int pass = 0u; pass < passes; ++pass) {
+                const unsigned int shift = 4u * pass;
+                ocl_radixSort01LocalCounting.exec(
+                    gpu::WorkSize(GROUP_SIZE, n),
+                    *current_input, local_one_rank_gpu, block_one_counts_gpu,
+                    static_cast<unsigned int>(n), num_groups, shift);
 
-            for (unsigned int bit = 0; bit < bit_count; ++bit) {
-                ocl_radixSort01LocalCounting.exec(gpu::WorkSize(GROUP_SIZE, n), *current_input,local_one_rank_gpu, block_one_counts_gpu, static_cast<unsigned int>(n), bit);
-
-                unsigned int current_n = num_groups;
-
+                unsigned int current_n = hist_size;
                 for (size_t level = 0; level < levels.size(); ++level) {
-                    const unsigned int next_n = (current_n + 1) / 2;
-
-                    const gpu::gpu_mem_32u& src = (level == 0) ? block_one_counts_gpu : levels[level - 1];
-
-                    ocl_radixSort02GlobalPrefixesScanSumReduction.exec(gpu::WorkSize(GROUP_SIZE, next_n), src, levels[level], current_n);
-
+                    const unsigned int next_n = (current_n + 1u) / 2u;
+                    const gpu::gpu_mem_32u& src = level == 0u
+                        ? block_one_counts_gpu : levels[level - 1u];
+                    ocl_radixSort02GlobalPrefixesScanSumReduction.exec(
+                        gpu::WorkSize(GROUP_SIZE, next_n),
+                        src, levels[level], current_n);
                     current_n = next_n;
                 }
 
-                ocl_fillBufferWithZeros.exec(gpu::WorkSize(GROUP_SIZE, num_groups), global_one_prefix_gpu, num_groups);
-
-                ocl_radixSort03GlobalPrefixesScanAccumulation.exec(gpu::WorkSize(GROUP_SIZE, num_groups), block_one_counts_gpu, global_one_prefix_gpu, num_groups, 0u);
-
+                ocl_fillBufferWithZeros.exec(
+                    gpu::WorkSize(GROUP_SIZE, hist_size),
+                    global_one_prefix_gpu, hist_size);
+                ocl_radixSort03GlobalPrefixesScanAccumulation.exec(
+                    gpu::WorkSize(GROUP_SIZE, hist_size),
+                    block_one_counts_gpu, global_one_prefix_gpu, hist_size, 0u);
                 for (size_t level = 0; level < levels.size(); ++level) {
-                    const unsigned int pow2 = static_cast<unsigned int>(level + 1);
-
-                    ocl_radixSort03GlobalPrefixesScanAccumulation.exec(gpu::WorkSize(GROUP_SIZE, num_groups), levels[level], global_one_prefix_gpu, num_groups, pow2);
+                    ocl_radixSort03GlobalPrefixesScanAccumulation.exec(
+                        gpu::WorkSize(GROUP_SIZE, hist_size),
+                        levels[level], global_one_prefix_gpu, hist_size,
+                        static_cast<unsigned int>(level + 1u));
                 }
 
-                ocl_radixSort04Scatter.exec(gpu::WorkSize(GROUP_SIZE, n), *current_input, local_one_rank_gpu, block_one_counts_gpu, global_one_prefix_gpu, *current_output, static_cast<unsigned int>(n), num_groups, bit);
+                ocl_radixSort04Scatter.exec(
+                    gpu::WorkSize(GROUP_SIZE, n),
+                    *current_input, local_one_rank_gpu, global_one_prefix_gpu,
+                    *current_output, static_cast<unsigned int>(n),
+                    num_groups, shift);
 
-                if (bit + 1 < bit_count) {
+                if (pass + 1u < passes) {
                     current_input = current_output;
-
-                    current_output = (current_output == &buffer_output_gpu) ? &work_gpu : &buffer_output_gpu;
+                    current_output = (current_output == &buffer_output_gpu)
+                        ? &work_gpu : &buffer_output_gpu;
                 }
             }
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            //ocl_radixSort02GlobalPrefixesScanSumReduction.exec(gpu::WorkSize(GROUP_SIZE, (current_n + 1) / 2));
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
