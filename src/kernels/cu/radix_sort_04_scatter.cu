@@ -8,15 +8,32 @@
 #include "helpers/rassert.cu"
 
 __global__ void radix_sort_04_scatter(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* buffer1,
-    const unsigned int* buffer2,
-    unsigned int* buffer3,
-    unsigned int a1,
-    unsigned int a2)
+    const unsigned int* input,
+    const unsigned int* offsets,
+    unsigned int* output,
+    unsigned int n,
+    unsigned int bit)
 {
-    // TODO
+    unsigned int start = blockIdx.x * blockDim.x;
+    unsigned int i = start + threadIdx.x;
+    if (i >= n)
+        return;
+
+    unsigned int value = input[i];
+    unsigned int digit = (value >> bit) & 1u;
+    unsigned int local_rank = 0;
+
+    for (unsigned int j = start; j < i; ++j) {
+        unsigned int previous_digit = (input[j] >> bit) & 1u;
+
+        if (previous_digit == digit)
+            ++local_rank;
+    }
+
+    unsigned int base = offsets[digit * gridDim.x + blockIdx.x];
+    unsigned int position = base + local_rank;
+
+    output[position] = value;
 }
 
 namespace cuda {

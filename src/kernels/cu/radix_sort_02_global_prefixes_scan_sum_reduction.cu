@@ -8,14 +8,21 @@
 #include "helpers/rassert.cu"
 
 __global__ void radix_sort_02_global_prefixes_scan_sum_reduction(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    // TODO try char
-    const unsigned int* buffer1,
-    unsigned int* buffer2,
-    unsigned int a1)
+    const unsigned int* input,
+    unsigned int* output,
+    unsigned int n)
 {
-    // TODO
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int left = 2 * i;
+    if (left >= n) {
+        return;
+    }
+
+    unsigned int sum = input[left];
+    if (left + 1 < n) {
+        sum += input[left + 1];
+    }
+    output[i] = sum;
 }
 
 namespace cuda {

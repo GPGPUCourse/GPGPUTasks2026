@@ -8,15 +8,21 @@
 #include "helpers/rassert.cu"
 
 __global__ void radix_sort_03_global_prefixes_scan_accumulation(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    // TODO try char
-    const unsigned int* buffer1,
-    unsigned int* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+    const unsigned int* level_sums,
+    unsigned int* offsets,
+    unsigned int n,
+    unsigned int level)
 {
-    // TODO
+    unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n)
+        return;
+    if (level == 0)
+        offsets[i] = 0;
+    unsigned int segment_size = 1u << level;
+    if ((i & segment_size) != 0) {
+        unsigned int segment = (i >> level) - 1;
+        offsets[i] += level_sums[segment];
+    }
 }
 
 namespace cuda {

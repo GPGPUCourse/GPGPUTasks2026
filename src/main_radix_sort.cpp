@@ -3,8 +3,13 @@
 
 #include <libbase/fast_random.h>
 #include <libbase/timer.h>
+#include <libgpu/cuda/utils.h>
+#include <libgpu/shared_device_buffer.h>
 #include <libgpu/vulkan/engine.h>
 #include <libgpu/vulkan/tests/test_utils.h>
+#include <libgpu/work_size.h>
+
+#include <vector>
 
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
@@ -86,20 +91,36 @@ void run(int argc, char** argv)
         std::cout << "CPU std::sort effective RAM bandwidth: " << memory_size_gb / elapsed << " GB/s (" << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
+    constexpr unsigned int BLOCK = 256;
+
+    const unsigned int blocks = (n + BLOCK - 1) / BLOCK;
+    const unsigned int counts_size = 2 * blocks;
+
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u temporary_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
+
+    gpu::gpu_mem_32u offsets_gpu(counts_size);
+
+    std::vector<unsigned int> level_sizes { counts_size };
+    while (level_sizes.back() > 1)
+        level_sizes.push_back((level_sizes.back() + 1) / 2);
+    std::vector<gpu::gpu_mem_32u> levels_gpu(level_sizes.size());
+
+    for (size_t level = 0; level < level_sizes.size(); ++level)
+        levels_gpu[level].resizeN(level_sizes[level]);
+
+    const gpu::WorkSize data_work_size(BLOCK, n);
+    const gpu::WorkSize scan_work_size(BLOCK, counts_size);
+
+    input_gpu.writeN(as.data(), n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
     buffer_output_gpu.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
@@ -118,13 +139,50 @@ void run(int argc, char** argv)
             // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
             // ocl_radixSort04Scatter.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::radix_sort_01_local_counting();
-            // cuda::radix_sort_02_global_prefixes_scan_sum_reduction();
-            // cuda::radix_sort_03_global_prefixes_scan_accumulation();
-            // cuda::radix_sort_04_scatter();
+
+            const gpu::gpu_mem_32u* source = &input_gpu;
+            gpu::gpu_mem_32u* destination = &temporary_gpu;
+
+            for (unsigned int bit = 0; bit < 32; ++bit) {
+                cuda::radix_sort_01_local_counting(
+                    data_work_size,
+                    *source,
+                    levels_gpu[0],
+                    n,
+                    bit);
+
+                for (size_t level = 1; level < levels_gpu.size(); ++level) {
+                    cuda::radix_sort_02_global_prefixes_scan_sum_reduction(
+                        gpu::WorkSize(BLOCK, level_sizes[level]),
+                        levels_gpu[level - 1],
+                        levels_gpu[level],
+                        level_sizes[level - 1]);
+                }
+                for (unsigned int level = 0; level < levels_gpu.size(); ++level) {
+                    cuda::radix_sort_03_global_prefixes_scan_accumulation(
+                        scan_work_size,
+                        levels_gpu[level],
+                        offsets_gpu,
+                        counts_size,
+                        level);
+                }
+
+                cuda::radix_sort_04_scatter(
+                    data_work_size,
+                    *source,
+                    offsets_gpu,
+                    *destination,
+                    n,
+                    bit);
+
+                source = destination;
+
+                if (destination == &temporary_gpu)
+                    destination = &buffer_output_gpu;
+                else
+                    destination = &temporary_gpu;
+            }
+            CUDA_CHECK_KERNEL_SYNC(context.cudaStream());
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
