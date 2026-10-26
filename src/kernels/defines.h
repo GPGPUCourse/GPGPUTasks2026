@@ -12,7 +12,7 @@
 #define RADIX_MASK     (RADIX - 1)
 #define RADIX_NPASSES  (32 / RADIX_BITS)
 
-#define SUB_BITS       1
+#define SUB_BITS       2
 #define SUB_RADIX      (1 << SUB_BITS)
 #define SUB_MASK       (SUB_RADIX - 1)
 #define SUB_NPASSES    (RADIX_BITS / SUB_BITS)
