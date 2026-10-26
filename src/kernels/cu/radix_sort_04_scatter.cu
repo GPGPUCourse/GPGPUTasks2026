@@ -14,22 +14,31 @@ __global__ void radix_sort_04_scatter(
     unsigned int n,
     unsigned int bit)
 {
+    __shared__ unsigned int warp_ones[32];
+
     unsigned int start = blockIdx.x * blockDim.x;
     unsigned int i = start + threadIdx.x;
+    unsigned int lane = threadIdx.x & 31u;
+    unsigned int warp = threadIdx.x >> 5;
+
+    unsigned int value = i < n ? input[i] : 0u;
+    unsigned int digit = (value >> bit) & 1u;
+    unsigned int mask = __ballot_sync(0xffffffffu, i < n && digit == 1);
+
+    if (lane == 0)
+        warp_ones[warp] = __popc(mask);
+
+    __syncthreads();
+
     if (i >= n)
         return;
 
-    unsigned int value = input[i];
-    unsigned int digit = (value >> bit) & 1u;
-    unsigned int local_rank = 0;
+    unsigned int ones_before = __popc(mask & ((1u << lane) - 1u));
 
-    for (unsigned int j = start; j < i; ++j) {
-        unsigned int previous_digit = (input[j] >> bit) & 1u;
+    for (unsigned int w = 0; w < warp; ++w)
+        ones_before += warp_ones[w];
 
-        if (previous_digit == digit)
-            ++local_rank;
-    }
-
+    unsigned int local_rank = digit == 1 ? ones_before : threadIdx.x - ones_before;
     unsigned int base = offsets[digit * gridDim.x + blockIdx.x];
     unsigned int position = base + local_rank;
 
