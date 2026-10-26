@@ -16,6 +16,47 @@ __global__ void radix_sort_02_global_prefixes_scan_sum_reduction(
     unsigned int a1)
 {
     // TODO
+    const unsigned t = threadIdx.x;
+    const unsigned lane = t & 31;
+    const unsigned warp = t >> 5;
+    const unsigned start = blockIdx.x * 1024 + 4 * t;
+
+    __shared__ unsigned sums[8];
+
+    unsigned v[4];
+    unsigned sum = 0;
+
+#pragma unroll
+    for (unsigned k = 0; k < 4; ++k) {
+        v[k] = start + k < a1 ? buffer1[start + k] : 0;
+        sum += v[k];
+    }
+
+    unsigned scan = sum;
+
+    for (unsigned step = 1; step < 32; step *= 2) {
+        unsigned x = __shfl_up_sync(0xffffffff, scan, step);
+        if (lane >= step) scan += x;
+    }
+
+    if (lane == 31) sums[warp] = scan;
+    __syncthreads();
+
+    unsigned offset = scan - sum;
+
+    for (unsigned w = 0; w < warp; ++w)
+        offset += sums[w];
+
+#pragma unroll
+    for (unsigned k = 0; k < 4; ++k) {
+        if (start + k < a1)
+            buffer2[start + k] = offset;
+
+        offset += v[k];
+    }
+
+    if (t == 255)
+        buffer2[a1 + blockIdx.x] = offset;
 }
 
 namespace cuda {

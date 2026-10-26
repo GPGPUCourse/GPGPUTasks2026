@@ -28,7 +28,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -88,8 +88,16 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    //gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
     gpu::gpu_mem_32u buffer_output_gpu(n);
+    const unsigned blocks = (n + 1023) / 1024;
+    const unsigned histSize = 16 * blocks;
+    const unsigned chunks = (histSize + 1023) / 1024;
+
+    gpu::gpu_mem_32u buffer1_gpu(n);
+    gpu::gpu_mem_32u buffer2_gpu(histSize);
+    gpu::gpu_mem_32u buffer3_gpu(histSize + chunks);
+    gpu::gpu_mem_32u buffer4_gpu(histSize + chunks);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -119,12 +127,34 @@ void run(int argc, char** argv)
             // ocl_radixSort04Scatter.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::radix_sort_01_local_counting();
-            // cuda::radix_sort_02_global_prefixes_scan_sum_reduction();
-            // cuda::radix_sort_03_global_prefixes_scan_accumulation();
-            // cuda::radix_sort_04_scatter();
+            //throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            const gpu::WorkSize dataWork(256, blocks * 256);
+            const gpu::WorkSize scanWork(256, chunks * 256);
+            const gpu::WorkSize oneBlock(256, 256);
+
+            for (unsigned shift = 0; shift < 32; shift += 4) {
+                const auto& src = shift == 0
+                    ? input_gpu
+                    : (shift % 8 == 0 ? buffer_output_gpu : buffer1_gpu);
+
+                auto& dst = shift % 8 == 0 ? buffer1_gpu : buffer_output_gpu;
+
+                cuda::radix_sort_01_local_counting(
+                    dataWork, src, buffer2_gpu, n, shift);
+
+                cuda::radix_sort_02_global_prefixes_scan_sum_reduction(
+                    scanWork, buffer2_gpu, buffer3_gpu, histSize);
+
+                cuda::radix_sort_03_global_prefixes_scan_accumulation(
+                    oneBlock, buffer3_gpu, buffer4_gpu, histSize, 0);
+
+                cuda::radix_sort_03_global_prefixes_scan_accumulation(
+                    scanWork, buffer3_gpu, buffer4_gpu, histSize, 1);
+
+                cuda::radix_sort_04_scatter(
+                    dataWork, src, buffer4_gpu, dst, n, shift);
+            }
+
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);

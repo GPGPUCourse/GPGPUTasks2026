@@ -15,7 +15,28 @@ __global__ void radix_sort_01_local_counting(
     unsigned int a1,
     unsigned int a2)
 {
-    // TODO
+    const unsigned t = threadIdx.x;
+    const unsigned blocks = (a1 + 1023) / 1024;
+
+    __shared__ unsigned hist[16];
+
+    if (t < 16) hist[t] = 0;
+    __syncthreads();
+
+    for (unsigned k = 0; k < 4; ++k) {
+        unsigned i = blockIdx.x * 1024 + k * 256 + t;
+        unsigned d = i < a1 ? ((buffer1[i] >> a2) & 15) : 16;
+
+        unsigned same = __match_any_sync(0xffffffff, d);
+
+        if (d < 16 && (t & 31) == __ffs(same) - 1)
+            atomicAdd(&hist[d], __popc(same));
+    }
+
+    __syncthreads();
+
+    if (t < 16)
+        buffer2[t * blocks + blockIdx.x] = hist[t];
 }
 
 namespace cuda {
