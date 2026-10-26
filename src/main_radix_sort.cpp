@@ -90,9 +90,8 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u buffer_pingpong_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
-    const unsigned int radix_bits = 4;
-    const unsigned int tiles = (n + GROUP_SIZE - 1) / GROUP_SIZE;
-    gpu::gpu_mem_32u counts_gpu(tiles << radix_bits);
+    unsigned int tiles = (n + 4 * GROUP_SIZE - 1) / (4 * GROUP_SIZE);
+    gpu::gpu_mem_32u counts_gpu(16 * tiles);
     std::vector<gpu::gpu_mem_32u> block_sums_gpu;
     for (unsigned int count = counts_gpu.number(); count > 0;) {
         count = (count - 1) / (2 * GROUP_SIZE) + 1;
@@ -118,12 +117,13 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            gpu::WorkSize tiles_work_size(GROUP_SIZE, tiles * GROUP_SIZE);
-            for (unsigned int shift = 0; shift < 32; shift += radix_bits) {
-                const auto& src = shift == 0 ? input_gpu : (shift / radix_bits % 2 == 1 ? buffer_pingpong_gpu : buffer_output_gpu);
-                auto& dst = shift / radix_bits % 2 == 0 ? buffer_pingpong_gpu : buffer_output_gpu;
+            gpu::WorkSize tiles_ws(GROUP_SIZE, tiles * GROUP_SIZE);
+            for (unsigned int pass = 0; pass < 8; ++pass) {
+                unsigned int shift = 4 * pass;
+                auto& src = pass == 0 ? input_gpu : (pass % 2 ? buffer_pingpong_gpu : buffer_output_gpu);
+                auto& dst = pass % 2 ? buffer_output_gpu : buffer_pingpong_gpu;
 
-                ocl_radixSort01LocalCounting.execAsynchronized(tiles_work_size, src, counts_gpu, n, shift);
+                ocl_radixSort01LocalCounting.execAsynchronized(tiles_ws, src, counts_gpu, n, shift);
 
                 for (size_t level = 0; level < block_sums_gpu.size(); ++level) {
                     auto& data = level == 0 ? counts_gpu : block_sums_gpu[level - 1];
@@ -138,7 +138,7 @@ void run(int argc, char** argv)
                     ocl_radixSort03GlobalPrefixesScanAccumulation.execAsynchronized(work_size, block_sums_gpu[level - 2], data, count);
                 }
 
-                ocl_radixSort04Scatter.execAsynchronized(tiles_work_size, src, counts_gpu, dst, n, shift);
+                ocl_radixSort04Scatter.execAsynchronized(tiles_ws, src, counts_gpu, dst, n, shift);
             }
             OCL_SAFE_CALL(clFinish(context.cl()->queue()));
         } else if (context.type() == gpu::Context::TypeCUDA) {

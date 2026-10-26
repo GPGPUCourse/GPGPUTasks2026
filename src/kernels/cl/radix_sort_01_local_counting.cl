@@ -5,8 +5,8 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-#define RADIX_BITS 4
-#define RADIX_BINS (1 << RADIX_BITS)
+#define RADIX 16
+#define TILE (4 * GROUP_SIZE)
 
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void radix_sort_01_local_counting(
@@ -15,21 +15,22 @@ __kernel void radix_sort_01_local_counting(
     unsigned int n,
     unsigned int shift)
 {
-    __local uint hist[RADIX_BINS];
-    const uint i = get_global_id(0);
-    const uint lid = get_local_id(0);
+    __local uint hist[RADIX];
+    unsigned int tid = get_local_id(0);
+    unsigned int base = get_group_id(0) * TILE;
+    unsigned int end = min(base + TILE, n);
 
-    if (lid < RADIX_BINS) {
-        hist[lid] = 0;
+    if (tid < RADIX) {
+        hist[tid] = 0;
     }
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if (i < n) {
-        atomic_inc(&hist[(input[i] >> shift) & (RADIX_BINS - 1)]);
+    for (unsigned int i = base + tid; i < end; i += GROUP_SIZE) {
+        atomic_inc(&hist[(input[i] >> shift) & (RADIX - 1)]);
     }
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if (lid < RADIX_BINS) {
-        counts[lid * get_num_groups(0) + get_group_id(0)] = hist[lid];
+    if (tid < RADIX) {
+        counts[tid * get_num_groups(0) + get_group_id(0)] = hist[tid];
     }
 }
