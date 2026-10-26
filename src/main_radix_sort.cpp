@@ -28,7 +28,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -118,13 +118,35 @@ void run(int argc, char** argv)
             // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
             // ocl_radixSort04Scatter.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::radix_sort_01_local_counting();
-            // cuda::radix_sort_02_global_prefixes_scan_sum_reduction();
-            // cuda::radix_sort_03_global_prefixes_scan_accumulation();
-            // cuda::radix_sort_04_scatter();
+            constexpr unsigned int BLOCK_SIZE = 256;
+            constexpr unsigned int RADIX_BITS = 4;
+            constexpr unsigned int NUM_BINS = 1u << RADIX_BITS;
+            constexpr unsigned int SCAN_PARTS = 256;
+
+            const unsigned int num_blocks = (n + BLOCK_SIZE - 1) / BLOCK_SIZE;
+            const unsigned int total_counters = NUM_BINS * num_blocks;
+
+            for (unsigned int pass = 0; pass < 32 / RADIX_BITS; ++pass) {
+                const unsigned int shift = pass * RADIX_BITS;
+                const gpu::gpu_mem_32u& src = (pass == 0) ? input_gpu : ((pass % 2 == 1) ? buffer1_gpu : buffer_output_gpu);
+                gpu::gpu_mem_32u& dst = (pass % 2 == 0) ? buffer1_gpu : buffer_output_gpu;
+
+                cuda::radix_sort_01_local_counting(
+                    gpu::WorkSize(BLOCK_SIZE, num_blocks * BLOCK_SIZE),
+                    src, buffer2_gpu, n, shift);
+
+                cuda::radix_sort_02_global_prefixes_scan_sum_reduction(
+                    gpu::WorkSize(BLOCK_SIZE, SCAN_PARTS * BLOCK_SIZE),
+                    buffer2_gpu, buffer3_gpu, total_counters);
+
+                cuda::radix_sort_03_global_prefixes_scan_accumulation(
+                    gpu::WorkSize(BLOCK_SIZE, SCAN_PARTS * BLOCK_SIZE),
+                    buffer3_gpu, buffer2_gpu, total_counters, SCAN_PARTS);
+
+                cuda::radix_sort_04_scatter(
+                    gpu::WorkSize(BLOCK_SIZE, num_blocks * BLOCK_SIZE),
+                    src, buffer2_gpu, dst, n, shift);
+            }
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);

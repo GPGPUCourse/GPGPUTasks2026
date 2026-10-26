@@ -7,15 +7,36 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+namespace {
+constexpr unsigned int RADIX_BITS = 4u;
+constexpr unsigned int NUM_BINS = 1u << RADIX_BITS;
+constexpr unsigned int BIN_MASK = NUM_BINS - 1u;
+} // namespace
+
 __global__ void radix_sort_01_local_counting(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* buffer1,
-          unsigned int* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+    const unsigned int* in_array,
+          unsigned int* global_counters,
+    unsigned int n,
+    unsigned int shift)
 {
-    // TODO
+    __shared__ unsigned int s_counts[NUM_BINS];
+
+    const unsigned int tid = threadIdx.x;
+    if (tid < NUM_BINS) {
+        s_counts[tid] = 0u;
+    }
+    __syncthreads();
+
+    const unsigned int idx = blockIdx.x * blockDim.x + tid;
+    if (idx < n) {
+        const unsigned int bin = (in_array[idx] >> shift) & BIN_MASK;
+        atomicAdd(&s_counts[bin], 1u);
+    }
+    __syncthreads();
+
+    if (tid < NUM_BINS) {
+        global_counters[tid * gridDim.x + blockIdx.x] = s_counts[tid];
+    }
 }
 
 namespace cuda {

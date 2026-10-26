@@ -7,16 +7,74 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+namespace {
+constexpr unsigned int SCAN_BLOCK_SIZE = 256u;
+} // namespace
+
 __global__ void radix_sort_03_global_prefixes_scan_accumulation(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    // TODO try char
-    const unsigned int* buffer1,
-          unsigned int* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+    const unsigned int* part_sums,
+          unsigned int* counters,
+    unsigned int total_counters,
+    unsigned int num_parts)
 {
-    // TODO
+    __shared__ unsigned int s_data[SCAN_BLOCK_SIZE];
+    __shared__ unsigned int s_carry;
+
+    const unsigned int tid = threadIdx.x;
+
+    // Находим начальное смещение нашей партиции (сумму всех предыдущих партиций)
+    unsigned int part_offset = 0u;
+    for (unsigned int i = tid; i < blockIdx.x; i += SCAN_BLOCK_SIZE) {
+        part_offset += part_sums[i];
+    }
+    s_data[tid] = part_offset;
+    __syncthreads();
+
+    for (unsigned int stride = SCAN_BLOCK_SIZE / 2u; stride > 0u; stride >>= 1u) {
+        if (tid < stride) {
+            s_data[tid] += s_data[tid + stride];
+        }
+        __syncthreads();
+    }
+    if (tid == 0u) {
+        s_carry = s_data[0];
+    }
+    __syncthreads();
+
+    // Сканируем элементы нашей партиции чанками по 256 штук в shared memory
+    const unsigned int part_size = (total_counters + num_parts - 1u) / num_parts;
+    const unsigned int start = blockIdx.x * part_size;
+    const unsigned int end = min(start + part_size, total_counters);
+
+    for (unsigned int base = start; base < end; base += SCAN_BLOCK_SIZE) {
+        const unsigned int idx = base + tid;
+        const unsigned int val = (idx < end) ? counters[idx] : 0u;
+        s_data[tid] = val;
+        __syncthreads();
+
+        // Инклюзивный скан Хиллиса-Стила в shared memory
+        for (unsigned int offset = 1u; offset < SCAN_BLOCK_SIZE; offset <<= 1u) {
+            unsigned int temp = 0u;
+            if (tid >= offset) {
+                temp = s_data[tid - offset];
+            }
+            __syncthreads();
+            if (tid >= offset) {
+                s_data[tid] += temp;
+            }
+            __syncthreads();
+        }
+
+        if (idx < end) {
+            counters[idx] = s_carry + s_data[tid] - val; // Записываем эксклюзивный префикс
+        }
+        const unsigned int chunk_total = s_data[SCAN_BLOCK_SIZE - 1u];
+        __syncthreads();
+        if (tid == 0u) {
+            s_carry += chunk_total;
+        }
+        __syncthreads();
+    }
 }
 
 namespace cuda {
