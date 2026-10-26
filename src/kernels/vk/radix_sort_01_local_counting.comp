@@ -4,18 +4,32 @@
 
 #include "../defines.h"
 
-// это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-// НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-layout (std430, binding = 0) readonly buffer Buffer1In  { uint buffer1[]; };
-layout (std430, binding = 1)          buffer Buffer2Out { uint buffer2[]; };
+layout (std430, binding = 0) buffer Buffer1In  { uint inputs[]; };
+layout (std430, binding = 1) buffer Buffer2Out { uint counts[]; };
 
 layout (push_constant) uniform PushConstants {
-    uint a1;
-    uint a2;
+    uint n;
+    uint bit;
 } params;
 
-layout (local_size_x = 1) in;
+shared uint zeroes[GROUP_SIZE];
+
+layout (local_size_x = GROUP_SIZE) in;
 void main()
 {
-    // TODO
+    const uint wg = gl_WorkGroupID.x;
+    const uint gi  = gl_GlobalInvocationID.x;
+    const uint li = gl_LocalInvocationID.x;
+
+    zeroes[li] = (gi < params.n) ? inputs[gi] & 1u << params.bit : 1;
+    barrier();
+    memoryBarrierShared();
+
+    if (li == 0) {
+        uint count = 0;
+        for (int i = 0; i < GROUP_SIZE; i++) {
+            count += zeroes[i] == 0 ? 1 : 0;
+        }
+        counts[wg] = (gi < params.n) ? count : 0;
+    }
 }

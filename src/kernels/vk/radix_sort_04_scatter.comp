@@ -4,19 +4,41 @@
 
 #include "../defines.h"
 
-// это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-// НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-layout (std430, binding = 0) readonly buffer Buffer1In  { uint buffer1[]; };
-layout (std430, binding = 1) readonly buffer Buffer2In  { uint buffer2[]; };
-layout (std430, binding = 2)          buffer Buffer3Out { uint buffer3[]; };
+layout (std430, binding = 0) buffer Buffer1In  { uint inputs[]; };
+layout (std430, binding = 1) buffer Buffer2Out { uint counts[]; };
+layout (std430, binding = 2) buffer Buffer3Out { uint outputs[]; };
 
 layout (push_constant) uniform PushConstants {
-    uint a1;
-    uint a2;
+    uint n;
+    uint bit;
+    uint padded_size;
 } params;
 
-layout (local_size_x = 1) in;
+shared uint indicators[GROUP_SIZE];
+
+layout (local_size_x = GROUP_SIZE) in;
 void main()
 {
-    // TODO
+    const uint wg = gl_WorkGroupID.x;
+    const uint li = gl_LocalInvocationID.x;
+    const uint i = wg*GROUP_SIZE + li;
+    uint value = i < params.n ? inputs[i] : 0;
+    bool value_bit_zero = (value & 1u << params.bit) == 0;
+    indicators[li] = (i < params.n && value_bit_zero) ? 1 : 0;
+    uint flag = indicators[li];
+    barrier();
+    memoryBarrierShared();
+
+    for (uint offset = 1; offset < GROUP_SIZE; offset *= 2) {
+        uint add = (li >= offset) ? indicators[li - offset] : 0;
+        barrier();
+        indicators[li] += add;
+        barrier();
+        memoryBarrierShared();
+    }
+    uint zero_rank = indicators[li] - flag;
+    uint offset_wg = (wg == 0) ? 0 : counts[wg - 1];
+    uint total = counts[params.padded_size - 1];
+    uint dest = flag == 1 ? offset_wg + zero_rank : total + (wg*GROUP_SIZE - offset_wg) + (li - zero_rank);
+    if (i < params.n) outputs[dest] = value;
 }
