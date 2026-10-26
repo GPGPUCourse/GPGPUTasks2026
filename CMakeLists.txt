@@ -106,12 +106,14 @@ if (GPU_CUDA_SUPPORT)
             src/kernels/cu/radix_sort_04_scatter.cu
             src/kernels/cu/prefix_sum_accum.cu
             src/kernels/cu/prefix_sum_reduction.cu
+            src/kernels/cu/matrix_02_transpose_coalesced_via_local_memory.cu
     )
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
     target_include_directories(${PROJECT_NAME}_core PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+
 else ()
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${HEADERS})
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
