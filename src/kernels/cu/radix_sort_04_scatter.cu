@@ -65,6 +65,21 @@ __device__ __forceinline__ void warp_local_scan(
     __syncthreads();
 }
 
+__device__ __forceinline__ unsigned int bucket_mask4(
+    unsigned int b,
+    unsigned int valid_mask,
+    unsigned int m0,
+    unsigned int m1,
+    unsigned int m2,
+    unsigned int m3)
+{
+    return valid_mask
+        & ((b & 1u) ? m0 : ~m0)
+        & ((b & 2u) ? m1 : ~m1)
+        & ((b & 4u) ? m2 : ~m2)
+        & ((b & 8u) ? m3 : ~m3);
+}
+
 __global__ void radix_sort_04_scatter(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
@@ -96,14 +111,18 @@ __global__ void radix_sort_04_scatter(
         unsigned int number = data[computed_index];
         unsigned int bucket = get_bucket_with_dim(number, local_sort_offset, 4);
 
-#pragma unroll
-        for (int local_bucket = 15; local_bucket >= 0; --local_bucket) {
-            unsigned int mask = __ballot_sync(0xffffffff, valid && bucket == local_bucket);
-            if (valid && local_bucket == bucket) {
-                local_order_in_warp_bucket = __popc(mask & lane_before_mask_excluding);
-            }
-            if (lane == 0)
-                group_bucket_counters[compute_index(warp + local_bucket * SCATTER_GROUP_WARPS)] = __popc(mask);
+        const unsigned int valid_mask = __ballot_sync(0xffffffffu, valid);
+        unsigned int mask1 = __ballot_sync(0xffffffff, (bucket & 1u) != 0);
+        unsigned int mask2 = __ballot_sync(0xffffffff, (bucket & 2u) != 0);
+        unsigned int mask3 = __ballot_sync(0xffffffff, (bucket & 4u) != 0);
+        unsigned int mask4 = __ballot_sync(0xffffffff, (bucket & 8u) != 0);
+        const unsigned int own_mask = bucket_mask4(bucket, valid_mask, mask1, mask2, mask3, mask4);
+        local_order_in_warp_bucket = __popc(own_mask & lane_before_mask_excluding);
+
+        if (lane < 16) {
+            const unsigned int mask = bucket_mask4(lane, valid_mask, mask1, mask2, mask3, mask4);
+
+            group_bucket_counters[compute_index(lane * SCATTER_GROUP_WARPS + warp)] = __popc(mask);
         }
 
         warp_local_scan(group_bucket_counters, 16 * SCATTER_GROUP_WARPS);
