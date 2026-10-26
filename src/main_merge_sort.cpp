@@ -26,7 +26,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -79,7 +79,7 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u buffer1_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -88,8 +88,21 @@ void run(int argc, char** argv)
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
     buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
+    //buffer2_gpu.fill(255);
     buffer_output_gpu.fill(255);
+
+    constexpr int BLOCK_SIZE = 2048;
+    constexpr int ITEMS_PER_THREAD = 8;
+
+    // Количество глобальных слияний
+    int mergePasses = 0;
+    for (size_t size = BLOCK_SIZE; size < n; size <<= 1)
+        ++mergePasses;
+
+    gpu::WorkSize workSize(
+        GROUP_SIZE,
+        (static_cast<size_t>(n) + ITEMS_PER_THREAD - 1) / ITEMS_PER_THREAD
+    );
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
@@ -102,8 +115,23 @@ void run(int argc, char** argv)
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            auto* src = (mergePasses % 2 == 0) ? &buffer_output_gpu : &buffer1_gpu;
+
+            auto* dst = (mergePasses % 2 == 0) ? &buffer1_gpu : &buffer_output_gpu;
+
+            cuda::fused_initial_merge_sort(
+                workSize, input_gpu, *src, n
+            );
+
+            for (size_t size = BLOCK_SIZE; size < n; size <<= 1)
+            {
+                cuda::merge_sort(
+                    workSize, src->cuptr(), dst->cuptr(), n,
+                    static_cast<int>(size)
+                );
+
+                std::swap(src, dst);
+            }
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
