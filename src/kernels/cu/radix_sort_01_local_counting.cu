@@ -7,15 +7,28 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
-__global__ void radix_sort_01_local_counting(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* buffer1,
-          unsigned int* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+__global__ void __launch_bounds__(GROUP_SIZE) radix_sort_01_local_counting(
+    const unsigned int* buffer1, // ключи
+          unsigned int* buffer2, // гистограммы тайлов
+    unsigned int a1,             // n - число ключей
+    unsigned int a2)             // shift - номер младшего бита цифры
 {
-    // TODO
+    static_assert(GROUP_SIZE == RADIX, "thread index is used as a digit");
+    __shared__ unsigned int hist[RADIX];
+
+    const unsigned int g = blockIdx.x;
+    hist[threadIdx.x] = 0;
+    __syncthreads();
+
+    #pragma unroll
+    for (unsigned int k = 0; k < KEYS_PER_THREAD; ++k) {
+        const unsigned int i = g * TILE_SIZE + k * GROUP_SIZE + threadIdx.x;
+        if (i < a1)
+            atomicAdd(&hist[(buffer1[i] >> a2) & (RADIX - 1)], 1u);
+    }
+    __syncthreads();
+
+    buffer2[g * RADIX + threadIdx.x] = hist[threadIdx.x];
 }
 
 namespace cuda {
