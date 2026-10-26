@@ -23,7 +23,7 @@ __kernel void prefix_sum_01_reduction(
     if (index < n) {
         if (down != 0) {
             if (gid == 0 && stride == n / 2) data[n - 1] = 0;
-            uint value = data[index - stride];
+            unsigned int value = data[index - stride];
             data[index - stride] = data[index];
             data[index] += value;
         } else {

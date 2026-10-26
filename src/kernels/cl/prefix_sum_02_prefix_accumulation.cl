@@ -11,7 +11,7 @@ __kernel void prefix_sum_02_prefix_accumulation(
     __global       uint* prefix_sum_accum,
     unsigned int n)
 {
-    size_t gid = get_global_id(0);
+    unsigned int gid = get_global_id(0);
     if (gid < n) {
         prefix_sum_accum[gid] += input[gid];
     }
