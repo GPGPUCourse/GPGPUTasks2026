@@ -50,7 +50,7 @@ void run(int argc, char** argv)
 
     FastRandom r;
 
-    int n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+    unsigned int n = 100'000'000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
     int max_value = std::numeric_limits<int>::max(); // TODO при отладке используйте минимальное max_value (например max_value=8) при котором воспроизводится бага
     std::vector<unsigned int> as(n, 0);
     std::vector<unsigned int> sorted(n, 0);
@@ -88,7 +88,7 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -98,9 +98,19 @@ void run(int argc, char** argv)
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
     buffer1_gpu.fill(255);
     buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
     buffer_output_gpu.fill(255);
+
+    const unsigned m = div_ceil(n, GROUP_SIZE) * RADIX_SIZE;
+    const unsigned nb2 = div_ceil(m, GROUP_SIZE);
+
+    gpu::gpu_mem_32u counts_gpu(m);
+    ocl_fillBufferWithZeros.exec({GROUP_SIZE, m}, counts_gpu, m);
+
+    gpu::gpu_mem_32u block_sums_gpu(nb2 * RADIX_SIZE);
+    ocl_fillBufferWithZeros.exec({GROUP_SIZE, nb2 * RADIX_SIZE}, block_sums_gpu, nb2 * RADIX_SIZE);
+
+    gpu::gpu_mem_32u offsets_gpu(m);
+    ocl_fillBufferWithZeros.exec({GROUP_SIZE, m}, offsets_gpu, m);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
@@ -110,13 +120,31 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
+            const auto num_passes = (32 / RADIX_BITS);
+            for (unsigned pass = 0; pass < num_passes; ++pass) {
+                const unsigned shift = pass * RADIX_BITS;
+
+                const gpu::gpu_mem_32u* src_gpu;
+                gpu::gpu_mem_32u* dst_gpu;
+                if (pass == 0) {
+                    src_gpu = &input_gpu;
+                    dst_gpu = &buffer1_gpu;
+                } else if (pass % 2 == 1) {
+                    src_gpu = &buffer1_gpu;
+                    dst_gpu = &buffer2_gpu;
+                } else {
+                    src_gpu = &buffer2_gpu;
+                    dst_gpu = &buffer1_gpu;
+                }
+                if (pass == num_passes - 1) {
+                    dst_gpu = &buffer_output_gpu;
+                }
+
+                ocl_radixSort01LocalCounting.exec({GROUP_SIZE, n}, *src_gpu, counts_gpu, n, shift);
+                ocl_radixSort02GlobalPrefixesScanSumReduction.exec({GROUP_SIZE, m}, counts_gpu, block_sums_gpu, m);
+                ocl_radixSort03GlobalPrefixesScanAccumulation.exec({GROUP_SIZE, m}, counts_gpu, block_sums_gpu, offsets_gpu, m);
+                ocl_radixSort04Scatter.exec({GROUP_SIZE, n}, *src_gpu, offsets_gpu, *dst_gpu, n, shift);
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
