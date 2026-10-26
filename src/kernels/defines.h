@@ -2,7 +2,7 @@
 #define my_defines_vk
 
 
-#define RADIX_BITS 8
+#define RADIX_BITS 4
 
 #define BUCKET_COUNT (1u << RADIX_BITS)
 #define COUNTER_REDUCTION_GROUP_SIZE 256u
@@ -18,8 +18,8 @@
 #define SCATTER_GROUP_WARPS (SCATTER_GROUP_SIZE / 32u)
 
 
-#define GROUP_SIZE_X 32
-#define GROUP_SIZE_Y 32
+#define GROUP_SIZE_X 16
+#define GROUP_SIZE_Y 16
 
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
 

@@ -86,7 +86,10 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
-    const unsigned int uint4_work_size = n / 4 + (n % 4 == 0 ? 0 : 1);
+    const unsigned int elements_per_thread = 4u * UINT4_PER_THREAD_IN_REDUCTION;
+
+    const unsigned int uint4_work_size = n / elements_per_thread + (n % elements_per_thread != 0);
+
     const size_t num_groups_reductors = get_reducted_groups_count(n);
     const unsigned int counters_size = num_groups_reductors * BUCKET_COUNT;
     gpu::gpu_mem_32u counters(counters_size);
@@ -117,7 +120,7 @@ void run(int argc, char** argv)
         timer t;
 
         if (context.type() == gpu::Context::TypeCUDA) {
-            for (int offset = 0; offset < 32; offset += 8) {
+            for (int offset = 0; offset < 32; offset += 4) {
                 std::swap(input, output);
 
                 cuda::radix_sort_02_global_prefixes_scan_sum_reduction(
