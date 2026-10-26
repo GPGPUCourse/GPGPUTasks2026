@@ -4,7 +4,7 @@
 #define GROUP_SIZE   256
 #define GROUP_SIZE_X 16
 #define GROUP_SIZE_Y 16
-#define BITS 4
+#define BITS 8
 #define RADIX (1 << BITS)
 #define PAD(n) ((n) + ((n) >> 5))
 
