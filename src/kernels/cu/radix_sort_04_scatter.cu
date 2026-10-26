@@ -8,15 +8,20 @@
 #include "../defines.h"
 
 __global__ void radix_sort_04_scatter(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    const unsigned int* buffer1,
-    const unsigned int* buffer2,
-          unsigned int* buffer3,
-    unsigned int a1,
-    unsigned int a2)
+    const unsigned int* keys,
+    const unsigned int* inclusive_zeros,
+          unsigned int* out,
+    unsigned int n,
+    unsigned int bit)
 {
-    // TODO
+    const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n)
+        return;
+    const unsigned int is_zero = 1u - ((keys[i] >> bit) & 1u);
+    const unsigned int zeros_before = inclusive_zeros[i] - is_zero;
+    const unsigned int total_zeros = inclusive_zeros[n - 1];
+    const unsigned int dest = is_zero ? zeros_before : (total_zeros + (i - zeros_before));
+    out[dest] = keys[i];
 }
 
 namespace cuda {

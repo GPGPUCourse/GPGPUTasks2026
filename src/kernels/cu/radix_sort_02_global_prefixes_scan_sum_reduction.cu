@@ -8,14 +8,17 @@
 #include "../defines.h"
 
 __global__ void radix_sort_02_global_prefixes_scan_sum_reduction(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    // TODO try char
-    const unsigned int* buffer1,
-          unsigned int* buffer2,
-    unsigned int a1)
+    const unsigned int* pow2_sum,
+          unsigned int* next_pow2_sum,
+    unsigned int n)
 {
-    // TODO
+    const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int next_n = (n + 1) / 2;
+    if (i >= next_n)
+        return;
+    const unsigned int left = pow2_sum[2 * i];
+    const unsigned int right = (2 * i + 1 < n) ? pow2_sum[2 * i + 1] : 0;
+    next_pow2_sum[i] = left + right;
 }
 
 namespace cuda {

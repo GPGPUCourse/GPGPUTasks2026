@@ -28,7 +28,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -118,13 +118,51 @@ void run(int argc, char** argv)
             // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
             // ocl_radixSort04Scatter.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::radix_sort_01_local_counting();
-            // cuda::radix_sort_02_global_prefixes_scan_sum_reduction();
-            // cuda::radix_sort_03_global_prefixes_scan_accumulation();
-            // cuda::radix_sort_04_scatter();
+            for (unsigned int bit = 0; bit < 32; ++bit) {
+                const gpu::gpu_mem_32u& src = (bit == 0) ? input_gpu
+                    : ((bit % 2 == 1) ? buffer1_gpu : buffer2_gpu);
+                gpu::gpu_mem_32u& dst = (bit == 31) ? buffer_output_gpu
+                    : ((bit % 2 == 0) ? buffer1_gpu : buffer2_gpu);
+                gpu::gpu_mem_32u& flags = buffer3_gpu;
+                gpu::gpu_mem_32u& prefix = buffer4_gpu;
+
+                cuda::radix_sort_01_local_counting(gpu::WorkSize(GROUP_SIZE, n), src, flags, n, bit);
+
+                cuda::fill_buffer_with_zeros(gpu::WorkSize(GROUP_SIZE, n), prefix, n);
+                cuda::radix_sort_03_global_prefixes_scan_accumulation(
+                    gpu::WorkSize(GROUP_SIZE, n), flags, prefix, n, 0);
+
+                unsigned int cur_n = n;
+                bool from_flags = true;
+                bool curr_is_dst = true;
+
+                for (unsigned int pow2 = 1; pow2 < 31 && (1u << pow2) <= (unsigned int) n; ++pow2) {
+                    const unsigned int next_n = (cur_n + 1) / 2;
+                    if (from_flags) {
+                        cuda::radix_sort_02_global_prefixes_scan_sum_reduction(
+                            gpu::WorkSize(GROUP_SIZE, next_n), flags, dst, cur_n);
+                        cuda::radix_sort_03_global_prefixes_scan_accumulation(
+                            gpu::WorkSize(GROUP_SIZE, n), dst, prefix, n, pow2);
+                        from_flags = false;
+                        curr_is_dst = true;
+                    } else if (curr_is_dst) {
+                        cuda::radix_sort_02_global_prefixes_scan_sum_reduction(
+                            gpu::WorkSize(GROUP_SIZE, next_n), dst, flags, cur_n);
+                        cuda::radix_sort_03_global_prefixes_scan_accumulation(
+                            gpu::WorkSize(GROUP_SIZE, n), flags, prefix, n, pow2);
+                        curr_is_dst = false;
+                    } else {
+                        cuda::radix_sort_02_global_prefixes_scan_sum_reduction(
+                            gpu::WorkSize(GROUP_SIZE, next_n), flags, dst, cur_n);
+                        cuda::radix_sort_03_global_prefixes_scan_accumulation(
+                            gpu::WorkSize(GROUP_SIZE, n), dst, prefix, n, pow2);
+                        curr_is_dst = true;
+                    }
+                    cur_n = next_n;
+                }
+
+                cuda::radix_sort_04_scatter(gpu::WorkSize(GROUP_SIZE, n), src, prefix, dst, n, bit);
+            }
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
