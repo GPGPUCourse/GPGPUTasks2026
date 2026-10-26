@@ -88,10 +88,10 @@ void run(int argc, char** argv)
             ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, pow2_n), input_gpu, prefix_sum_accum_gpu, n, 0, 0);
 
             for (size_t stride = 1; stride < pow2_n; stride *= 2) {
-                ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, pow2_n / (2 * stride)), prefix_sum_accum_gpu, prefix_sum_accum_gpu, pow2_n, stride, 0);
+                ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, pow2_n / (2 * stride)), prefix_sum_accum_gpu, prefix_sum_accum_gpu, static_cast<unsigned int>(pow2_n), static_cast<unsigned int>(stride), 0);
             }
             for (size_t stride = pow2_n / 2; stride > 0; stride /= 2) {
-                ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, pow2_n / (2 * stride)), prefix_sum_accum_gpu, prefix_sum_accum_gpu, pow2_n, stride, 1);
+                ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, pow2_n / (2 * stride)), prefix_sum_accum_gpu, prefix_sum_accum_gpu, static_cast<unsigned int>(pow2_n), static_cast<unsigned int>(stride), 1);
             }
             ocl_prefix_accumulation.exec(workSize, input_gpu, prefix_sum_accum_gpu, n);
         } else if (context.type() == gpu::Context::TypeCUDA) {
