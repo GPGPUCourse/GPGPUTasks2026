@@ -33,6 +33,6 @@ void radix_sort_03_global_prefixes_scan_accumulation(const gpu::WorkSize& workSi
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
     ::radix_sort_03_global_prefixes_scan_accumulation<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(buffer1.cuptr(), buffer2.cuptr(), a1, a2);
-    CUDA_CHECK_KERNEL(stream);
+    CUDA_CHECK_KERNEL_ASYNC(stream);
 }
 } // namespace cuda

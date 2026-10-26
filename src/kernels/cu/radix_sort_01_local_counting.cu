@@ -52,6 +52,6 @@ void radix_sort_01_local_counting(const gpu::WorkSize& workSize,
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
     ::radix_sort_01_local_counting<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(input.cuptr(), counts.cuptr(), n, bit);
-    CUDA_CHECK_KERNEL(stream);
+    CUDA_CHECK_KERNEL_ASYNC(stream);
 }
 } // namespace cuda
