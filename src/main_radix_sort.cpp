@@ -86,37 +86,100 @@ void run(int argc, char** argv)
         std::cout << "CPU std::sort effective RAM bandwidth: " << memory_size_gb / elapsed << " GB/s (" << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
+    unsigned int el_per_group = 2 * GROUP_SIZE;
+
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u dummy_gpu(RADIX); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u buffer_sort_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
+    
+    // Запускаем кернел (несколько раз и с замером времени выполнения)
+    std::vector<double> times;
+
+    std::vector<unsigned int> level_worksizes;
+    unsigned int hist_size = (n + el_per_group - 1) / el_per_group * RADIX;
+    unsigned int cur_size = hist_size / RADIX;
+    level_worksizes.push_back(cur_size);
+
+    while (cur_size > el_per_group) {
+        cur_size = (cur_size + el_per_group - 1) / el_per_group;
+        level_worksizes.push_back(cur_size);
+    }
+
+    int n_levels = level_worksizes.size();
+
+    gpu::gpu_mem_32u prefix_buffer1_gpu(hist_size), prefix_buffer2_gpu(hist_size), histogram_gpu(hist_size);
+
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
-    buffer_output_gpu.fill(255);
+    prefix_buffer1_gpu.fill(0);
+    prefix_buffer2_gpu.fill(0);
+    histogram_gpu.fill(0);
+    buffer_sort_gpu.fill(0);
+    buffer_output_gpu.fill(0);
 
-    // Запускаем кернел (несколько раз и с замером времени выполнения)
-    std::vector<double> times;
+    std::vector<gpu::gpu_mem_32u*> level_buffers(3);
+    level_buffers[0] = &histogram_gpu;
+    level_buffers[1] = &prefix_buffer1_gpu;
+    level_buffers[2] = &prefix_buffer2_gpu;
+    // для 100_000_000 хватит n_levels = 2, т. к. надо считать гистограммы
+
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
+            for (unsigned int bit = 0; bit < 8 * sizeof(unsigned int); bit += BITS)
+            {
+                gpu::gpu_mem_32u* cur_input = (bit == 0) ? &input_gpu : (bit / BITS % 2) ? &buffer_sort_gpu : &buffer_output_gpu;
+                gpu::gpu_mem_32u* cur_output = (bit / BITS % 2) ? &buffer_output_gpu : &buffer_sort_gpu;
+
+                ocl_radixSort01LocalCounting.exec(
+                    gpu::WorkSize(GROUP_SIZE, (n + 1) / 2),
+                    *cur_input,
+                    histogram_gpu,
+                    n,
+                    bit
+                );
+
+                for (size_t i = 0; i < n_levels; i++)
+                {
+                    gpu::WorkSize work_size(GROUP_SIZE, (i + 1 == n_levels) ? GROUP_SIZE : level_worksizes[i + 1] * GROUP_SIZE);
+                    ocl_radixSort03GlobalPrefixesScanAccumulation.exec(
+                        work_size,
+                        *level_buffers[i],
+                        (i + 1 < n_levels) ? *level_buffers[i + 1] : dummy_gpu,
+                        *level_buffers[i],
+                        level_worksizes[i] * RADIX
+                    );
+                }
+    
+                for (int i = n_levels - 2; i >= 0; i--) {
+                    gpu::WorkSize work_size(GROUP_SIZE, ((level_worksizes[i] + GROUP_SIZE - 1) / GROUP_SIZE) * GROUP_SIZE * RADIX);
+                    ocl_radixSort02GlobalPrefixesScanSumReduction.exec(
+                        work_size,
+                        *level_buffers[i],
+                        *level_buffers[i + 1],
+                        level_worksizes[i] * RADIX
+                    );
+                }
+
+                gpu::WorkSize work_size(GROUP_SIZE, hist_size / RADIX * GROUP_SIZE);
+                ocl_radixSort04Scatter.exec(
+                    work_size,
+                    *cur_input,
+                    histogram_gpu,
+                    *cur_output,
+                    n,
+                    bit
+                );
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
