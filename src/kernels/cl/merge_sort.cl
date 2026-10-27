@@ -57,6 +57,7 @@ __kernel void merge_sort(
     const unsigned int j = get_local_id(0);
     __local uint part[256];
     __local uint part_tmp[256];
+    __local uint coranks[2];
     if (sorted_k == 0) {
         part[j] = (I < n) ? input_data[I] : UMAX;
         barrier(CLK_LOCAL_MEM_FENCE);
@@ -73,17 +74,37 @@ __kernel void merge_sort(
         if (I < n) {
             output_data[I] = part[j];
         }
-    } else if (I < n) {
+    } else {
         const uint K = (1u << (sorted_k - 1)) * GROUP_SIZE;
-        const uint x = input_data[I];
-        const uint pos = (I & (K - 1));
-        const uint st = I - (I & ((K << 1) - 1));
+        const uint o0 = get_group_id(0) * GROUP_SIZE;
+        const uint st = o0 - (o0 & ((K << 1) - 1));
         const uint left_len = min(K, n - st);
         const uint right_len = (n - st > K) ? min(K, n - st - K) : 0;
-        if (I & K) {
-            output_data[grb(input_data + st, x, left_len) + pos + st] = x;
-        } else {
-            output_data[glb(input_data + st + K, x, right_len) + pos + st] = x;
+        __global const uint* A = input_data + st;
+        __global const uint* B = input_data + st + K;
+        if (j < 2) {
+            const uint d = min(o0 - st + j * GROUP_SIZE, left_len + right_len);
+            uint lo = (d > right_len) ? d - right_len : 0;
+            uint hi = min(d, left_len);
+            while (lo < hi) {
+                const uint mid = (lo + hi) >> 1;
+                if (B[d - mid - 1] < A[mid]) hi = mid;
+                else lo = mid + 1;
+            }
+            coranks[j] = lo;
+        }
+        barrier(CLK_LOCAL_MEM_FENCE);
+        const uint d0 = o0 - st;
+        const uint d1 = min(d0 + GROUP_SIZE, left_len + right_len);
+        const uint len_a = coranks[1] - coranks[0];
+        const uint len_b = (d1 - d0) - len_a;
+        if (j < len_a) part[j] = A[coranks[0] + j];
+        else if (j < len_a + len_b) part[j] = B[d0 - coranks[0] + j - len_a];
+        barrier(CLK_LOCAL_MEM_FENCE);
+        if (j < len_a + len_b) {
+            const uint x = part[j];
+            const uint pos = (j < len_a) ? j + lb(part + len_a, x, len_b) : (j - len_a) + rb(part, x, len_a);
+            output_data[o0 + pos] = x;
         }
     }
 }
