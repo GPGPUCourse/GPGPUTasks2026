@@ -100,9 +100,12 @@ void run(int argc, char** argv)
         ocl_bitonicSort.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, a, n);
 
         for (uint sorted_k = GROUP_SIZE; sorted_k < n; sorted_k *= 2u) {
-            uint span = 2u * sorted_k;
+            const size_t span = 2ull * sorted_k;
+            const size_t merges_count = (n + span - 1u) / span;
+            const size_t groups_per_merge = (span + ITEMS_PER_GROUP - 1u) / ITEMS_PER_GROUP;
+            const size_t work = merges_count * groups_per_merge * GROUP_SIZE;
 
-            ocl_mergeSort.exec(gpu::WorkSize(GROUP_SIZE, n), a, b, sorted_k, n);
+            ocl_mergeSort.exec(gpu::WorkSize(GROUP_SIZE, work), a, b, sorted_k, n);
 
             std::swap(a, b);
         }
