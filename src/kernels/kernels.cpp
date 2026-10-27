@@ -1,11 +1,12 @@
 #include "kernels.h"
 
 #include "cl/generated_kernels/aplusb.h"
-#include "cl/generated_kernels/fill_buffer_with_zeros.h"
-#include "cl/generated_kernels/radix_sort_01_local_counting.h"
-#include "cl/generated_kernels/radix_sort_02_global_prefixes_scan_sum_reduction.h"
-#include "cl/generated_kernels/radix_sort_03_global_prefixes_scan_accumulation.h"
-#include "cl/generated_kernels/radix_sort_04_scatter.h"
+#include "cl/generated_kernels/radix_map.h"
+#include "cl/generated_kernels/radix_put.h"
+#include "cl/generated_kernels/prefix_sum_reduction.h"
+#include "cl/generated_kernels/prefix_sum_accumulation.h"
+#include "cl/generated_kernels/prefix_one_group_reduction.h"
+#include "cl/generated_kernels/prefix_one_group_accum.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/fill_buffer_with_zeros_comp.h"
@@ -57,30 +58,30 @@ const ocl::ProgramBinaries& getAplusB()
     return opencl_binaries_aplusb;
 }
 
-const ProgramBinaries& getFillBufferWithZeros()
-{
-    return opencl_binaries_fill_buffer_with_zeros;
+const ProgramBinaries& getRadixMap() {
+    return opencl_binaries_radix_map;
 }
 
-const ProgramBinaries& getRadixSort01LocalCounting()
-{
-    return opencl_binaries_radix_sort_01_local_counting;
+const ProgramBinaries& getRadixPut() {
+    return opencl_binaries_radix_put;
 }
 
-const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction()
-{
-    return opencl_binaries_radix_sort_02_global_prefixes_scan_sum_reduction;
+const ProgramBinaries& getPrefixReduction() {
+    return opencl_binaries_prefix_sum_reduction;
 }
 
-const ProgramBinaries& getRadixSort03GlobalPrefixesScanAccumulation()
-{
-    return opencl_binaries_radix_sort_03_global_prefixes_scan_accumulation;
+const ProgramBinaries& getPrefixAccumulation() {
+    return opencl_binaries_prefix_sum_accumulation;
 }
 
-const ProgramBinaries& getRadixSort04Scatter()
-{
-    return opencl_binaries_radix_sort_04_scatter;
+const ProgramBinaries& getPrefixOneGroupReduction() {
+    return opencl_binaries_prefix_one_group_reduction;
 }
+
+const ProgramBinaries& getPrefixOneGroupAccum() {
+    return opencl_binaries_prefix_one_group_accum;
+}
+
 } // namespace ocl
 
 namespace avk2 {

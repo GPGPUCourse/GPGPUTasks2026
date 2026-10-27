@@ -15,10 +15,12 @@ namespace ocl {
 const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getFillBufferWithZeros();
-const ProgramBinaries& getRadixSort01LocalCounting();
-const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction();
-const ProgramBinaries& getRadixSort03GlobalPrefixesScanAccumulation();
-const ProgramBinaries& getRadixSort04Scatter();
+const ProgramBinaries& getRadixMap();
+const ProgramBinaries& getRadixPut();
+const ProgramBinaries& getPrefixReduction();
+const ProgramBinaries& getPrefixAccumulation();
+const ProgramBinaries& getPrefixOneGroupReduction();
+const ProgramBinaries& getPrefixOneGroupAccum();
 }
 
 namespace avk2 {
