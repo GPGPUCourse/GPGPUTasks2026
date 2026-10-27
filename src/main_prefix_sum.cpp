@@ -9,6 +9,7 @@
 #include "kernels/kernels.h"
 
 #include <fstream>
+#include <vector>
 
 void run(int argc, char** argv)
 {
@@ -25,7 +26,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -67,8 +68,29 @@ void run(int argc, char** argv)
                   << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
-    // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    // Все уровни редукции храним подряд в одном временном буфере.
+    static_assert(BLOCK_SIZE > 1, "BLOCK_SIZE must be greater than one");
+    struct ReductionLevel {
+        size_t offset; // в элементах, не байтах
+        unsigned int count;
+    };
+    std::vector<ReductionLevel> levels;
+    size_t reduced_count = 0;
+    for (unsigned int count = n; count > BLOCK_SIZE;) {
+        count = count / BLOCK_SIZE + (count % BLOCK_SIZE != 0);
+        levels.push_back({reduced_count, count});
+        reduced_count += count;
+    }
+
+    // Аллоцируем буферы в VRAM до начала замеров.
+    gpu::gpu_mem_32u input_gpu(n), reduced_gpu(reduced_count), prefix_sum_accum_gpu(n);
+    std::vector<gpu::gpu_mem_32u> reduced_levels;
+    reduced_levels.reserve(levels.size());
+    for (const auto &level : levels) {
+        // Срез разделяет память с reduced_gpu, новой аллокации нет.
+        reduced_levels.emplace_back(reduced_gpu, level.offset);
+    }
+    const gpu::gpu_mem_32u no_reduced; // верхний уровень сканируется без смещения
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -87,11 +109,40 @@ void run(int argc, char** argv)
             // ocl_sum_reduction.exec();
             // ocl_prefix_accumulation.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
+#ifdef CUDA_SUPPORT
+            // Прямой проход: суммы блоков, от больших уровней к меньшим.
+            for (size_t k = 0; k < levels.size(); ++k) {
+                const auto &input = k == 0 ? input_gpu : reduced_levels[k - 1];
+                unsigned int count = k == 0 ? n : levels[k - 1].count;
+                cuda::prefix_sum_01_reduction(gpu::WorkSize(BLOCK_SIZE, count),
+                                             input, reduced_levels[k], count);
+            }
+
+            if (!levels.empty()) {
+                // Верхний уровень помещается в один блок.
+                auto &top = reduced_levels.back();
+                unsigned int count = levels.back().count;
+                cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(BLOCK_SIZE, count),
+                                                       no_reduced, top, top, count);
+
+                // Обратный проход: заменяем суммы уровня его префиксами на месте.
+                for (size_t k = levels.size() - 1; k > 0; --k) {
+                    auto &current = reduced_levels[k - 1];
+                    count = levels[k - 1].count;
+                    cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(BLOCK_SIZE, count),
+                                                           reduced_levels[k], current, current, count);
+                }
+            }
+
+            // Последний проход пишет ответ отдельно, сохраняя исходный массив.
+            if (n > 0) {
+                const auto &reduced = levels.empty() ? no_reduced : reduced_levels.front();
+                cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(BLOCK_SIZE, n),
+                                                       reduced, input_gpu, prefix_sum_accum_gpu, n);
+            }
+#else
+            throw std::runtime_error(DEVICE_NOT_SUPPORT_API);
+#endif
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
