@@ -169,8 +169,8 @@ merge(
         }
 
         if (out_from + ITEMS_PER_THREAD <= count) {
-            vstore2(
-                (uint2)(values[0], values[1]),
+            vstore4(
+                (uint4)(values[0], values[1], values[2], values[3]),
                 0,
                 output_data + a_from + write_from + out_from);
         } else {
