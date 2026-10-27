@@ -143,7 +143,7 @@ void run(int argc, char** argv)
                     smallWorkSize, buffer2_gpu, buffer3_gpu, n);
 
                 ocl_radixSort04Scatter.exec(
-                    scatterWorkSize, *src, buffer1_gpu, buffer2_gpu, *dst, n, bit);
+                    workSize, *src, buffer1_gpu, buffer2_gpu, *dst, n, bit);
 
                 src = dst;
                 dst = (dst == &buffer_output_gpu)
