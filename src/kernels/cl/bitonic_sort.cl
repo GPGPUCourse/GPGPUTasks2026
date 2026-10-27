@@ -18,7 +18,9 @@ bitonic_sort(
     loom[weft] = place < n ? input_data[place] : UINT_MAX;
     barrier(CLK_LOCAL_MEM_FENCE);
 
+#pragma unroll
     for (uint wave = 2u; wave <= GROUP_SIZE; wave <<= 1u) {
+#pragma unroll
         for (uint stride = wave >> 1u; stride; stride >>= 1u) {
             const uint mate = weft ^ stride;
 
