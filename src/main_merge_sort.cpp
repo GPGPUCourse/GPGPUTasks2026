@@ -90,31 +90,27 @@ void run(int argc, char** argv)
     buffer1_gpu.fill(255);
     buffer2_gpu.fill(255);
     buffer_output_gpu.fill(255);
-
+    gpu::WorkSize g(GROUP_SIZE, n);
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
+    gpu::gpu_mem_32u* last = nullptr;
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-        } else {
-            rassert(false, 4531412341, context.type());
-        }
 
+        ocl_mergeSort.exec(g, input_gpu, buffer1_gpu, 0, n);
+        gpu::gpu_mem_32u* in = &buffer1_gpu, *out = &buffer2_gpu;
+        for (int i = 1, m = div_ceil(n, GROUP_SIZE); m != 1; ++i, m = (m >> 1) + bool(m & 1)) { 
+            ocl_mergeSort.exec(g, *in, *out, i, n);
+            std::swap(in, out);
+        }
+        last = in;
         times.push_back(t.elapsed());
     }
     std::cout << "GPU merge-sort times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
-
+    last->copyToN(buffer_output_gpu, n);
     // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили его переупорядоченным)
     double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
     std::cout << "GPU merge-sort median effective VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s (" << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
