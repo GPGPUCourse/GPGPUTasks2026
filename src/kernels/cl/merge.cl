@@ -15,8 +15,8 @@ inline uint merge_cut(
     int l = -1;
     int r = max_i;
 
-    while (l < r - 1) {
-        const int m = (l + r) / 2;
+    while (r - l > 5) {
+        const int m = l + (r - l) / 2;
         const uint i = m;
         const uint j = d - i;
 
@@ -24,6 +24,32 @@ inline uint merge_cut(
             l = m;
         else
             r = m;
+    }
+
+    if (r - l == 5) {
+        const uint i = (l + 1);
+
+        if (i >= min_i) {
+            const uint4 av = vload4(0, x + a + i);
+            const uint4 bv = vload4(0, x + b + (d - i - 4u));
+            const uint4 br = shuffle(bv, (uint4)(3u, 2u, 1u, 0u));
+            const int4 p = br >= av;
+
+            const uint count = (uint)(p.s0 != 0) + (p.s1 != 0) + (p.s2 != 0) + (p.s3 != 0);
+
+            return i + count;
+        }
+    }
+
+#pragma unroll
+    while (l < r - 1) {
+        const uint i = (l + 1);
+        const uint j = d - i;
+
+        if (i < min_i || (j > 0u && i < na && x[b + j - 1u] >= x[a + i]))
+            l = i;
+        else
+            return i;
     }
 
     return r;
@@ -36,25 +62,34 @@ inline uint local_cut(
     __local const uint* b, uint nb,
     uint d)
 {
-    uint min_i = d > nb ? d - nb : 0u;
-    uint max_i = min(d, na);
+    uint l = d > nb ? d - nb : 0u;
+    uint r = min(d, na);
 
-    int l = -1;
-    int r = max_i;
+    while (r - l > 4u) {
+        const uint i = l + (r - l) / 2u;
 
-    while (l < r - 1) {
-        int m = (l + r) / 2;
-        int i = m;
-        int j = d - i;
-
-        if (i < min_i || (j > 0u && i < na && b[j - 1u] >= a[i])) {
-            l = m;
-        } else {
-            r = m;
-        }
+        if (b[d - i - 1u] >= a[i])
+            l = i + 1u;
+        else
+            r = i;
     }
 
-    return r;
+    if (r - l == 4u) {
+        const uint4 av = vload4(0, a + l);
+        const uint4 bv = vload4(0, b + (d - l - 4u));
+        const uint4 br = shuffle(bv, (uint4)(3u, 2u, 1u, 0u));
+        const int4 p = br >= av;
+
+        const uint count = (uint)(p.s0 != 0) + (p.s1 != 0) + (p.s2 != 0) + (p.s3 != 0);
+
+        return l + count;
+    }
+
+#pragma unroll
+    while (l < r && b[d - l - 1u] >= a[l])
+        ++l;
+
+    return l;
 }
 
 #define ITEMS_PER_THREAD 4u
