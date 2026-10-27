@@ -57,7 +57,7 @@ inline uint local_cut(
     return r;
 }
 
-#define ITEMS_PER_THREAD 8u
+#define ITEMS_PER_THREAD 4u
 #define ITEMS_PER_GROUP (GROUP_SIZE * ITEMS_PER_THREAD)
 
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
@@ -137,9 +137,8 @@ merge(
         }
 
         if (out_from + ITEMS_PER_THREAD <= count) {
-            vstore8(
-                (uint8)(values[0], values[1], values[2], values[3],
-                    values[4], values[5], values[6], values[7]),
+            vstore4(
+                (uint4)(values[0], values[1], values[2], values[3]),
                 0,
                 output_data + a_from + write_from + out_from);
         } else {
