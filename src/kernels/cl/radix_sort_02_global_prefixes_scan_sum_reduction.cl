@@ -5,27 +5,23 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-#define RADIX_SIZE 16
-
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void radix_sort_02_global_prefixes_scan_sum_reduction(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* histogram,
-    __global uint* totals,
+    __global const uint* buffer1,
+    __global uint* buffer2,
     unsigned int n)
 {
-    const uint digit = get_global_id(0);
+    const uint group = get_global_id(0);
     const uint num_groups = (n + GROUP_SIZE - 1) / GROUP_SIZE;
 
-    if (digit >= RADIX_SIZE)
+    if (group >= num_groups)
         return;
 
-    uint total = 0u;
+    const uint end = min((group + 1) * (uint)GROUP_SIZE, n) - 1;
+    const uint zeros = buffer1[end] >> 9;
+    const uint begin = group * GROUP_SIZE;
+    const uint size = min((uint)GROUP_SIZE, n - begin);
 
-    for (uint group = 0; group < num_groups; ++group) {
-        total += histogram[digit * num_groups + group];
-    }
-
-    totals[digit] = total;
+    buffer2[group] = zeros;
+    buffer2[num_groups + group] = size - zeros;
 }
