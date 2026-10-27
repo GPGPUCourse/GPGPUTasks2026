@@ -92,13 +92,14 @@ void run(int argc, char** argv)
     // gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
     // gpu::gpu_mem_32u buffer_output_gpu(n);
 
-    const size_t num_groups = (static_cast<size_t>(n) + GROUP_SIZE - 1) / GROUP_SIZE;
-    
+    const size_t num_groups = (n + GROUP_SIZE - 1) / GROUP_SIZE;
+
+    const size_t histogram_size = 16 * num_groups;
+
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u buffer1_gpu(n);
-    gpu::gpu_mem_32u buffer2_gpu(
-        std::max<size_t>(n, 2 * num_groups + 1));
-    gpu::gpu_mem_32u buffer3_gpu(n);
+    gpu::gpu_mem_32u buffer2_gpu(histogram_size);
+    gpu::gpu_mem_32u buffer3_gpu(16);
     gpu::gpu_mem_32u buffer4_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
@@ -109,11 +110,11 @@ void run(int argc, char** argv)
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
-    buffer_output_gpu.fill(255);
+    // buffer1_gpu.fill(255);
+    // buffer2_gpu.fill(255);
+    // buffer3_gpu.fill(255);
+    // buffer4_gpu.fill(255);
+    // buffer_output_gpu.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
@@ -122,23 +123,24 @@ void run(int argc, char** argv)
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        
+
         if (context.type() == gpu::Context::TypeOpenCL) {
             gpu::WorkSize workSize(GROUP_SIZE, n);
             gpu::WorkSize scatterWorkSize(1, n);
+            gpu::WorkSize smallWorkSize(GROUP_SIZE, 16);
 
             gpu::gpu_mem_32u* src = &input_gpu;
-            gpu::gpu_mem_32u* dst = &buffer_output_gpu;
+            gpu::gpu_mem_32u* dst = &buffer4_gpu;
 
-            for (unsigned int bit = 0; bit < 32; ++bit) {
+            for (unsigned int bit = 0; bit < 32; bit += 4) {
                 ocl_radixSort01LocalCounting.exec(
-                    workSize, *src, buffer1_gpu, n, bit);
+                    workSize, *src, buffer1_gpu, buffer2_gpu, n, bit);
 
                 ocl_radixSort02GlobalPrefixesScanSumReduction.exec(
-                    workSize, buffer1_gpu, buffer2_gpu, n);
+                    smallWorkSize, buffer2_gpu, buffer3_gpu, n);
 
                 ocl_radixSort03GlobalPrefixesScanAccumulation.exec(
-                    workSize, buffer1_gpu, buffer2_gpu, n, bit);
+                    smallWorkSize, buffer2_gpu, buffer3_gpu, n);
 
                 ocl_radixSort04Scatter.exec(
                     scatterWorkSize, *src, buffer1_gpu, buffer2_gpu, *dst, n, bit);
@@ -148,7 +150,6 @@ void run(int argc, char** argv)
                     ? &buffer4_gpu
                     : &buffer_output_gpu;
             }
-
         } else {
             rassert(false, 4531412341, context.type());
         }
@@ -163,7 +164,7 @@ void run(int argc, char** argv)
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
     // std::vector<unsigned int> gpu_sorted = buffer_output_gpu.readVector();
-    auto gpu_sorted = buffer4_gpu.readVector();
+    auto gpu_sorted = buffer_output_gpu.readVector();
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {

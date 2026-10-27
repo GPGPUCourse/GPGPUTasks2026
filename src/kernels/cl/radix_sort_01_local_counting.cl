@@ -5,44 +5,53 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
+#define RADIX_BITS 4
+#define RADIX_SIZE 16
+
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void radix_sort_01_local_counting(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
     __global const uint* values,
-    __global uint* buffer1,
+    __global uint* local_rank,
+    __global uint* histogram,
     unsigned int n,
     unsigned int bit)
 {
     const uint gid = get_global_id(0);
     const uint lid = get_local_id(0);
-
-    __local uint scan[GROUP_SIZE];
+    const uint group = get_group_id(0);
+    const uint num_groups = (n + GROUP_SIZE - 1) / GROUP_SIZE;
 
     const uint valid = gid < n;
     const uint value = valid ? values[gid] : 0u;
-    const uint digit = (value >> bit) & 1u;
-    const uint is_zero = valid && digit == 0u;
+    const uint digit = (value >> bit) & 15u;
 
-    scan[lid] = is_zero;
-    barrier(CLK_LOCAL_MEM_FENCE);
+    __local uint scan[GROUP_SIZE];
 
-    for (uint offset = 1; offset < GROUP_SIZE; offset <<= 1) {
-        const uint add = lid >= offset ? scan[lid - offset] : 0u;
+    for (uint d = 0; d < RADIX_SIZE; ++d) {
+        const uint matches = valid && digit == d;
+
+        scan[lid] = matches;
         barrier(CLK_LOCAL_MEM_FENCE);
-        scan[lid] += add;
+
+        for (uint offset = 1; offset < GROUP_SIZE; offset <<= 1) {
+            const uint add =
+                lid >= offset ? scan[lid - offset] : 0u;
+
+            barrier(CLK_LOCAL_MEM_FENCE);
+            scan[lid] += add;
+            barrier(CLK_LOCAL_MEM_FENCE);
+        }
+
+        if (valid && digit == d) {
+            local_rank[gid] = scan[lid] - 1u;
+        }
+
+        if (lid == GROUP_SIZE - 1) {
+            histogram[d * num_groups + group] = scan[lid];
+        }
+
         barrier(CLK_LOCAL_MEM_FENCE);
-    }
-
-    if (valid) {
-        const uint zeros_before = scan[lid] - is_zero;
-        const uint ones_before = lid - zeros_before;
-        const uint rank = digit == 0u ? zeros_before : ones_before;
-
-        uint encoded = (rank << 1) | digit;
-
-        if (lid == GROUP_SIZE - 1 || gid == n - 1)
-            encoded |= scan[lid] << 9;
-        buffer1[gid] = encoded;
     }
 }

@@ -5,33 +5,34 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
+#define RADIX_SIZE 16
+
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void radix_sort_03_global_prefixes_scan_accumulation(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* buffer1,
-    __global uint* buffer2,
-    unsigned int n,
-    unsigned int unused)
+    __global uint* offsets,
+    __global const uint* totals,
+    unsigned int n)
 {
     if (get_global_id(0) != 0)
         return;
 
     const uint num_groups = (n + GROUP_SIZE - 1) / GROUP_SIZE;
 
-    uint zeros_prefix = 0;
-    for (uint g = 0; g < num_groups; ++g) {
-        const uint count = buffer2[g];
-        buffer2[g] = zeros_prefix;
-        zeros_prefix += count;
-    }
+    uint global_base = 0u;
 
-    uint ones_prefix = 0;
-    for (uint g = 0; g < num_groups; ++g) {
-        const uint index = num_groups + g;
-        const uint count = buffer2[index];
-        buffer2[index] = ones_prefix;
-        ones_prefix += count;
+    for (uint digit = 0; digit < RADIX_SIZE; ++digit) {
+        uint block_prefix = 0u;
+
+        for (uint group = 0; group < num_groups; ++group) {
+            const uint index = digit * num_groups + group;
+            const uint count = offsets[index];
+
+            offsets[index] = global_base + block_prefix;
+            block_prefix += count;
+        }
+
+        global_base += totals[digit];
     }
-    buffer2[2 * num_groups] = zeros_prefix;
 }
