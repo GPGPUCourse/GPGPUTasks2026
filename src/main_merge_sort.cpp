@@ -1,15 +1,18 @@
 #include <libbase/stats.h>
 #include <libutils/misc.h>
 
-#include <libbase/timer.h>
 #include <libbase/fast_random.h>
+#include <libbase/timer.h>
 #include <libgpu/vulkan/engine.h>
 #include <libgpu/vulkan/tests/test_utils.h>
 
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
 
+#include <filesystem>
 #include <fstream>
+#include <iostream>
+#include <vector>
 
 void run(int argc, char** argv)
 {
@@ -26,7 +29,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -93,24 +96,42 @@ void run(int argc, char** argv)
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
+    for (int iter = 0; iter < 1; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-        } else {
-            rassert(false, 4531412341, context.type());
+        gpu::WorkSize workSize(GROUP_SIZE, n);
+        unsigned int sorted_k = 1;
+        // std::vector<unsigned int> gpu_sorted = input_gpu.readVector();
+        // for (auto i : gpu_sorted) {
+        //     std::cout << i << " ";
+        // }
+        // std::cout << std::endl;
+        cuda::merge_sort(workSize, input_gpu, buffer1_gpu, sorted_k, n);
+        // gpu_sorted = buffer1_gpu.readVector();
+        // for (auto i : gpu_sorted) {
+        //     std::cout << i << " ";
+        // }
+        // std::cout << std::endl;
+        sorted_k = 2;
+        while (sorted_k < (n + 1) / 2) {
+            cuda::merge_sort(workSize, buffer1_gpu, buffer2_gpu, sorted_k, n);
+            sorted_k *= 2;
+            std::swap(buffer1_gpu, buffer2_gpu);
+            // gpu_sorted = buffer1_gpu.readVector();
+            // for (auto i : gpu_sorted) {
+            //     std::cout << i << " ";
+            // }
+            // std::cout << std::endl;
         }
 
+        cuda::merge_sort(workSize, buffer1_gpu, buffer_output_gpu, sorted_k, n);
+        // gpu_sorted = buffer_output_gpu.readVector();
+        // for (auto i : gpu_sorted) {
+        //     std::cout << i << " ";
+        // }
+        // std::cout << std::endl;
         times.push_back(t.elapsed());
     }
     std::cout << "GPU merge-sort times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
