@@ -26,7 +26,6 @@ radix_sort_04_scatter(
     const uint size = min((uint)SCAN_BLOCK, n - base);
     const uint first = lid * ELEMS_PER_THREAD;
     __local uint data[SCAN_BLOCK];
-    __local uint sorted[SCAN_BLOCK];
     __local uint pos[RADIX][GROUP_SIZE];
     __local uint start[RADIX];
 
@@ -34,9 +33,13 @@ radix_sort_04_scatter(
         data[k] = in[base + k];
     barrier(CLK_LOCAL_MEM_FENCE);
 
+    const uint last = min(first + ELEMS_PER_THREAD, size);
+    uint x[ELEMS_PER_THREAD];
     uint cnt[RADIX] = { 0 };
-    for (uint k = first; k < min(first + ELEMS_PER_THREAD, size); ++k)
+    for (uint k = first; k < last; ++k) {
+        x[k - first] = data[k];
         ++cnt[digit(data[k], shift)];
+    }
     for (uint b = 0; b < RADIX; ++b)
         pos[b][lid] = cnt[b];
     barrier(CLK_LOCAL_MEM_FENCE);
@@ -62,12 +65,12 @@ radix_sort_04_scatter(
 
     for (uint b = 0; b < RADIX; ++b)
         cnt[b] = start[b] + pos[b][lid] - cnt[b];
-    for (uint k = first; k < min(first + ELEMS_PER_THREAD, size); ++k)
-        sorted[cnt[digit(data[k], shift)]++] = data[k];
+    for (uint k = first; k < last; ++k)
+        data[cnt[digit(x[k - first], shift)]++] = x[k - first];
     barrier(CLK_LOCAL_MEM_FENCE);
 
     for (uint k = lid; k < size; k += GROUP_SIZE) {
-        const uint d = digit(sorted[k], shift);
-        out[offsets[d * n_groups + g] + k - start[d]] = sorted[k];
+        const uint d = digit(data[k], shift);
+        out[offsets[d * n_groups + g] + k - start[d]] = data[k];
     }
 }
