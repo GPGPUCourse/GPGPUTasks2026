@@ -105,7 +105,10 @@ if (GPU_CUDA_SUPPORT)
             src/kernels/cu/radix_sort_01_local_counting.cu
             src/kernels/cu/radix_sort_02_global_prefixes_scan_sum_reduction.cu
             src/kernels/cu/radix_sort_03_global_prefixes_scan_accumulation.cu
-            src/kernels/cu/radix_sort_04_scatter.cu)
+            src/kernels/cu/radix_sort_04_scatter.cu
+            src/kernels/cu/fill_tail_with_zeros.cu
+            src/kernels/cu/set_zero.cu
+    )
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
