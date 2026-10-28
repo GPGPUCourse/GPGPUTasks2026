@@ -34,14 +34,17 @@ radix_sort_03_global_prefixes_scan_accumulation(
     sums[lid] = sum;
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    for (uint off = 1; off < GROUP_SIZE; off <<= 1) {
-        const uint t = lid >= off ? sums[lid - off] : 0;
-        barrier(CLK_LOCAL_MEM_FENCE);
-        sums[lid] += t;
-        barrier(CLK_LOCAL_MEM_FENCE);
+    if (lid == 0) {
+        uint s = block_offsets[g];
+        for (uint i = 0; i < GROUP_SIZE; ++i) {
+            const uint t = sums[i];
+            sums[i] = s;
+            s += t;
+        }
     }
+    barrier(CLK_LOCAL_MEM_FENCE);
 
-    uint s = block_offsets[g] + sums[lid] - sum;
+    uint s = sums[lid];
     for (uint j = 0; j < ELEMS_PER_THREAD; ++j) {
         s += data[pad(first + j)];
         data[pad(first + j)] = s;

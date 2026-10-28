@@ -5,6 +5,7 @@
 #include "../defines.h"
 #include "helpers/rassert.cl"
 
+// counts[b * n_groups + g + 1] = сколько в блоке g элементов с цифрой b (сдвиг на 1 - чтобы inclusive скан дал exclusive оффсеты)
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void
 radix_sort_01_local_counting(

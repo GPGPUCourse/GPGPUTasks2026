@@ -105,7 +105,6 @@ void run(int argc, char** argv)
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
-    ocl_fillBufferWithZeros.exec(gpu::WorkSize(GROUP_SIZE, padded0), counts, padded0);
 
     gpu::WorkSize ws_blocks(GROUP_SIZE, n_groups * GROUP_SIZE);
     gpu::WorkSize ws0(GROUP_SIZE, n1 * GROUP_SIZE);
@@ -125,12 +124,13 @@ void run(int argc, char** argv)
                 gpu::gpu_mem_32u& src = pass == 0 ? input_gpu : (pass % 2 == 1 ? buffer_gpu : buffer_output_gpu);
                 gpu::gpu_mem_32u& dst = pass % 2 == 0 ? buffer_gpu : buffer_output_gpu;
 
+                ocl_fillBufferWithZeros.exec(gpu::WorkSize(GROUP_SIZE, padded0), counts, padded0);
                 ocl_fillBufferWithZeros.exec(gpu::WorkSize(GROUP_SIZE, padded1), sums1, padded1);
                 ocl_fillBufferWithZeros.exec(gpu::WorkSize(GROUP_SIZE, padded2), sums2, padded2);
                 ocl_radixSort01LocalCounting.exec(ws_blocks, src, counts, n, shift);
 
-                ocl_radixSort02GlobalPrefixesScanSumReduction.exec(ws0, counts, sums1, m);
-                ocl_radixSort02GlobalPrefixesScanSumReduction.exec(ws1, sums1, sums2, padded1);
+                ocl_radixSort02GlobalPrefixesScanSumReduction.exec(ws0, counts, sums1);
+                ocl_radixSort02GlobalPrefixesScanSumReduction.exec(ws1, sums1, sums2);
                 ocl_radixSort03GlobalPrefixesScanAccumulation.exec(ws2, sums2, sums2, sums2);
                 ocl_radixSort03GlobalPrefixesScanAccumulation.exec(ws1, sums1, sums1, sums2);
                 ocl_radixSort03GlobalPrefixesScanAccumulation.exec(ws0, counts, counts, sums1);
