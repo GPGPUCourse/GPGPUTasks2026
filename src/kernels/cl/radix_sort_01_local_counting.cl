@@ -2,17 +2,35 @@
 #include <libgpu/opencl/cl/clion_defines.cl> // This file helps CLion IDE to know what additional functions exists in OpenCL's extended C99
 #endif
 
-#include "helpers/rassert.cl"
 #include "../defines.h"
+#include "helpers/rassert.cl"
 
-__attribute__((reqd_work_group_size(1, 1, 1)))
-__kernel void radix_sort_01_local_counting(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* buffer1,
-    __global       uint* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+// counts[b * n_groups + g + 1] = сколько в блоке g элементов с цифрой b (сдвиг на 1 - чтобы inclusive скан дал exclusive оффсеты)
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__kernel void
+radix_sort_01_local_counting(
+    __global const uint* in,
+    __global uint* counts,
+    unsigned int n,
+    unsigned int shift)
 {
-    // TODO
+    const uint lid = get_local_id(0);
+    const uint g = get_group_id(0);
+    const uint n_groups = get_num_groups(0);
+    __local uint hist[RADIX];
+
+    if (lid < RADIX)
+        hist[lid] = 0;
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    const uint first = g * SCAN_BLOCK + lid;
+    for (uint j = 0; j < ELEMS_PER_THREAD; ++j) {
+        const uint i = first + j * GROUP_SIZE;
+        if (i < n)
+            atomic_inc(&hist[(in[i] >> shift) & (RADIX - 1)]);
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    if (lid < RADIX)
+        counts[lid * n_groups + g + 1] = hist[lid];
 }
