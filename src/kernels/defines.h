@@ -5,7 +5,7 @@
 #define GROUP_SIZE_X 16
 #define GROUP_SIZE_Y 16
 
-#define ELEMS_PER_THREAD 8
+#define ELEMS_PER_THREAD 4
 #define SCAN_BLOCK (GROUP_SIZE * ELEMS_PER_THREAD)
 #define RADIX_BITS 4
 #define RADIX (1 << RADIX_BITS)
