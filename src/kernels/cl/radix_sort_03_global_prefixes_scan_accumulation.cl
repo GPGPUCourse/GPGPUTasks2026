@@ -2,17 +2,55 @@
 #include <libgpu/opencl/cl/clion_defines.cl> // This file helps CLion IDE to know what additional functions exists in OpenCL's extended C99
 #endif
 
-#include "helpers/rassert.cl"
 #include "../defines.h"
+#include "helpers/rassert.cl"
 
-__attribute__((reqd_work_group_size(1, 1, 1)))
-__kernel void radix_sort_03_global_prefixes_scan_accumulation(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* buffer1,
-    __global       uint* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+inline uint pad(uint i)
 {
-    // TODO
+    return i + i / 32;
+}
+
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__kernel void
+radix_sort_03_global_prefixes_scan_accumulation(
+    __global const uint* in,
+    __global uint* out,
+    __global const uint* block_offsets)
+{
+    const uint lid = get_local_id(0);
+    const uint g = get_group_id(0);
+    const uint base = g * SCAN_BLOCK;
+    const uint first = lid * ELEMS_PER_THREAD;
+    __local uint data[SCAN_BLOCK + SCAN_BLOCK / 32];
+    __local uint sums[GROUP_SIZE];
+
+    for (uint j = 0; j < ELEMS_PER_THREAD; ++j)
+        data[pad(j * GROUP_SIZE + lid)] = in[base + j * GROUP_SIZE + lid];
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    uint sum = 0;
+    for (uint j = 0; j < ELEMS_PER_THREAD; ++j)
+        sum += data[pad(first + j)];
+    sums[lid] = sum;
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    if (lid == 0) {
+        uint s = block_offsets[g];
+        for (uint i = 0; i < GROUP_SIZE; ++i) {
+            const uint t = sums[i];
+            sums[i] = s;
+            s += t;
+        }
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    uint s = sums[lid];
+    for (uint j = 0; j < ELEMS_PER_THREAD; ++j) {
+        s += data[pad(first + j)];
+        data[pad(first + j)] = s;
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    for (uint j = 0; j < ELEMS_PER_THREAD; ++j)
+        out[base + j * GROUP_SIZE + lid] = data[pad(j * GROUP_SIZE + lid)];
 }
