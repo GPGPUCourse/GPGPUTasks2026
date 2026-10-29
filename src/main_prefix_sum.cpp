@@ -37,6 +37,11 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_sum_reduction(ocl::getPrefixSum01Reduction());
     ocl::KernelSource ocl_prefix_accumulation(ocl::getPrefixSum02PrefixAccumulation());
 
+    ocl::KernelSource ocl_simple_version1(ocl::getPrefixSumSimpleVersion1());
+
+    ocl::KernelSource ocl_fast_in_group_32(ocl::getPrefixSumFast32(), "prefix_sum_fast_in_group_32");
+    ocl::KernelSource ocl_fast_32(ocl::getPrefixSumFast32(), "prefix_sum_fast_32");
+
     avk2::KernelSource vk_fill_with_zeros(avk2::getFillBufferWithZeros());
     avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
     avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
@@ -70,54 +75,116 @@ void run(int argc, char** argv)
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
 
+    gpu::gpu_mem_32u helper1_gpu(n / 32), helper2_gpu(n / 32);
+
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
 
-    // Запускаем кернел (несколько раз и с замером времени выполнения)
-    std::vector<double> times;
-    for (int iter = 0; iter < 10; ++iter) {
-        timer t;
+    const std::vector<std::string> algorithm_names = {
+        "simple_version1",
+        "reduction + accumulation",
+        "fast_32",
+    };
+    for (const std::string& algorithm : algorithm_names) {
+        std::cout << "-----------------------------" << std::endl;
+        std::cout << "Evaluating algorithm: " << algorithm << std::endl;
+        // Запускаем кернел (несколько раз и с замером времени выполнения)
+        const gpu::gpu_mem_32u* result_gpu = &prefix_sum_accum_gpu;
+        std::vector<double> times;
+        for (int iter = 0; iter < 10; ++iter) {
+            timer t;
 
-        // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-        // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fill_with_zeros.exec();
-            // vk_sum_reduction.exec();
-            // vk_prefix_accumulation.exec();
-        } else {
-            rassert(false, 4531412341, context.type());
+            // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
+            // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
+            if (algorithm == "simple_version1") {
+                ocl_simple_version1.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, buffer1_pow2_sum_gpu, n, 1);
+                int cur_ans = 0;
+
+                for (int i = 1; (1 << i) < n; ++i) {
+                    if (cur_ans == 0) {
+                        ocl_simple_version1.exec(gpu::WorkSize(GROUP_SIZE, n), buffer1_pow2_sum_gpu, buffer2_pow2_sum_gpu, n, (1 << i));
+                    } else {
+                        ocl_simple_version1.exec(gpu::WorkSize(GROUP_SIZE, n), buffer2_pow2_sum_gpu, buffer1_pow2_sum_gpu, n, (1 << i));
+                    }
+                    cur_ans ^= 1;
+                }
+                result_gpu = (cur_ans == 0) ? &buffer1_pow2_sum_gpu : &buffer2_pow2_sum_gpu;
+            } else if (algorithm == "reduction + accumulation") {
+                ocl_fill_with_zeros.exec(gpu::WorkSize(GROUP_SIZE, n), prefix_sum_accum_gpu, n);
+                int cur_ans = 0;
+
+                int active_n = n;
+
+                for (int pw2 = 0;; ++pw2) {
+                    if (pw2 == 0) {
+                        ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, prefix_sum_accum_gpu, n, pw2);    
+
+                        ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, active_n >> 1), input_gpu, buffer1_pow2_sum_gpu, active_n, active_n >> 1);
+                        active_n >>= 1;
+                    } else {
+                        if (cur_ans == 0) {
+                            ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), buffer1_pow2_sum_gpu, prefix_sum_accum_gpu, n, pw2);   
+                        } else {
+                            ocl_prefix_accumulation.exec(gpu::WorkSize(GROUP_SIZE, n), buffer2_pow2_sum_gpu, prefix_sum_accum_gpu, n, pw2);   
+                        }
+
+                        if ((1 << (pw2 + 1)) > n) break;
+
+                        if (cur_ans == 0) {
+                            ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, active_n >> 1), buffer1_pow2_sum_gpu, buffer2_pow2_sum_gpu, active_n, active_n >> 1);
+                        } else {
+                            ocl_sum_reduction.exec(gpu::WorkSize(GROUP_SIZE, active_n >> 1), buffer2_pow2_sum_gpu, buffer1_pow2_sum_gpu, active_n, active_n >> 1);
+                        }
+
+                        active_n >>= 1;
+                        cur_ans ^= 1;
+                    }
+                }
+            } else if (algorithm == "fast_32") {
+                ocl_fast_in_group_32.exec(gpu::WorkSize(128, n), input_gpu, buffer1_pow2_sum_gpu, helper1_gpu);
+                int block_size = 128;
+                int it = 0;
+                int helper_size = n / 128;
+
+                while (block_size < n) {
+                    if (it == 0) {
+                        ocl_fast_32.exec(gpu::WorkSize(128, n), buffer1_pow2_sum_gpu, helper1_gpu, buffer2_pow2_sum_gpu, helper2_gpu, n, block_size, helper_size);
+                    } else {
+                        ocl_fast_32.exec(gpu::WorkSize(128, n), buffer2_pow2_sum_gpu, helper2_gpu, buffer1_pow2_sum_gpu, helper1_gpu, n, block_size, helper_size);
+                    }
+                    helper_size /= 128;
+                    it ^= 1;
+                    if (1ll * block_size * 128 > n) break;
+                    block_size *= 128;
+                }
+
+                if (it == 0) {
+                    result_gpu = &buffer1_pow2_sum_gpu;
+                } else {
+                    result_gpu = &buffer2_pow2_sum_gpu;
+                }
+            } else {
+                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            }
+
+            times.push_back(t.elapsed());
+        }
+        std::cout << "prefix sum times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+
+        // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили префиксные суммы)
+        double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
+        std::cout << "GPU prefix sum median effective VRAM bandwidth: "
+                  << memory_size_gb / stats::median(times) << " GB/s ("
+                  << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
+
+        // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
+        std::vector<unsigned int> gpu_prefix_sum = result_gpu->readVector();
+
+        // Сверяем результат
+        for (size_t i = 0; i < n; ++i) {
+            rassert(cpu_prefix_sum[i] == gpu_prefix_sum[i], 566324523452323, cpu_prefix_sum[i], gpu_prefix_sum[i], i);
         }
 
-        times.push_back(t.elapsed());
-    }
-    std::cout << "prefix sum times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
-
-    // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили префиксные суммы)
-    double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
-    std::cout << "GPU prefix sum median effective VRAM bandwidth: "
-              << memory_size_gb / stats::median(times) << " GB/s ("
-              << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
-
-    // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
-
-    // Сверяем результат
-    for (size_t i = 0; i < n; ++i) {
-        rassert(cpu_prefix_sum[i] == gpu_prefix_sum[i], 566324523452323, cpu_prefix_sum[i], gpu_prefix_sum[i], i);
     }
 
     // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
