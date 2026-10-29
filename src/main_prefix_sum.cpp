@@ -10,6 +10,8 @@
 
 #include <fstream>
 
+
+
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -42,7 +44,7 @@ void run(int argc, char** argv)
     avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
 
     unsigned int n = 100*1000*1000;
-    // n = 93847552;
+    // n = 100 * 1000;
     std::vector<unsigned int> as(n, 0);
     size_t total_sum = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -69,7 +71,7 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu((n + 1) / 2), buffer2_pow2_sum_gpu((n + 1) / 2), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(2 * n), prefix_sum_accum_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -90,13 +92,15 @@ void run(int argc, char** argv)
         } else if (context.type() == gpu::Context::TypeCUDA) {
             cuda::copy_to_accum(gpu::WorkSize(GROUP_SIZE, n), prefix_sum_accum_gpu, input_gpu, buffer1_pow2_sum_gpu, n);
             // cuda::copy_to_buffer(gpu::WorkSize(GROUP_SIZE, n), buffer1_pow2_sum_gpu, input_gpu, n);
-            
-            for (int sz = (n + 1) / 2, j = 2; sz > 1; sz = (sz + 1) / 2, ++j) { //sz = buffer1 size
-                cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, sz), buffer1_pow2_sum_gpu, buffer2_pow2_sum_gpu, sz);
+            uint sft = 0;
+            for (int sz = NEXT_SZ(n), j = 2; sz > 1; sz = NEXT_SZ(sz), ++j) { 
+                //sz -- размер предыдущей свертки
+                //sft -- сумма по размерам предыдущих сверток
+                cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, NEXT_SZ(sz)), buffer1_pow2_sum_gpu, buffer1_pow2_sum_gpu, sz, sft);
+                sft += sz;
                 // printf("start accum %i, %i\n", n, j);
-                cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), buffer2_pow2_sum_gpu, prefix_sum_accum_gpu, n, j);
-                std::swap(buffer1_pow2_sum_gpu, buffer2_pow2_sum_gpu);
             }
+            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), buffer1_pow2_sum_gpu, prefix_sum_accum_gpu, n, 2);
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);

@@ -25,7 +25,6 @@ __global__ void copy_to_accum(
     }
     if (idx % 4 == 1 || idx % 4 == 2) {
         res += lines[threadIdx.x - 1];
-        //if (idx == 1) printf("by idx 1 %i\n", res);
     }
     if (idx % 4 == 2) {
         res += lines[threadIdx.x - 2];
