@@ -1,137 +1,281 @@
 #include <libbase/stats.h>
 #include <libutils/misc.h>
-
 #include <libbase/timer.h>
 #include <libbase/fast_random.h>
+#include <libgpu/device.h>
 #include <libgpu/vulkan/engine.h>
 #include <libgpu/vulkan/tests/test_utils.h>
 
-#include "kernels/defines.h"
-#include "kernels/kernels.h"
+#include <algorithm>
+#include <cstdlib>
+#include <iostream>
+#include <limits>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
 
-#include <fstream>
+#ifdef CUDA_SUPPORT
+#include <cuda_runtime_api.h>
+
+// Объявления оставлены здесь, чтобы заменить только два файла, не трогая kernels.h.
+namespace merge_fast {
+int tile_size();
+int partition_count(int n);
+void merge_pass(const unsigned int* input, unsigned int* output,
+                int* partitions, int run, int n, cudaStream_t stream);
+void sort(const unsigned int* input, unsigned int* output,
+          unsigned int* temporary, int* partitions, int n, cudaStream_t stream);
+}
+
+namespace {
+void check_cuda(cudaError_t status, int line)
+{
+    if (status != cudaSuccess) {
+        throw std::runtime_error(std::string(cudaGetErrorString(status)) +
+                                 " at line " + std::to_string(line));
+    }
+}
+#define MS_CUDA(call) check_cuda((call), __LINE__)
+
+int env_int(const char* name, int fallback)
+{
+    const char* value = std::getenv(name);
+    return value ? std::stoi(value) : fallback;
+}
+
+struct GpuBuffers {
+    int device = 0;
+    int offset = 0;
+    int count = 0;
+    unsigned int* input = nullptr;
+    unsigned int* output = nullptr;
+    unsigned int* temporary = nullptr;
+    int* partitions = nullptr;
+    cudaStream_t stream = nullptr;
+    cudaEvent_t done = nullptr;
+};
+
+// Сначала завершаем работу ВСЕХ GPU, затем освобождаем память:
+// на нее могут еще ссылаться P2P-копирования с другой карты.
+struct Workspace {
+    std::vector<GpuBuffers> gpus;
+    ~Workspace()
+    {
+        for (auto& g : gpus) {
+            if (g.stream) {
+                cudaSetDevice(g.device);
+                cudaStreamSynchronize(g.stream);
+            }
+        }
+        for (auto& g : gpus) {
+            cudaSetDevice(g.device);
+            if (g.done) cudaEventDestroy(g.done);
+            if (g.stream) cudaStreamDestroy(g.stream);
+            if (g.partitions) cudaFree(g.partitions);
+            if (g.temporary) cudaFree(g.temporary);
+            if (g.output) cudaFree(g.output);
+            if (g.input) cudaFree(g.input);
+        }
+    }
+};
+
+void allocate(GpuBuffers& g, int capacity)
+{
+    MS_CUDA(cudaSetDevice(g.device));
+    MS_CUDA(cudaStreamCreateWithFlags(&g.stream, cudaStreamNonBlocking));
+    MS_CUDA(cudaEventCreateWithFlags(&g.done, cudaEventDisableTiming));
+    const size_t bytes = size_t(capacity) * sizeof(unsigned int);
+    MS_CUDA(cudaMalloc(reinterpret_cast<void**>(&g.input), bytes));
+    MS_CUDA(cudaMalloc(reinterpret_cast<void**>(&g.output), bytes));
+    MS_CUDA(cudaMalloc(reinterpret_cast<void**>(&g.temporary), bytes));
+    MS_CUDA(cudaMalloc(reinterpret_cast<void**>(&g.partitions),
+                       size_t(merge_fast::partition_count(capacity)) * sizeof(int)));
+}
+
+void enable_peer(int from, int to)
+{
+    int possible = 0;
+    MS_CUDA(cudaDeviceCanAccessPeer(&possible, from, to));
+    if (!possible) {
+        throw std::runtime_error("No P2P access between CUDA devices " +
+                                 std::to_string(from) + " and " + std::to_string(to) +
+                                 ". Run with MERGE_GPUS=1.");
+    }
+    MS_CUDA(cudaSetDevice(from));
+    const cudaError_t status = cudaDeviceEnablePeerAccess(to, 0);
+    if (status == cudaErrorPeerAccessAlreadyEnabled) {
+        cudaGetLastError();
+    } else {
+        MS_CUDA(status);
+    }
+}
+} // namespace
+#endif
 
 void run(int argc, char** argv)
 {
-    // chooseGPUVkDevices:
-    // - Если не доступо ни одного устройства - кинет ошибку
-    // - Если доступно ровно одно устройство - вернет это устройство
-    // - Если доступно N>1 устройства:
-    //   - Если аргументов запуска нет или переданное число не находится в диапазоне от 0 до N-1 - кинет ошибку
-    //   - Если аргумент запуска есть и он от 0 до N-1 - вернет устройство под указанным номером
-    gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
-
-    // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
-    // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
-    // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
-    // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
-    // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
-    // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
-    // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
-    //          если же вас это не останавливает - профилировщик (nsight-systems) при запуске на NVIDIA тоже работает (хоть и менее мощный чем nsight-compute)
-    //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
-    //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
-
-    ocl::KernelSource ocl_mergeSort(ocl::getMergeSort());
-
-    avk2::KernelSource vk_mergeSort(avk2::getMergeSort());
-
-    FastRandom r;
-
-    int n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
-    int min_value = 1; // это сделано для упрощения, чтобы существовало очевидное -INFINITY значение
-    int max_value = std::numeric_limits<int>::max() - 1; // TODO при отладке используйте минимальное max_value (например max_value=8) при котором воспроизводится бага
-    std::vector<unsigned int> as(n, 0);
-    std::vector<unsigned int> sorted(n, 0);
-    for (size_t i = 0; i < n; ++i) {
-        as[i] = r.next(min_value, max_value);
+    const gpu::Device device = gpu::chooseGPUDevice(
+        gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
+    if (!device.supports_cuda) {
+        std::cout << "Device doesn't support CUDA; skipping CUDA experiment." << std::endl;
+        return;
     }
-    std::cout << "n=" << n << " values in range [" << min_value << "; " << max_value << "]" << std::endl;
 
-    {
-        // убедимся что в массиве есть хотя бы несколько повторяющихся значений
-        size_t force_duplicates_attempts = 3;
-        bool all_attempts_missed = true;
-        for (size_t k = 0; k < force_duplicates_attempts; ++k) {
-            size_t i = r.next(0, n - 1);
-            size_t j = r.next(0, n - 1);
-            if (i != j) {
-                as[j] = as[i];
-                all_attempts_missed = false;
+#ifndef CUDA_SUPPORT
+    throw std::runtime_error("Build this experiment with -DGPU_CUDA_SUPPORT=ON");
+#else
+    // Используем CUDA Runtime и primary contexts непосредственно, без activateContext().
+    // Это позволяет явно переключать GPU, не смешивая их с контекстом libgpu.
+    const int root_device = device.device_id_cuda;
+    MS_CUDA(cudaSetDevice(root_device));
+    std::cout << "Using CUDA API..." << std::endl;
+
+    const int n = env_int("MERGE_N", 100 * 1000 * 1000);
+    const int max_value = env_int("MERGE_MAX", std::numeric_limits<int>::max() - 1);
+    const int iterations = env_int("MERGE_ITERS", 10);
+    const int requested_gpus = env_int("MERGE_GPUS", 1);
+    if (n < 1 || n > 1000000000 || max_value < 1 ||
+        max_value > std::numeric_limits<int>::max() - 1 ||
+        iterations < 1 || requested_gpus < 1 || requested_gpus > 4) {
+        throw std::runtime_error("Use 1<=MERGE_N<=1e9, 1<=MERGE_MAX<=2147483646, "
+                                 "MERGE_ITERS>=1, 1<=MERGE_GPUS<=4.");
+    }
+
+    int available = 0;
+    MS_CUDA(cudaGetDeviceCount(&available));
+    if (requested_gpus > available) {
+        throw std::runtime_error("Requested more CUDA GPUs than are visible.");
+    }
+    std::vector<int> device_ids{root_device};
+    for (int d = 0; d < available && int(device_ids.size()) < requested_gpus; ++d) {
+        if (d != root_device) device_ids.push_back(d);
+    }
+
+    const int tile = merge_fast::tile_size();
+    // Все межкарточные границы кратны плитке; последний кусок может быть короче.
+    const int chunk = ((n + requested_gpus * tile - 1) /
+                       (requested_gpus * tile)) * tile;
+    const int used_gpus = (n + chunk - 1) / chunk;
+    device_ids.resize(used_gpus);
+    std::cout << "Merge-sort: " << used_gpus << " GPU(s), tile=" << tile
+              << ", CUDA device IDs:";
+    for (int d : device_ids) std::cout << ' ' << d;
+    std::cout << std::endl;
+
+    FastRandom random;
+    std::vector<unsigned int> input(n);
+    for (int i = 0; i < n; ++i) input[i] = random.next(1, max_value);
+    if (n > 1) input[n - 1] = input[0];  // Гарантированно проверяем повтор значения.
+    std::cout << "n=" << n << " values in range [1; " << max_value << "]" << std::endl;
+
+    std::vector<unsigned int> expected = input;
+    std::cout << "sorting on CPU..." << std::endl;
+    timer cpu_timer;
+    std::sort(expected.begin(), expected.end());
+    const double cpu_elapsed = cpu_timer.elapsed();
+    std::cout << "CPU std::sort finished in " << cpu_elapsed << " sec" << std::endl;
+
+    Workspace workspace;
+    workspace.gpus.resize(used_gpus);
+    for (int k = 0; k < used_gpus; ++k) {
+        auto& g = workspace.gpus[k];
+        g.device = device_ids[k];
+        g.offset = k * chunk;
+        g.count = std::min(chunk, n - g.offset);
+        allocate(g, k == 0 ? n : g.count);
+    }
+    for (int k = 1; k < used_gpus; ++k) {
+        enable_peer(root_device, device_ids[k]);
+        enable_peer(device_ids[k], root_device);
+    }
+
+    auto& root = workspace.gpus[0];
+    const size_t bytes = size_t(n) * sizeof(unsigned int);
+    MS_CUDA(cudaSetDevice(root_device));
+    // Как и в исходном тесте: единственная H2D-загрузка вне замера сортировки.
+    MS_CUDA(cudaMemcpyAsync(root.input, input.data(), bytes,
+                           cudaMemcpyHostToDevice, root.stream));
+    MS_CUDA(cudaStreamSynchronize(root.stream));
+
+    int final_passes = 0;
+    for (int width = chunk; width < n; width *= 2) ++final_passes;
+    unsigned int* gathered = (final_passes & 1) ? root.temporary : root.output;
+    unsigned int* other = (final_passes & 1) ? root.output : root.temporary;
+
+    const auto run_sort = [&]() {
+        if (used_gpus == 1) {
+            MS_CUDA(cudaSetDevice(root_device));
+            merge_fast::sort(root.input, root.output, root.temporary,
+                             root.partitions, n, root.stream);
+        } else {
+            // Раздача -> локальная сортировка -> сбор. Все это входит в замер.
+            // Worker streams работают независимо; CPU не ждет каждую карту отдельно.
+            for (int k = 1; k < used_gpus; ++k) {
+                auto& g = workspace.gpus[k];
+                MS_CUDA(cudaSetDevice(g.device));
+                const size_t part_bytes = size_t(g.count) * sizeof(unsigned int);
+                MS_CUDA(cudaMemcpyPeerAsync(g.input, g.device,
+                    root.input + g.offset, root_device, part_bytes, g.stream));
+                merge_fast::sort(g.input, g.output, g.temporary,
+                                 g.partitions, g.count, g.stream);
+                MS_CUDA(cudaMemcpyPeerAsync(gathered + g.offset, root_device,
+                    g.output, g.device, part_bytes, g.stream));
+                MS_CUDA(cudaEventRecord(g.done, g.stream));
+            }
+
+            MS_CUDA(cudaSetDevice(root_device));
+            merge_fast::sort(root.input, gathered, other, root.partitions,
+                             root.count, root.stream);
+            for (int k = 1; k < used_gpus; ++k) {
+                MS_CUDA(cudaStreamWaitEvent(root.stream, workspace.gpus[k].done, 0));
+            }
+
+            // Финальные слияния на основной GPU. При четырех кусках это два этапа.
+            unsigned int* src = gathered;
+            unsigned int* dst = other;
+            for (int width = chunk; width < n; width *= 2) {
+                merge_fast::merge_pass(src, dst, root.partitions, width, n, root.stream);
+                std::swap(src, dst);
             }
         }
-        rassert(!all_attempts_missed, 4353245123412);
-    }
+        // Замер заканчивается только после получения полного результата на основной GPU.
+        MS_CUDA(cudaStreamSynchronize(root.stream));
+    };
 
-    {
-        sorted = as;
-        std::cout << "sorting on CPU..." << std::endl;
-        timer t;
-        std::sort(sorted.begin(), sorted.end());
-        double elapsed = t.elapsed();
-        // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили его переупорядоченным)
-        double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
-        std::cout << "CPU std::sort finished in " << elapsed << " sec" << std::endl;
-        std::cout << "CPU std::sort effective RAM bandwidth: " << memory_size_gb / elapsed << " GB/s (" << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
-    }
-
-    // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
-    gpu::gpu_mem_32u buffer_output_gpu(n);
-
-    // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
-    input_gpu.writeN(as.data(), n);
-    // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
-    // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
-    // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer_output_gpu.fill(255);
-
-    // Запускаем кернел (несколько раз и с замером времени выполнения)
+    std::cout << "GPU warm-up..." << std::endl;
+    run_sort();
     std::vector<double> times;
-    for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
+    times.reserve(iterations);
+    for (int iter = 0; iter < iterations; ++iter) {
         timer t;
-
-        // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-        // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-        } else {
-            rassert(false, 4531412341, context.type());
-        }
-
+        run_sort();
         times.push_back(t.elapsed());
     }
-    std::cout << "GPU merge-sort times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+    std::cout << "GPU merge-sort times (in seconds) - "
+              << stats::valuesStatsLine(times) << std::endl;
+    const double median = stats::median(times);
+    const double logical_gib = 2.0 * bytes / (1024.0 * 1024.0 * 1024.0);
+    // Это прежняя условная метрика 2*n*sizeof(uint), НЕ реальный трафик всех этапов.
+    std::cout << "GPU merge-sort median effective VRAM bandwidth: "
+              << logical_gib / median << " GiB/s ("
+              << n / 1e6 / median << " uint millions/s)" << std::endl;
 
-    // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили его переупорядоченным)
-    double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
-    std::cout << "GPU merge-sort median effective VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s (" << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
-
-    // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    std::vector<unsigned int> gpu_sorted = buffer_output_gpu.readVector();
-
-    // Сверяем результат
-    for (size_t i = 0; i < n; ++i) {
-        rassert(sorted[i] == gpu_sorted[i], 566324523452323, sorted[i], gpu_sorted[i], i);
+    MS_CUDA(cudaSetDevice(root_device));
+    std::vector<unsigned int> actual(n);
+    MS_CUDA(cudaMemcpy(actual.data(), root.output, bytes, cudaMemcpyDeviceToHost));
+    for (int i = 0; i < n; ++i) {
+        if (actual[i] != expected[i]) {
+            throw std::runtime_error("Sort mismatch at i=" + std::to_string(i) +
+                ": CPU=" + std::to_string(expected[i]) +
+                ", GPU=" + std::to_string(actual[i]));
+        }
     }
-
-    // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
-    std::vector<unsigned int> input_values = input_gpu.readVector();
-    for (size_t i = 0; i < n; ++i) {
-        rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
-    }
+    // Переиспользуем CPU-буфер для проверки неизменности исходных данных.
+    MS_CUDA(cudaMemcpy(actual.data(), root.input, bytes, cudaMemcpyDeviceToHost));
+    if (actual != input) throw std::runtime_error("Input buffer was modified");
+    std::cout << "OK: GPU result matches CPU; input is unchanged." << std::endl;
+#endif
 }
 
 int main(int argc, char** argv)
@@ -139,22 +283,10 @@ int main(int argc, char** argv)
     int exit_code = 0;
     try {
         run(argc, argv);
-    } catch (std::exception& e) {
+    } catch (const std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
-        if (e.what() == DEVICE_NOT_SUPPORT_API) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за выбора CUDA API (его нет на процессоре - т.е. в случае CI на GitHub Actions)
-            exit_code = 0;
-        } else if (e.what() == CODE_IS_NOT_IMPLEMENTED) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за того что задание еще не выполнено
-            exit_code = 0;
-        } else {
-            // Выставляем ненулевой exit code, чтобы сообщить, что случилась ошибка
-            exit_code = 1;
-        }
+        exit_code = 1;
     }
-
-    // we need to gracefully clear Vulkan context before it is too late (otherwise we encounter segfault on some systems)
     avk2::InstanceContext::clearGlobalInstanceContext();
-
     return exit_code;
 }
