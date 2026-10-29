@@ -40,7 +40,7 @@ void run(int argc, char** argv)
 
     FastRandom r;
 
-    int n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+    int n = 1000 * 1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
     int min_value = 1; // это сделано для упрощения, чтобы существовало очевидное -INFINITY значение
     int max_value = std::numeric_limits<int>::max() - 1; // TODO при отладке используйте минимальное max_value (например max_value=8) при котором воспроизводится бага
     std::vector<unsigned int> as(n, 0);
@@ -96,11 +96,28 @@ void run(int argc, char** argv)
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
+        gpu::WorkSize workSize(GROUP_SIZE, n);
+
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
             // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            int sorted_k = 0;
+
+            while ((1 << sorted_k) < n) {
+                if (sorted_k == 0 && n == 1) {
+                    ocl_mergeSort.exec(workSize, input_gpu, buffer_output_gpu, sorted_k, n);
+                } else if (sorted_k == 0) {
+                    ocl_mergeSort.exec(workSize, input_gpu, buffer2_gpu, sorted_k, n);
+                } else if (2 * (1 << sorted_k) >= n) { 
+                    ocl_mergeSort.exec(workSize, buffer1_gpu, buffer_output_gpu, sorted_k, n);
+                }else {
+                    ocl_mergeSort.exec(workSize, buffer1_gpu, buffer2_gpu, sorted_k, n);
+                }
+                std::swap(buffer1_gpu, buffer2_gpu);
+                sorted_k++;
+            }
+            // throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -121,6 +138,16 @@ void run(int argc, char** argv)
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
     std::vector<unsigned int> gpu_sorted = buffer_output_gpu.readVector();
+
+    // std::cout << "cpu sorted\n";
+    // for (size_t i = 0; i < n; ++i) {
+    //     std::cout << sorted[i] << " ";
+    // }
+
+    // std::cout << "gpu sorted\n";
+    // for (size_t i = 0; i < n; ++i) {
+    //     std::cout << gpu_sorted[i] << " ";
+    // }
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
