@@ -19,14 +19,14 @@ __global__ void merge_sort(
 
     unsigned int diag_count = n / MERGE_PATH_DIAGONAL_OFFSET + (n % MERGE_PATH_DIAGONAL_OFFSET != 0 ? 1 : 0);
 
-    if (blockIdx.x * 4 >= diag_count) {
+    if (blockIdx.x * 2 >= diag_count) {
         return;
     }
 
-    unsigned int group_index = threadIdx.x / 8;
-    unsigned int thread_index = threadIdx.x % 8;
+    unsigned int group_index = threadIdx.x / 16;
+    unsigned int thread_index = threadIdx.x % 16;
 
-    unsigned int diag_index = blockIdx.x * 4 + group_index;
+    unsigned int diag_index = blockIdx.x * 2 + group_index;
     unsigned int diag_index_local = diag_index % diag_count_local;
     unsigned int task_index = diag_index / diag_count_local;
 
@@ -43,12 +43,12 @@ __global__ void merge_sort(
         second_array_size = min(merge_array_size, n - second_array_start);
     }
 
-    __shared__ uint2 start[4];
-    __shared__ uint2 end[4];
+    __shared__ uint2 start[2];
+    __shared__ uint2 end[2];
 
-    __shared__ unsigned int first[4][MERGE_PATH_DIAGONAL_OFFSET];
-    __shared__ unsigned int second[4][MERGE_PATH_DIAGONAL_OFFSET];
-    __shared__ unsigned int res[4][MERGE_PATH_DIAGONAL_OFFSET];
+    __shared__ unsigned int first[2][MERGE_PATH_DIAGONAL_OFFSET];
+    __shared__ unsigned int second[2][MERGE_PATH_DIAGONAL_OFFSET];
+    __shared__ unsigned int res[2][MERGE_PATH_DIAGONAL_OFFSET];
 
     if (thread_index == 0 && active) {
         start[group_index] = merge_subtasks[diag_index];
@@ -67,11 +67,11 @@ __global__ void merge_sort(
         second_size = end[group_index].x - start[group_index].x;
     }
 
-    for (unsigned int i = thread_index; i < first_size; i += 8) {
+    for (unsigned int i = thread_index; i < first_size; i += 16) {
         first[group_index][i] = input_data[first_array_start + start[group_index].y + i];
     }
 
-    for (unsigned int i = thread_index; i < second_size; i += 8) {
+    for (unsigned int i = thread_index; i < second_size; i += 16) {
         second[group_index][i] = input_data[second_array_start + start[group_index].x + i];
     }
 
@@ -87,7 +87,7 @@ __global__ void merge_sort(
         }
     }
 
-    for (unsigned int i = thread_index; i < first_size + second_size; i += 8) {
+    for (unsigned int i = thread_index; i < first_size + second_size; i += 16) {
         output_data[first_array_start + diag_index_local * MERGE_PATH_DIAGONAL_OFFSET + i] = res[group_index][i];
     }
 }

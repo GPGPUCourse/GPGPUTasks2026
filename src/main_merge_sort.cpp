@@ -98,7 +98,7 @@ void run(int argc, char** argv)
 
         for (unsigned int merge_data_size = 256; merge_data_size < n; merge_data_size *= 2) {
             cuda::merge_path_division(gpu::WorkSize(256, 1, diagonals_count, 1), *b1, diagonals, merge_data_size, n);
-            cuda::merge_sort(gpu::WorkSize(32, 1, diagonals_count * 8, 1), *b1, *b2, diagonals, merge_data_size, n);
+            cuda::merge_sort(gpu::WorkSize(32, 1, diagonals_count * 16, 1), *b1, *b2, diagonals, merge_data_size, n);
             std::swap(b1, b2);
         }
 
