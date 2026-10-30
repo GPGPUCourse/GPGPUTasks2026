@@ -7,6 +7,32 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
+__device__ unsigned int lower_bound(const unsigned int* a, int l, int r, unsigned int v) {
+    while(l < r) {
+        int m = (l + r) / 2;
+        if(a[m] < v) {
+            l = m + 1;
+        }
+        else {
+            r = m;
+        }
+    }
+    return r;
+}
+
+__device__ unsigned int upper_bound(const unsigned int* a, int l, int r, unsigned int v) {
+    while(l < r) {
+        int m = (l + r) / 2;
+        if(a[m] > v) {
+            r = m;
+        }
+        else {
+            l = m + 1;
+        }
+    }
+    return r;
+}
+
 __global__ void merge_sort(
     const unsigned int* input_data,
           unsigned int* output_data,
@@ -14,7 +40,38 @@ __global__ void merge_sort(
                    int  n)
 {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    // TODO
+    if(i >= n) {
+        return;
+    }
+
+    unsigned int st = static_cast<unsigned int>((i / (sorted_k * 2ull)) * (sorted_k * 2ull));
+    unsigned int m;
+    if(n - st < sorted_k) {
+        m = n;
+    }
+    else {
+        m = st + sorted_k;
+    }
+    unsigned int end;
+    if(n - m < sorted_k) {
+        end = n;
+    }
+    else {
+        end = m + sorted_k;
+    }
+
+    unsigned int val = input_data[i];
+    unsigned int pos;
+    if(i < m) {
+        unsigned int r = lower_bound(input_data, m, end, val);
+        pos = st + (i - st) + (r - m);
+    }
+    else {
+        unsigned int l = upper_bound(input_data, st, m, val);
+        pos = st + (l - st) + (i - m);
+    }
+
+    output_data[pos] = val;
 }
 
 namespace cuda {
