@@ -14,29 +14,33 @@ __global__ void copy_to_accum(
     unsigned int n)
 {
     uint idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx >= n) return;
+    
 
     __shared__ int lines[GROUP_SIZE];
-    lines[threadIdx.x] = input[idx];
+    lines[threadIdx.x] = idx < n ? input[idx] : 0;
     __syncthreads();
+
+    if (idx >= n) return;
+
     int res = 0;
-    if (idx % 4 < 3) {
-        res += lines[threadIdx.x];
-    }
-    if (idx % 4 == 1 || idx % 4 == 2) {
-        res += lines[threadIdx.x - 1];
-    }
-    if (idx % 4 == 2) {
-        res += lines[threadIdx.x - 2];
+    for (int threads = GROUP_SIZE, j = 0; threads > 1; threads /= 2, ++j) {
+        int idx2_local = (threadIdx.x + 1) >> j;
+        int idx2_global = (idx + 1) >> j; 
+        if (idx2_global % 2 == 1) {
+            res += lines[(idx2_local << j) - 1];
+        } 
+        if ((threadIdx.x + 1) % (1 << j + 1) == 0) {
+            lines[threadIdx.x] += lines[threadIdx.x - (1 << j)];
+        }
+        __syncthreads();
     }
 
     accum[idx] = res;
-    if (idx % 2 == 1) {
-        buffer[idx / 2] = lines[threadIdx.x] + lines[threadIdx.x - 1];
+    if (threadIdx.x == 0) {
+        buffer[blockIdx.x] = lines[GROUP_SIZE - 1];
     }
     
 }
-
 namespace cuda {
 void copy_to_accum(const gpu::WorkSize &workSize,
             gpu::gpu_mem_32u &accum, gpu::gpu_mem_32u &input, gpu::gpu_mem_32u &buffer, unsigned int n)
