@@ -14,7 +14,37 @@ __global__ void merge_sort(
                    int  n)
 {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    // TODO
+    if (i >= n)
+        return;
+
+    const int left_begin = (i / (2 * sorted_k)) * (2 * sorted_k);
+    const int right_begin = min(left_begin + sorted_k, n);
+    const int right_end = min(left_begin + 2 * sorted_k, n);
+
+    const unsigned int x = input_data[i];
+    const bool in_left = (i < right_begin);
+
+    int l = left_begin;
+    int r = right_begin;
+    if (in_left)
+    {
+        l = right_begin;
+        r = right_end;
+    }
+    const int other_begin = l;
+    while (l < r) {
+        const int mid = (l + r) / 2;
+        const unsigned int y = input_data[mid];
+        if (y < x || (!in_left && y == x)) {
+            l = mid + 1;
+        } else {
+            r = mid;
+        }
+    }
+    const int count_before_in_other = l - other_begin;
+    const int index_in_own = in_left ? (i - left_begin) : (i - right_begin);
+
+    output_data[left_begin + index_in_own + count_before_in_other] = x;
 }
 
 namespace cuda {
