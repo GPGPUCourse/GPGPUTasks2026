@@ -5,7 +5,7 @@ project(GPGPUTasks)
 set(CMAKE_CXX_STANDARD 17)
 
 # Если вы установили CUDA SDK - можете включить поддержку CUDA
-option(GPU_CUDA_SUPPORT "CUDA support." OFF)
+option(GPU_CUDA_SUPPORT "CUDA support." ON)
 
 # GLSLC_BIN используйтся для компиляции Vulkan шейдеров (GLSL)
 if (NOT DEFINED GLSLC_BIN)
@@ -97,9 +97,12 @@ if (GPU_CUDA_SUPPORT)
     # Вероятно вам стоит выставить в CMake options: -DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
     set(CUDA_SOURCES
             src/kernels/cu/aplusb.cu
-            src/kernels/cu/fill_buffer_with_zeros.cu
+            src/kernels/cu/add_accumulated.cu
             src/kernels/cu/prefix_sum_01_reduction.cu
-            src/kernels/cu/prefix_sum_02_prefix_accumulation.cu)
+            src/kernels/cu/prefix_sum_02_prefix_accumulation.cu
+            src/kernels/cu/copy_to_accum.cu
+            src/kernels/cu/copy_to_buffer.cu
+            )
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
