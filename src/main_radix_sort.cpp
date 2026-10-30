@@ -40,13 +40,7 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_radixSort01LocalCounting(ocl::getRadixSort01LocalCounting());
     ocl::KernelSource ocl_radixSort02GlobalPrefixesScanSumReduction(ocl::getRadixSort02GlobalPrefixesScanSumReduction());
     ocl::KernelSource ocl_radixSort03GlobalPrefixesScanAccumulation(ocl::getRadixSort03GlobalPrefixesScanAccumulation());
-    ocl::KernelSource ocl_radixSort04Scatter(ocl::getRadixSort04Scatter());
-
-    avk2::KernelSource vk_fillBufferWithZeros(avk2::getFillBufferWithZeros());
-    avk2::KernelSource vk_radixSort01LocalCounting(avk2::getRadixSort01LocalCounting());
-    avk2::KernelSource vk_radixSort02GlobalPrefixesScanSumReduction(avk2::getRadixSort02GlobalPrefixesScanSumReduction());
-    avk2::KernelSource vk_radixSort03GlobalPrefixesScanAccumulation(avk2::getRadixSort03GlobalPrefixesScanAccumulation());
-    avk2::KernelSource vk_radixSort04Scatter(avk2::getRadixSort04Scatter());
+    // ocl::KernelSource ocl_radixSort04Scatter(ocl::getRadixSort04Scatter());
 
     FastRandom r;
 
@@ -88,7 +82,7 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u ans1(n), ans2(n), buffer2(n), buffer3(n), buffer4(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -96,10 +90,10 @@ void run(int argc, char** argv)
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
+    // buffer1_gpu.fill(255);
+    // buffer2_gpu.fill(255);
+    // buffer3_gpu.fill(255);
+    // buffer4_gpu.fill(255);
     buffer_output_gpu.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
@@ -107,34 +101,43 @@ void run(int argc, char** argv)
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
-        // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-        // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::radix_sort_01_local_counting();
-            // cuda::radix_sort_02_global_prefixes_scan_sum_reduction();
-            // cuda::radix_sort_03_global_prefixes_scan_accumulation();
-            // cuda::radix_sort_04_scatter();
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fillBufferWithZeros.exec();
-            // vk_radixSort01LocalCounting.exec();
-            // vk_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // vk_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // vk_radixSort04Scatter.exec();
-        } else {
-            rassert(false, 4531412341, context.type());
+        // ans1 and ans2 for actual array
+        // buffer2, buffer3, buffer4 from pref sums
+
+        int it = 0;
+        auto* cur_ans = &input_gpu;
+
+        for (int cur_bit = 0; cur_bit < 32; ++cur_bit) {
+            uint cur_n = n;
+
+            ocl_radixSort01LocalCounting.exec(gpu::WorkSize(GROUP_SIZE, n), *cur_ans, buffer2, cur_bit);
+
+            uint cur_n2 = (cur_n + GROUP_SIZE - 1) / GROUP_SIZE;
+            ocl_radixSort02GlobalPrefixesScanSumReduction.exec(gpu::WorkSize(GROUP_SIZE, cur_n2), buffer2, buffer3, cur_n2);
+
+            uint cur_n3 = (cur_n2 + GROUP_SIZE - 1) / GROUP_SIZE;
+            ocl_radixSort02GlobalPrefixesScanSumReduction.exec(gpu::WorkSize(GROUP_SIZE, cur_n3), buffer3, buffer4, cur_n3);
+
+            uint cur_n4 = (cur_n3 + GROUP_SIZE - 1) / GROUP_SIZE;
+            
+            assert(cur_n4 <= GROUP_SIZE);
+
+            auto* to_arr = &input_gpu;
+
+            if (it == 0) {
+                to_arr = &ans1;
+            } else {
+                to_arr = &ans2;
+            }
+
+            if (cur_bit == 31) {
+                to_arr = &buffer_output_gpu;
+            }
+
+            ocl_radixSort03GlobalPrefixesScanAccumulation.exec(gpu::WorkSize(GROUP_SIZE, n), *cur_ans, buffer2, buffer3, buffer4, *to_arr, cur_n2, cur_n3, cur_n4, cur_bit);
+
+            cur_ans = to_arr;
+            it ^= 1;
         }
 
         times.push_back(t.elapsed());
