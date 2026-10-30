@@ -5,6 +5,10 @@
 namespace cuda {
 void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n);
 void fill_buffer_with_zeros(const gpu::WorkSize &workSize, gpu::gpu_mem_32u &buffer, unsigned int n);
+// is_input_level: значения текущего прохода; false: промежуточные суммы/префиксы.
+// bit: номер сортируемого бита, от 0 до 31.
+void radix_sort_01_reduction(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &input, gpu::gpu_mem_32u &reduced, unsigned int n, bool is_input_level, unsigned int bit);
+void radix_sort_02_prefix_accumulation(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &reduced, const gpu::gpu_mem_32u &input, gpu::gpu_mem_32u &output, unsigned int n, bool is_input_level, unsigned int bit);
 void radix_sort_01_local_counting(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &values, gpu::gpu_mem_32u &buffer1, unsigned int a1, unsigned int a2);
 void radix_sort_02_global_prefixes_scan_sum_reduction(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &buffer1, gpu::gpu_mem_32u &buffer2, unsigned int a1);
 void radix_sort_03_global_prefixes_scan_accumulation(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &buffer1, gpu::gpu_mem_32u &buffer2, unsigned int a1, unsigned int a2);
