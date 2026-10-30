@@ -23,12 +23,14 @@ __global__ void prefix_sum_02_prefix_accumulation(
     uint sz = base_sz;
     uint sft = base_sft;
 
+    uint res = 0;
     for (uint idx2 = idx >> pow2; idx2 > 0; idx2 >>= 1) {
-        if (idx2 % 2 == 1) prefix_sum_accum[idx - 1] += pow2_sum[sft + idx2 - 1];
+        if (idx2 % 2 == 1) res += pow2_sum[sft + idx2 - 1];
         
         sft += sz;
         sz = NEXT_SZ(sz);
     }
+    prefix_sum_accum[idx - 1] += res;
 }
 
 namespace cuda {
