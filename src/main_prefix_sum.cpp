@@ -71,7 +71,7 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(2 * n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(2 * n), prefix_sum_accum_gpu(n), prefix_sum_accum2_gpu((n + 255) / 256);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -91,7 +91,6 @@ void run(int argc, char** argv)
             // ocl_prefix_accumulation.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
             cuda::copy_to_accum(gpu::WorkSize(GROUP_SIZE, n), prefix_sum_accum_gpu, input_gpu, buffer1_pow2_sum_gpu, n);
-            // cuda::copy_to_buffer(gpu::WorkSize(GROUP_SIZE, n), buffer1_pow2_sum_gpu, input_gpu, n);
             uint sft = 0;
 
             int sz = n;
@@ -107,7 +106,9 @@ void run(int argc, char** argv)
                 sft += sz;
             }
             
-            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), buffer1_pow2_sum_gpu, prefix_sum_accum_gpu, n, base_sz, base_sft, 8);
+            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, (n + 255) / 256), buffer1_pow2_sum_gpu, prefix_sum_accum2_gpu, (n + 255) / 256, base_sz, base_sft, 0);
+            // std::cout << "accumulated" << std::endl;
+            cuda::add_accumulated(gpu::WorkSize(GROUP_SIZE, n), prefix_sum_accum2_gpu, prefix_sum_accum_gpu, 8, n);
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);

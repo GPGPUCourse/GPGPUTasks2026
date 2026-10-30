@@ -30,7 +30,10 @@ __global__ void prefix_sum_02_prefix_accumulation(
         sft += sz;
         sz = NEXT_SZ(sz);
     }
-    prefix_sum_accum[idx - 1] += res;
+    prefix_sum_accum[idx - 1] = res;
+    if (idx == 2) {
+        printf("idx %d val %d ", idx, res);
+    }
 }
 
 namespace cuda {

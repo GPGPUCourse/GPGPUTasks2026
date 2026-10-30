@@ -18,8 +18,11 @@ void aplusb(const gpu::WorkSize& workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
-void fill_buffer_with_zeros(const gpu::WorkSize &workSize,
-            gpu::gpu_mem_32u &buffer, unsigned int n)
+void add_accumulated(
+    unsigned int* buffer,
+    unsigned int* acc,
+    uint j,
+    unsigned int n)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
