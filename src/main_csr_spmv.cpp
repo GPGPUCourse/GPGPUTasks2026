@@ -11,7 +11,7 @@
 
 #include <fstream>
 
-std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<unsigned int>> generate_csr_matrix(
+std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<unsigned int>, std::vector<unsigned int>> generate_csr_matrix(
     unsigned int nrows, unsigned int ncols,
     unsigned int min_non_zero_values_per_row, unsigned int max_non_zero_values_per_row,
     unsigned int max_value)
@@ -24,6 +24,7 @@ std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<uns
     }
     const unsigned int number_of_non_zero_values = csr_row_offsets[nrows];
 
+    std::vector<unsigned int> coo_rows(number_of_non_zero_values, 0);
     std::vector<unsigned int> csr_columns(number_of_non_zero_values, 0);
     std::vector<unsigned int> csr_values(number_of_non_zero_values, 0);
 
@@ -35,12 +36,13 @@ std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<uns
 
         for (int i = 0; i < non_zero_row_values; ++i) {
             unsigned int value = r.next(0, max_value);
+            coo_rows[csr_row_offsets[row] + i] = row;
             csr_columns[csr_row_offsets[row] + i] = columns[i];
             csr_values[csr_row_offsets[row] + i] = value;
         }
     }
 
-    return {csr_row_offsets, csr_columns, csr_values};
+    return {csr_row_offsets, coo_rows, csr_columns, csr_values};
 }
 
 std::vector<unsigned int> generate_vector(
@@ -88,12 +90,7 @@ void run(int argc, char** argv)
     //   - Если аргумент запуска есть и он от 0 до N-1 - вернет устройство под указанным номером
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
-    // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
-    // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
-    // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
-    // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -123,7 +120,7 @@ void run(int argc, char** argv)
     double cpu_throughput_sum = 0.0, gpu_throughput_sum = 0.0;
     for (auto [min_nnz_per_row, max_nnz_per_col]: evaluated_min_max_nnz_per_row) {
         std::cout << "____________________________________________________________________________________________" << std::endl;
-        const auto [csr_row_offsets, csr_columns, csr_values] = generate_csr_matrix(nrows, ncols, min_nnz_per_row, max_nnz_per_col, max_value);
+        const auto [csr_row_offsets, coo_rows, csr_columns, csr_values] = generate_csr_matrix(nrows, ncols, min_nnz_per_row, max_nnz_per_col, max_value);
         const std::vector<unsigned int> vector_values = generate_vector(ncols, max_value);
         const unsigned int number_of_non_zero_values = csr_row_offsets[nrows];
         const unsigned int nnz = number_of_non_zero_values;
@@ -141,14 +138,21 @@ void run(int argc, char** argv)
         // Вычисляем достигнутую эффективную пропускную способность видеопамяти
         // (из соображений что мы отработали идеально - считали один раз каждое ненулевое число из матрицы + из вектора + записали результаты)
         double memory_size_gb = sizeof(unsigned int) * (nnz + vector_values.size() + cpu_results.size()) / 1024.0 / 1024.0 / 1024.0;
+        double memory_size_gb_r = sizeof(unsigned int) * ((nnz * 3) + vector_values.size() + cpu_results.size()) / 1024.0 / 1024.0 / 1024.0;
         std::cout << "CPU (multi-threaded via OpenMP) finished in " << elapsed << " sec" << std::endl;
         std::cout << "CPU effective bandwidth: " << memory_size_gb / elapsed << " GB/s (" << nnz / 1e6 / elapsed << " uint millions/s)" << std::endl;
 
         // Аллоцируем буферы в VRAM
-        gpu::gpu_mem_32u csr_row_offsets_gpu(nrows + 1), csr_columns_gpu(nnz), csr_values_gpu(nnz), vector_values_gpu(ncols), output_vector_values_gpu(nrows);
+        gpu::gpu_mem_32u csr_row_offsets_gpu(nrows + 1);
+        gpu::gpu_mem_32u coo_rows_gpu(nnz);
+        gpu::gpu_mem_32u csr_columns_gpu(nnz);
+        gpu::gpu_mem_32u csr_values_gpu(nnz);
+        gpu::gpu_mem_32u vector_values_gpu(ncols);
+        gpu::gpu_mem_32u output_vector_values_gpu(nrows);
 
         // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
         csr_row_offsets_gpu.writeN(csr_row_offsets.data(), csr_row_offsets.size());
+        coo_rows_gpu.writeN(coo_rows.data(), coo_rows.size());
         csr_columns_gpu.writeN(csr_columns.data(), csr_columns.size());
         csr_values_gpu.writeN(csr_values.data(), csr_values.size());
         vector_values_gpu.writeN(vector_values.data(), vector_values.size());
@@ -156,23 +160,28 @@ void run(int argc, char** argv)
         // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
         // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
         // Если вам нужно занулять буферы в процессе вычислений - создайте кернел который это сделает
-        output_vector_values_gpu.fill(255);
+        output_vector_values_gpu.fill(0);
 
         // Запускаем кернел (несколько раз и с замером времени выполнения)
         std::vector<double> times;
-        for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
+        for (int iter = 0; iter < 10; ++iter) { // при отладке запускайте одну итерацию
+            output_vector_values_gpu.fill(0);
             t.restart();
 
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             if (context.type() == gpu::Context::TypeOpenCL) {
-                // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
             } else if (context.type() == gpu::Context::TypeCUDA) {
-                // TODO
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                cuda::sparse_csr_matrix_vector_multiplication(
+                        coo_rows_gpu,
+                        csr_columns_gpu,
+                        csr_values_gpu,
+                        nnz,
+                        vector_values_gpu,
+                        output_vector_values_gpu
+                );
             } else if (context.type() == gpu::Context::TypeVulkan) {
-                // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
             } else {
                 rassert(false, 4531412341, context.type());
@@ -186,6 +195,7 @@ void run(int argc, char** argv)
         // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили его переупорядоченным)
         double gpu_elapsed = stats::median(times);
         std::cout << "GPU SpMV median effective VRAM bandwidth: " << memory_size_gb / gpu_elapsed << " GB/s (" << nnz / 1e6 / gpu_elapsed << " uint millions/s)" << std::endl;
+        std::cout << "GPU SpMV median real VRAM bandwidth:      " << memory_size_gb_r / gpu_elapsed << " GB/s" << std::endl;
 
         // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
         std::vector<unsigned int> gpu_results = output_vector_values_gpu.readVector();
