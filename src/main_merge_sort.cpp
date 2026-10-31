@@ -93,7 +93,6 @@ void run(int argc, char** argv)
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    const gpu::WorkSize work_size(GROUP_SIZE, n);
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
@@ -107,6 +106,13 @@ void run(int argc, char** argv)
             gpu::gpu_mem_32u* src = &input_gpu;
             gpu::gpu_mem_32u* dst =(passes % 2 == 1) ? &buffer_output_gpu : &buffer1_gpu;
             for (int k = 1; k < n; k *= 2) {
+                const size_t pair_span = 2 * static_cast<size_t>(k);
+                const size_t pair_count = (static_cast<size_t>(n) + pair_span - 1) / pair_span;
+                const size_t groups_per_pair = (pair_span + GROUP_SIZE - 1) / GROUP_SIZE;
+                const size_t work_items = pair_span < GROUP_SIZE
+                    ? static_cast<size_t>(n)
+                    : pair_count * groups_per_pair * GROUP_SIZE;
+                const gpu::WorkSize work_size(GROUP_SIZE, work_items);
                 ocl_mergeSort.exec(work_size, *src, *dst, k, n);
                 src = dst;
                 dst = (dst == &buffer_output_gpu) ? &buffer1_gpu : &buffer_output_gpu;
