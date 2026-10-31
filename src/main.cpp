@@ -117,7 +117,21 @@ int main()
 			// Тип устройства
 			cl_device_type deviceType;
 			OCL_SAFE_CALL(clGetDeviceInfo(device, CL_DEVICE_TYPE, sizeof(cl_device_type), &deviceType, nullptr));
-			std::cout << "        Тип устройства: " << deviceType << ", то есть 'CL_DEVICE_TYPE_GPU'  тк 1 << 2 = 4 и судя по 282 строчке cl.h это гпу"  << std::endl;
+			std::cout << "        Тип устройства: " << deviceType << ", ";
+			if (deviceType == CL_DEVICE_TYPE_DEFAULT) {
+				std::cout << "устройство по умолчанию";
+			} else if (deviceType == CL_DEVICE_TYPE_CPU) {
+				std::cout << "процессор";
+			} else if (deviceType == CL_DEVICE_TYPE_GPU) {
+				std::cout << "видеокарта";
+			} else if (deviceType == CL_DEVICE_TYPE_ACCELERATOR) {
+				std::cout << "ускоритель?";
+			} else if (deviceType == CL_DEVICE_TYPE_CUSTOM) {
+				std::cout << "нестандартное устройство???";
+			} else {
+				std::cout << "что-то странное???????";
+			}
+			std::cout << std::endl;
 
 
 			// Размер памяти устройства
