@@ -90,10 +90,6 @@ void run(int argc, char** argv)
 
     gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
 
-    ocl::KernelSource ocl_spvm(ocl::getSparseCSRMatrixVectorMult());
-
-    avk2::KernelSource vk_spvm(avk2::getSparseCSRMatrixVectorMult());
-
     FastRandom r;
 
     const unsigned int nrows = 1000*1000;
@@ -149,11 +145,10 @@ void run(int argc, char** argv)
 
         // Запускаем кернел (несколько раз и с замером времени выполнения)
         std::vector<double> times;
-        for (int iter = 0; iter < 1; ++iter) {
+        for (int iter = 0; iter < 10; ++iter) {
             t.restart();
 
             if (context.type() == gpu::Context::TypeCUDA) {
-                // Очень хотелось сделать двумерную сетку, однако ограничение в 65535 по оси y помешало((
                 cuda::sparse_csr_matrix_vector_multiplication(
                     gpu::WorkSize(GROUP_SIZE, SMALL_GROUP_SIZE * nrows),
                     csr_row_offsets_gpu,

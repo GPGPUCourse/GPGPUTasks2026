@@ -6,8 +6,6 @@
 
 #include <libgpu/cuda/cu/common.cu>
 
-#include <cuda/atomic>
-
 // Один ворп суммирует одну строку, в рамках одной рабочей группы несколько ворпов = несколько строк
 __global__ void sparse_csr_matrix_vector_multiplication(
     const uint* row_offsets,
@@ -31,7 +29,7 @@ __global__ void sparse_csr_matrix_vector_multiplication(
         const auto col = csr_columns[i];
         thread_acc += csr_values[i] * vector[col];
     }
-    // Здесь должна быть синхронизация, но она не нужна, так как мы в одном ворпе
+    // __syncthreads здесь не нужен, так как мы в одном ворпе
     for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
         thread_acc += __shfl_down_sync(0xFFFFFFFF, thread_acc, offset);
     }
