@@ -45,6 +45,10 @@ __kernel void merge_sort(
                    int  sorted_k,
                    int  n)
 {
+    __local uint data[TILE];
+    __local uint borders[2];
+    __local uint sorted_data[TILE];
+
     const uint local_id = get_local_id(0);
     const uint group = get_group_id(0);
     const uint pair_span = 2u * (uint)sorted_k;
@@ -55,7 +59,6 @@ __kernel void merge_sort(
         if (valid <= 0) return;
         const uint pair_start = local_id / pair_span * pair_span;
 
-        __local uint data[TILE];
         if (global_id < (uint)n){
             data[local_id] = input_data[global_id];
         }
@@ -95,7 +98,6 @@ __kernel void merge_sort(
     const uint d_end = min(pair_length, d_start + TILE);
 
 
-    __local uint borders[2];
     if (local_id == 0){
         borders[0] = find_border(input_data, pair_start, right_start, len_a, len_b, d_start);
         borders[1] = find_border(input_data, pair_start, right_start, len_a, len_b, d_end);
@@ -106,7 +108,6 @@ __kernel void merge_sort(
     uint b_start = d_start - a_start;
     uint b_end = d_end - a_end;
 
-    __local uint sorted_data[TILE];
     const uint count_a = a_end - a_start;
     const uint count_b = b_end - b_start;
 
