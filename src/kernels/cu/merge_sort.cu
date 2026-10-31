@@ -45,10 +45,37 @@ __device__ void merge_step(uint32_t i, const unsigned int *input_data,
   }
 }
 
+__device__ void find_ratio(const uint32_t *input, int d, int lenA, int lenB, int *countA) {
+  int l = max(0, d - lenB);
+  int r = min(d, lenA) + 1;
+  while (r - l > 1) {
+    int m = (l + r) / 2;
+    int countB = d - m;
+    bool ok = (m == 0) || (countB == lenB) || (input[m - 1] <= input[lenA + countB]);
+    if (ok) {
+      l = m;
+    } else {
+      r = m;
+    }
+  }
+  *countA = l;
+}
+
 __global__ void merge_sort(const unsigned int *input_data,
                                unsigned int *output_data, int sorted_k, int n) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  merge_step(i, input_data, output_data, sorted_k, n);
+  if (i >= n) return;
+  uint32_t range_i = i / sorted_k;
+  uint32_t offset = (range_i % 2 == 0) ? range_i * sorted_k : (range_i - 1) * sorted_k;
+  int lenA = min(sorted_k, n - offset);
+  int lenB = min(sorted_k, n - offset - lenA);
+  int d = (i - offset) + 1;
+  int countA = 0;
+  find_ratio(input_data+offset, d, lenA, lenB, &countA);
+  int countB = d - countA;
+  uint32_t elemA = (countA > 0) ? input_data[offset+countA-1] : 0u;
+  uint32_t elemB = (countB > 0) ? input_data[offset+lenA+countB-1] : 0u;
+  output_data[i] = max(elemA, elemB);
 }
 
 __global__ void merge256(const unsigned int *input_data,
