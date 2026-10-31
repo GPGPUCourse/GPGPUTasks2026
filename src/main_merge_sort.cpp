@@ -102,13 +102,14 @@ void run(int argc, char** argv)
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            uint32_t sorted_k = 1;
-            uint32_t i = 0;
+            auto &merge256_output = (GROUP_SIZE >= n) ? buffer_output_gpu : buffer2_gpu;
+            cuda::merge256(gpu::WorkSize(GROUP_SIZE, n), input_gpu, merge256_output, n);
+
+            uint32_t sorted_k = GROUP_SIZE;
+            uint32_t i = 1;
             while(sorted_k < n) {
-              uint32_t next_sorted_k = (sorted_k == 1) ? 256 : sorted_k * 2;
-              auto &input = (i == 0)
-                                ? input_gpu
-                                : ((i % 2 == 0) ? buffer1_gpu : buffer2_gpu);
+              uint32_t next_sorted_k = sorted_k * 2;
+              auto &input = (i % 2 == 0) ? buffer1_gpu : buffer2_gpu;
               auto &output =
                   (next_sorted_k >= n)
                       ? buffer_output_gpu

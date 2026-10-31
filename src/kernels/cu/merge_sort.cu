@@ -48,28 +48,31 @@ __device__ void merge_step(uint32_t i, const unsigned int *input_data,
 __global__ void merge_sort(const unsigned int *input_data,
                                unsigned int *output_data, int sorted_k, int n) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (sorted_k > 1) {
-    merge_step(i, input_data, output_data, sorted_k, n);
-  } else {
-    __shared__ unsigned int arr1[GROUP_SIZE];
-    __shared__ unsigned int arr2[GROUP_SIZE];
-    arr1[threadIdx.x] = (i < n) ? input_data[i] : -1u;
+  merge_step(i, input_data, output_data, sorted_k, n);
+}
 
-    uint32_t sorted_k = 1;
-    uint32_t iter = 0;
-    while(sorted_k < GROUP_SIZE) {
-      __syncthreads();
-      const uint32_t *input = (iter%2 == 0) ? arr1 : arr2;
-      uint32_t *output = (iter%2 == 0) ? arr2 : arr1;
-      merge_step(threadIdx.x, input, output, sorted_k, GROUP_SIZE);
-      sorted_k *= 2;
-      iter += 1;
-    }
+__global__ void merge256(const unsigned int *input_data,
+                         unsigned int *output_data, int n) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
 
+  __shared__ unsigned int arr1[GROUP_SIZE];
+  __shared__ unsigned int arr2[GROUP_SIZE];
+  arr1[threadIdx.x] = (i < n) ? input_data[i] : -1u;
+
+  uint32_t sorted_k = 1;
+  uint32_t iter = 0;
+  while(sorted_k < GROUP_SIZE) {
     __syncthreads();
-    if (i < n) { 
-      output_data[i] = arr1[threadIdx.x];
-    }
+    const uint32_t *input = (iter%2 == 0) ? arr1 : arr2;
+    uint32_t *output = (iter%2 == 0) ? arr2 : arr1;
+    merge_step(threadIdx.x, input, output, sorted_k, GROUP_SIZE);
+    sorted_k *= 2;
+    iter += 1;
+  }
+
+  __syncthreads();
+  if (i < n) {
+    output_data[i] = arr1[threadIdx.x];
   }
 }
 
@@ -81,6 +84,16 @@ void merge_sort(const gpu::WorkSize &workSize,
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
     ::merge_sort<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(input_data.cuptr(), output_data.cuptr(), sorted_k, n);
+    CUDA_CHECK_KERNEL(stream);
+}
+
+void merge256(const gpu::WorkSize &workSize,
+            const gpu::gpu_mem_32u &input_data, gpu::gpu_mem_32u &output_data, int n)
+{
+    gpu::Context context;
+    rassert(context.type() == gpu::Context::TypeCUDA, 34523543124313, context.type());
+    cudaStream_t stream = context.cudaStream();
+    ::merge256<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(input_data.cuptr(), output_data.cuptr(), n);
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda
