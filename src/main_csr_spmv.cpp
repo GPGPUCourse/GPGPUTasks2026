@@ -153,10 +153,9 @@ void run(int argc, char** argv)
             t.restart();
 
             if (context.type() == gpu::Context::TypeCUDA) {
-                rassert(max_nnz_per_col <= GROUP_SIZE_X, 517269831, max_nnz_per_col, GROUP_SIZE_X);
                 // Очень хотелось сделать двумерную сетку, однако ограничение в 65535 по оси y помешало((
                 cuda::sparse_csr_matrix_vector_multiplication(
-                    gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_X * nrows),
+                    gpu::WorkSize(SMALL_GROUP_SIZE, SMALL_GROUP_SIZE * nrows),
                     csr_row_offsets_gpu,
                     csr_columns_gpu,
                     csr_values_gpu,

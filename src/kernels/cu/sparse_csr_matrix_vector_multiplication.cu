@@ -17,24 +17,24 @@ __global__ void sparse_csr_matrix_vector_multiplication(
 {
     const auto row = blockIdx.x;
 
-    const auto offset = row_offsets[row];
-    const auto row_size = row_offsets[row + 1] - offset;
+    const auto row_offset = row_offsets[row];
+    const auto row_size = row_offsets[row + 1] - row_offset;
 
-    __shared__ cuda::atomic<uint, cuda::thread_scope_block> res;
-    if (threadIdx.x == 0) {
-        res.store(0, cuda::memory_order_relaxed);
+    uint thread_acc = 0;
+    for (int row_block_offset = 0; row_block_offset < row_size; row_block_offset += WARP_SIZE) {
+        if (row_block_offset + threadIdx.x < row_size) {
+            const auto i = row_offset + row_block_offset + threadIdx.x;
+            const auto col = csr_columns[i];
+            const auto summand = csr_values[i] * vector[col];
+            thread_acc += summand;
+        }
     }
-    __syncthreads();
 
-    if (threadIdx.x < row_size) {
-        const auto i = offset + threadIdx.x;
-        const auto col = csr_columns[i];
-        const auto summand = csr_values[i] * vector[col];
-        res.fetch_add(summand, cuda::memory_order_relaxed);
+    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+        thread_acc += __shfl_down_sync(0xFFFFFFFF, thread_acc, offset);
     }
-    __syncthreads();
     if (threadIdx.x == 0) {
-        result[row] = res.load(cuda::memory_order_relaxed);
+        result[row] = thread_acc;
     }
 }
 
