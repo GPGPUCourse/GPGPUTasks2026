@@ -105,15 +105,16 @@ void run(int argc, char** argv)
             uint32_t sorted_k = 1;
             uint32_t i = 0;
             while(sorted_k < n) {
+              uint32_t next_sorted_k = (sorted_k == 1) ? 256 : sorted_k * 2;
               auto &input = (i == 0)
                                 ? input_gpu
                                 : ((i % 2 == 0) ? buffer1_gpu : buffer2_gpu);
               auto &output =
-                  (sorted_k * 2 >= n)
+                  (next_sorted_k >= n)
                       ? buffer_output_gpu
                       : ((i % 2 == 0) ? buffer2_gpu : buffer1_gpu);
               cuda::merge_sort(gpu::WorkSize(GROUP_SIZE, n), input, output, sorted_k, n);
-              sorted_k *= 2;
+              sorted_k = next_sorted_k;
               i += 1;
             }
         } else if (context.type() == gpu::Context::TypeVulkan) {

@@ -7,47 +7,70 @@
 #include "helpers/rassert.cu"
 #include "../defines.h"
 
-__global__ void merge_sort(
-    const unsigned int* input_data,
-          unsigned int* output_data,
-                   int  sorted_k,
-                   int  n)
-{
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    uint32_t elem = (i < n) ? input_data[i] : -1u;
+__device__ void merge_step(uint32_t i, const unsigned int *input_data,
+                     unsigned int *output_data, int sorted_k, int n) {
+  uint32_t elem = (i < n) ? input_data[i] : -1u;
+  uint32_t range_i = i / sorted_k;
+  uint32_t begin1 =
+      (range_i % 2 == 0) ? range_i * sorted_k : (range_i - 1) * sorted_k;
+  uint32_t begin2 = begin1 + sorted_k;
+  uint32_t res_offset = begin1;
+  uint32_t l = 0;
+  uint32_t r = sorted_k + 1;
+  uint32_t search_offset = begin1;
+  if (i < begin2) {
+    res_offset += i - begin1;
+    search_offset = begin2;
+  } else {
+    res_offset += i - begin2;
+    search_offset = begin1;
+  }
 
-    uint32_t range_i = i / sorted_k;
-    uint32_t begin1 = (range_i % 2 == 0) ? range_i * sorted_k : (range_i - 1) * sorted_k;
-    uint32_t begin2 = begin1 + sorted_k;
-    uint32_t res_offset = begin1;
-    uint32_t l = 0;
-    uint32_t r = sorted_k+1;
-    uint32_t search_offset = begin1;
-    if (i < begin2) {
-      res_offset += i - begin1;
-      search_offset = begin2;
-    } else { 
-      res_offset += i - begin2;
-      search_offset = begin1;
+  while (r - l > 1) {
+    uint32_t m = (l + r) / 2;
+    uint32_t m_index = m + search_offset - 1;
+    uint32_t m_elem = (m_index < n) ? input_data[m_index] : -1u;
+    if (m_elem < elem) {
+      l = m;
+    } else if (m_elem == elem && search_offset == begin2) {
+      l = m;
+    } else {
+      r = m;
+    }
+  }
+
+  res_offset += l;
+  if (res_offset < n) {
+    output_data[res_offset] = elem;
+  }
+}
+
+__global__ void merge_sort(const unsigned int *input_data,
+                               unsigned int *output_data, int sorted_k, int n) {
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (sorted_k > 1) {
+    merge_step(i, input_data, output_data, sorted_k, n);
+  } else {
+    __shared__ unsigned int arr1[GROUP_SIZE];
+    __shared__ unsigned int arr2[GROUP_SIZE];
+    arr1[threadIdx.x] = (i < n) ? input_data[i] : -1u;
+
+    uint32_t sorted_k = 1;
+    uint32_t iter = 0;
+    while(sorted_k < GROUP_SIZE) {
+      __syncthreads();
+      const uint32_t *input = (iter%2 == 0) ? arr1 : arr2;
+      uint32_t *output = (iter%2 == 0) ? arr2 : arr1;
+      merge_step(threadIdx.x, input, output, sorted_k, GROUP_SIZE);
+      sorted_k *= 2;
+      iter += 1;
     }
 
-    while (r-l > 1) {
-      uint32_t m = (l+r)/2;
-      uint32_t m_index = m+search_offset-1;
-      uint32_t m_elem = (m_index < n) ? input_data[m_index] : -1u;
-      if (m_elem < elem) {
-        l = m;
-      } else if (m_elem == elem && search_offset == begin2) {
-        l = m;
-      } else {
-        r = m;
-      }
+    __syncthreads();
+    if (i < n) { 
+      output_data[i] = arr1[threadIdx.x];
     }
-
-    res_offset += l;
-    if (res_offset < n) {
-      output_data[res_offset] = elem;
-    }
+  }
 }
 
 namespace cuda {
