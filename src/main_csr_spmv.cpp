@@ -149,13 +149,13 @@ void run(int argc, char** argv)
 
         // Запускаем кернел (несколько раз и с замером времени выполнения)
         std::vector<double> times;
-        for (int iter = 0; iter < 10; ++iter) {
+        for (int iter = 0; iter < 1; ++iter) {
             t.restart();
 
             if (context.type() == gpu::Context::TypeCUDA) {
                 // Очень хотелось сделать двумерную сетку, однако ограничение в 65535 по оси y помешало((
                 cuda::sparse_csr_matrix_vector_multiplication(
-                    gpu::WorkSize(SMALL_GROUP_SIZE, SMALL_GROUP_SIZE * nrows),
+                    gpu::WorkSize(GROUP_SIZE, SMALL_GROUP_SIZE * nrows),
                     csr_row_offsets_gpu,
                     csr_columns_gpu,
                     csr_values_gpu,
