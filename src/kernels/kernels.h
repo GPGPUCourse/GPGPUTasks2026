@@ -4,11 +4,20 @@
 
 namespace cuda {
 void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n);
-void sparse_csr_matrix_vector_multiplication(
+void sparse_csr_matrix_vector_multiplication_coo(
     gpu::gpu_mem_32u& rows,
     gpu::gpu_mem_32u& cols,
     gpu::gpu_mem_32u& values,
     uint n,
+    gpu::gpu_mem_32u& vtr,
+    gpu::gpu_mem_32u& dst
+);
+void sparse_csr_matrix_vector_multiplication_csc(
+    gpu::gpu_mem_32u& rows,
+    gpu::gpu_mem_32u& col_offsets,
+    gpu::gpu_mem_32u& values,
+    uint n,
+    uint ncols,
     gpu::gpu_mem_32u& vtr,
     gpu::gpu_mem_32u& dst
 );
