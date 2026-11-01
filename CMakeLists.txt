@@ -92,6 +92,7 @@ if (GPU_CUDA_SUPPORT)
     # 2) второй раз специальным CUDA-компилятором NVCC - для DEVICE-side кода, например функции помеченные специальным модификатором __global__ (кернелы) или __device__ (функции которые можно вызвать на видеокарте, т.е. из кернелов)
     # Вероятно вам стоит выставить в CMake options: -DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
     set(CUDA_SOURCES
+            src/kernels/cu/copy_mem.cu
             src/kernels/cu/aplusb.cu
             src/kernels/cu/merge_sort.cu)
 
