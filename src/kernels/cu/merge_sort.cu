@@ -10,11 +10,39 @@
 __global__ void merge_sort(
     const unsigned int* input_data,
           unsigned int* output_data,
-                   int  sorted_k,
+                   int  iter,
                    int  n)
 {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    // TODO
+    const unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    if (x >= n) {
+        return;
+    }
+
+    const unsigned int y = x ^ (1u << iter);
+
+    const unsigned int vx = input_data[x];
+
+    const bool on_right = (x >> iter) & 1;
+    const unsigned int base = x & ~((1u << (iter + 1)) - 1);
+    const unsigned int this_base = x & ~((1u << iter) - 1);
+    const unsigned int other_base = y & ~((1u << iter) - 1);
+
+    unsigned int l = 0, r = (1u << iter);
+    while (l + 1 < r) {
+        const unsigned int m = (l + r) / 2;
+        const unsigned int vm = (other_base + m < n ? input_data[other_base + m] : 0xFFFFFFFFu);
+        if (vm < vx || (on_right && vm == vx)) {
+            l = m;
+        } else {
+            r = m;
+        }
+    }
+
+    const unsigned int vl = (other_base + l < n ? input_data[other_base + l] : 0xFFFFFFFFu);
+    const unsigned int found = (vl < vx || (on_right && vl == vx)) ? r : l;
+    const unsigned int idx = found + (x - this_base) + base;
+
+    output_data[idx] = vx;
 }
 
 namespace cuda {

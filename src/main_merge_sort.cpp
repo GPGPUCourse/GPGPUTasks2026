@@ -16,10 +16,7 @@ void run(int argc, char** argv)
 {
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
-
-    ocl::KernelSource ocl_mergeSort(ocl::getMergeSort());
-    ocl::KernelSource ocl_mergeSortOneGroup(ocl::getMergeSortOneGroup());
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
 
     FastRandom r;
 
@@ -79,14 +76,14 @@ void run(int argc, char** argv)
     for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
-        ocl_mergeSortOneGroup.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, buffer1_gpu, n);
+        cuda::merge_sort_one_group(gpu::WorkSize(GROUP_SIZE, n), input_gpu, buffer1_gpu, n);
 
         int num = n >> GROUP_SHIFT;
         int i = GROUP_SHIFT;
         while (num > 1) {
             gpu::gpu_mem_32u& input = (num == n ? input_gpu : (i % 2 == 0 ? buffer1_gpu : buffer2_gpu));
             gpu::gpu_mem_32u& output = ((num + 1) / 2 == 1 ? buffer_output_gpu : (i % 2 == 0 ? buffer2_gpu : buffer1_gpu));
-            ocl_mergeSort.exec(gpu::WorkSize(GROUP_SIZE, n), input, output, i, n);
+            cuda::merge_sort(gpu::WorkSize(GROUP_SIZE, n), input, output, i, n);
             num = (num + 1) / 2;
             ++i;
         }
