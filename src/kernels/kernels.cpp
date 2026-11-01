@@ -14,6 +14,12 @@ void aplusb(const gpu::WorkSize& workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
+void copy_mem(const gpu::WorkSize &workSize,
+            const gpu::gpu_mem_32u &in, gpu::gpu_mem_32u &out, unsigned int in_size, unsigned int out_size)
+{
+    // dummy implementation if CUDA_SUPPORT is disabled
+    rassert(false, 54623523412413);
+}
 void merge_sort(const gpu::WorkSize &workSize,
     const gpu::gpu_mem_32u &input_data, gpu::gpu_mem_32u &output_data, int sorted_k, int n)
 {
