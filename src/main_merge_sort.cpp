@@ -23,9 +23,8 @@ void run(int argc, char** argv)
     FastRandom r;
 
     int n = 100*1000*1000;
-    int min_value = std::numeric_limits<int>::max() - 1;
-    // int max_value = std::numeric_limits<int>::max() - 1;
-    int max_value = 100;
+    int min_value = 1;
+    int max_value = std::numeric_limits<int>::max() - 1;
     std::vector<unsigned int> as(n, 0);
     std::vector<unsigned int> sorted(n, 0);
     for (size_t i = 0; i < n; ++i) {
