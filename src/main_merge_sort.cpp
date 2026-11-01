@@ -102,7 +102,7 @@ void run(int argc, char** argv)
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    for (int iter = 0; iter < 1; ++iter) {
+    for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
         cuda::copy_mem(gpu::WorkSize(GROUP_SIZE, rounded_n), input_gpu, *out1, n, rounded_n);
