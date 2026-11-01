@@ -79,18 +79,27 @@ void run(int argc, char** argv)
     scratch_gpu.fill(255);
     buffer_output_gpu.fill(255);
 
+    int local_sorted_k = 0;
+    for (size_t width = 1; width < GROUP_SIZE; width *= 2) {
+        ++local_sorted_k;
+    }
+    const gpu::WorkSize workSize(GROUP_SIZE, n);
+
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
+        // Сначала сортируем по GROUP_SIZE элементов внутри каждой workgroup.
+        // Для GROUP_SIZE=256 это заменяет глобальные проходы k=0,...,7.
+        if (n > 0) {
+            cuda::merge_sort_local(workSize, input_gpu, buffer_output_gpu, n);
+        }
+        const gpu::gpu_mem_32u* source = &buffer_output_gpu;
+        gpu::gpu_mem_32u* destination = &scratch_gpu;
+        int sorted_k = local_sorted_k;
         // На шаге k вход содержит отсортированные серии длины 2^k.
-        // Один поток на элемент; WorkSize округляет число потоков до GROUP_SIZE.
-        const gpu::WorkSize workSize(GROUP_SIZE, n);
-        const gpu::gpu_mem_32u* source = &input_gpu;
-        gpu::gpu_mem_32u* destination = &buffer_output_gpu;
-        int sorted_k = 0;
-        for (size_t run_length = 1; run_length < static_cast<size_t>(n);
+        for (size_t run_length = GROUP_SIZE; run_length < static_cast<size_t>(n);
              run_length *= 2, ++sorted_k) {
             cuda::merge_sort(workSize, *source, *destination, sorted_k, n);
             source = destination;
@@ -98,12 +107,10 @@ void run(int argc, char** argv)
                 ? &scratch_gpu : &buffer_output_gpu;
         }
 
-        // При чётном числе проходов результат находится во временном буфере.
+        // Если последний проход писал во временный буфер, делаем его выходным.
         // Меняем местами дескрипторы без копирования данных в VRAM.
         if (source == &scratch_gpu) {
             buffer_output_gpu.swap(scratch_gpu);
-        } else if (source == &input_gpu && n > 0) {
-            input_gpu.copyToN(buffer_output_gpu, n); // n == 1: слияния не нужны
         }
 #ifdef CUDA_SUPPORT
         // Все проходы идут в одном stream; ждём завершения перед замером времени.
