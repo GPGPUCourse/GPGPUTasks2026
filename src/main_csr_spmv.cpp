@@ -1,4 +1,5 @@
 #include <libbase/stats.h>
+#include <libbase/math.h>
 #include <libutils/misc.h>
 
 #include <libbase/timer.h>
@@ -13,6 +14,39 @@
 #include <numeric>
 #include <tuple>
 #include <fstream>
+#include <utility>
+
+// ----------- \/ Отсюда и вниз пока не сказано иное -- вайбкод. Преобразование матриц в разных форматах упаковки \/ -----------
+
+// Groups element indices 0..nnz-1 by their key (stable counting sort):
+// afterwards group_offsets[k] .. group_offsets[k + 1] - 1 contains indices i (in increasing order of i)
+// for which keys[i] == k. Does not assume anything about the order of keys.
+// `scratch` and `perm` are reused as buffers if they are passed filled with enough capacity.
+static void build_grouped_perm(
+    const std::vector<unsigned int>& keys, unsigned int n_keys,
+    std::vector<unsigned int>& group_offsets,
+    std::vector<unsigned int>& perm, std::vector<unsigned int>& scratch)
+{
+    rassert(n_keys >= 1, 456827341);
+    const unsigned int nnz = keys.size();
+
+    group_offsets.assign(n_keys + 1, 0);
+    for (unsigned int i = 0; i < nnz; ++i) {
+        group_offsets[keys[i] + 1]++;
+    }
+    for (unsigned int key = 0; key < n_keys; ++key) {
+        group_offsets[key + 1] += group_offsets[key];
+    }
+
+    perm.resize(nnz);
+    scratch.assign(n_keys, 0);
+    for (unsigned int i = 0; i < nnz; ++i) {
+        unsigned int key = keys[i];
+        perm[group_offsets[key] + scratch[key]] = i;
+        scratch[key]++;
+    }
+    rassert(group_offsets[n_keys] == nnz, 456827342, group_offsets[n_keys], nnz);
+}
 
 struct COO {
     std::vector<uint> rows;
@@ -56,26 +90,31 @@ struct CSR {
         rassert(coo.rows.size() == coo.values.size(), 45823516, coo.rows.size(), coo.values.size());
         const unsigned int nnz = coo.rows.size();
 
-        std::vector<unsigned int> perm(nnz);
-        std::iota(perm.begin(), perm.end(), 0);
-        std::sort(perm.begin(), perm.end(), [&coo](unsigned int a, unsigned int b) {
-            return coo.rows[a] != coo.rows[b] ? coo.rows[a] < coo.rows[b]
-                                              : coo.cols[a] < coo.cols[b];
-        });
-
-        row_offsets.assign(nrows + 1, 0);
-        for (unsigned int i = 0; i < nnz; i++) {
-            row_offsets[coo.rows[i] + 1]++;
-        }
-        for (unsigned int row = 0; row < nrows; row++) {
-            row_offsets[row + 1] += row_offsets[row];
-        }
+        // Group element indices by row (stable counting sort, O(nnz)),
+        // then sort each tiny row segment by column independently (parallel, segments <= a few hundred elements)
+        // - equivalent to the previous comparator sort by (row, col), but without assuming
+        // anything about the original order of elements in COO and without the O(nnz log nnz) sort.
+        std::vector<unsigned int> perm;
+        std::vector<unsigned int> scratch;
+        build_grouped_perm(coo.rows, nrows, row_offsets, perm, scratch);
 
         cols.resize(nnz);
         values.resize(nnz);
-        for (unsigned int i = 0; i < nnz; ++i) {
-            cols[i] = coo.cols[perm[i]];
-            values[i] = coo.values[perm[i]];
+        #pragma omp parallel for
+        for (int row = 0; row < nrows; ++row) {
+            // per-thread scratch buffer (capacity reused across rows/iterations without reallocation)
+            static thread_local std::vector<std::pair<unsigned int, unsigned int>> buf;
+            unsigned int from = row_offsets[row];
+            unsigned int len = row_offsets[row + 1] - from;
+            buf.resize(len);
+            for (unsigned int i = 0; i < len; ++i) {
+                buf[i] = {coo.cols[perm[from + i]], coo.values[perm[from + i]]};
+            }
+            std::sort(buf.begin(), buf.end());
+            for (unsigned int i = 0; i < len; ++i) {
+                cols[from + i] = buf[i].first;
+                values[from + i] = buf[i].second;
+            }
         }
     }
 };
@@ -103,25 +142,84 @@ struct CSC {
         rassert(coo.rows.size() == coo.values.size(), 529417833, coo.rows.size(), coo.values.size());
         const unsigned int nnz = coo.rows.size();
 
-        std::vector<unsigned int> perm(nnz);
-        std::iota(perm.begin(), perm.end(), 0);
-        std::sort(perm.begin(), perm.end(), [&coo](unsigned int a, unsigned int b) {
-            return coo.cols[a] != coo.cols[b] ? coo.cols[a] < coo.cols[b]
-                                              : coo.rows[a] < coo.rows[b];
-        });
-
-        col_offsets.assign(ncols + 1, 0);
-        for (unsigned int i = 0; i < nnz; i++) {
-            col_offsets[coo.cols[i] + 1]++;
-        }
-        for (unsigned int col = 0; col < ncols; col++) {
-            col_offsets[col + 1] += col_offsets[col];
-        }
+        // Group element indices by column (stable counting sort, O(nnz)),
+        // then sort each tiny column segment by row independently (parallel)
+        // - equivalent to the previous comparator sort by (col, row), but without assuming
+        // anything about the original order of elements in COO.
+        std::vector<unsigned int> perm;
+        std::vector<unsigned int> scratch;
+        build_grouped_perm(coo.cols, ncols, col_offsets, perm, scratch);
 
         rows.resize(nnz);
         values.resize(nnz);
+        #pragma omp parallel for
+        for (int col = 0; col < ncols; ++col) {
+            // per-thread scratch buffer (capacity reused across rows/iterations without reallocation)
+            static thread_local std::vector<std::pair<unsigned int, unsigned int>> buf;
+            unsigned int from = col_offsets[col];
+            unsigned int len = col_offsets[col + 1] - from;
+            buf.resize(len);
+            for (unsigned int i = 0; i < len; ++i) {
+                buf[i] = {coo.rows[perm[from + i]], coo.values[perm[from + i]]};
+            }
+            std::sort(buf.begin(), buf.end());
+            for (unsigned int i = 0; i < len; ++i) {
+                rows[from + i] = buf[i].first;
+                values[from + i] = buf[i].second;
+            }
+        }
+    }
+};
+
+// Матрица, разрезанная на вертикальные полосы ширины STRIP_WIDTH колонок,
+// каждая полоса - кусок COO, обрабатываемый одним воркгруппой CUDA-кернела
+struct COO_BLOCKED {
+    std::vector<uint> rows;
+    std::vector<uint> cols;
+    std::vector<uint> values;
+    std::vector<uint> bucket_offsets;
+
+    gpu::gpu_mem_32u rows_gpu;
+    gpu::gpu_mem_32u cols_gpu;
+    gpu::gpu_mem_32u values_gpu;
+    gpu::gpu_mem_32u bucket_offsets_gpu;
+
+    void load_to_vram() {
+        rows_gpu.resizeN(rows.size());
+        rows_gpu.writeN(rows.data(), rows.size());
+        cols_gpu.resizeN(cols.size());
+        cols_gpu.writeN(cols.data(), cols.size());
+        values_gpu.resizeN(values.size());
+        values_gpu.writeN(values.data(), values.size());
+        bucket_offsets_gpu.resizeN(bucket_offsets.size());
+        bucket_offsets_gpu.writeN(bucket_offsets.data(), bucket_offsets.size());
+    }
+
+    COO_BLOCKED(const COO& coo, unsigned int ncols) {
+        rassert(coo.rows.size() == coo.cols.size(), 529417832, coo.rows.size(), coo.cols.size());
+        rassert(coo.rows.size() == coo.values.size(), 529417833, coo.rows.size(), coo.values.size());
+        const unsigned int nnz = coo.rows.size();
+        const unsigned int n_strips = div_ceil(ncols, (unsigned int) STRIP_WIDTH);
+        rassert(n_strips >= 1, 529417834, ncols);
+
+        // Группируем элементы COO по полосам (стабильная сортировка подсчетом, O(nnz)):
+        // элементы каждой полосы попадают в [bucket_offsets[k]; bucket_offsets[k + 1])
+        std::vector<unsigned int> bucket_key(nnz);
+        #pragma omp parallel for
+        for (int i = 0; i < nnz; ++i) {
+            bucket_key[i] = coo.cols[i] / STRIP_WIDTH;
+        }
+
+        std::vector<unsigned int> perm;
+        std::vector<unsigned int> scratch;
+        build_grouped_perm(bucket_key, n_strips, bucket_offsets, perm, scratch);
+
+        rows.resize(nnz);
+        cols.resize(nnz);
+        values.resize(nnz);
         for (unsigned int i = 0; i < nnz; ++i) {
             rows[i] = coo.rows[perm[i]];
+            cols[i] = coo.cols[perm[i]];
             values[i] = coo.values[perm[i]];
         }
     }
@@ -151,17 +249,18 @@ COO generate_coo_matrix(
         unsigned int non_zero_row_values = rows_offsets[row + 1] - rows_offsets[row];
         std::vector<unsigned int> columns = r.random_sorted_unique_values(0, ncols - 1, non_zero_row_values);
 
-        for (int i = 0; i < non_zero_row_values; ++i) {
-            unsigned int value = r.next(0, max_value);
-            coo.rows[rows_offsets[row] + i] = row;
-            coo.cols[rows_offsets[row] + i] = columns[i];
-            coo.values[rows_offsets[row] + i] = value;
+        // RNG calls must stay in the same order: columns are generated before the values
+        unsigned int from = rows_offsets[row];
+        std::copy(columns.begin(), columns.end(), coo.cols.begin() + from);
+        for (unsigned int i = 0; i < non_zero_row_values; ++i) {
+            coo.values[from + i] = r.next(0, max_value);
         }
+        std::fill(coo.rows.begin() + from, coo.rows.begin() + (from + non_zero_row_values), row);
     }
     return coo;
 }
 
-std::tuple<COO, CSR, CSC> generate_sparse_matrices(
+std::tuple<COO, CSR, CSC, COO_BLOCKED> generate_sparse_matrices(
     unsigned int nrows, unsigned int ncols,
     unsigned int min_non_zero_values_per_row, unsigned int max_non_zero_values_per_row,
     unsigned int max_value)
@@ -169,10 +268,12 @@ std::tuple<COO, CSR, CSC> generate_sparse_matrices(
     COO coo = generate_coo_matrix(nrows, ncols, min_non_zero_values_per_row, max_non_zero_values_per_row, max_value);
     CSR csr(coo, nrows, ncols);
     CSC csc(coo, nrows, ncols);
-    return {coo, csr, csc};
+    COO_BLOCKED coo_blocked(coo, ncols);
+    return {coo, csr, csc, coo_blocked};
 }
 
-// ----------------- Над этой линией вайб -----------------
+// ----------------- /\ Над этой линией вайб /\ -----------------
+// --------------- \/ А внизу уже человеческое \/ ---------------
 
 std::vector<unsigned int> generate_vector(
     unsigned int n, unsigned int max_value=10000)
@@ -233,8 +334,8 @@ void run(int argc, char** argv)
 
     FastRandom r;
 
-    const unsigned int nrows = 1000*100; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
-    const unsigned int ncols = 1000*100;
+    const unsigned int nrows = 1000*1000; // при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+    const unsigned int ncols = 1000*1000;
     const unsigned int max_value = 1000;
     std::cout << "Evaluating CSR matrix nrows x ncols=" << nrows << "x" << ncols << " with values in range [0; " << max_value << "]" << std::endl;
 
@@ -248,7 +349,8 @@ void run(int argc, char** argv)
     double cpu_bandwidth_sum = 0.0, cpu_throughput_sum = 0.0;
     const std::vector<std::string> algorithm_names = {
             "GPU COO with atomics",
-            // "GPU CSR",
+            "GPU CSR",
+            "GPU COO vertical blocks",
             "GPU CSC",
     };
     const size_t algorithms_count = algorithm_names.size();
@@ -261,7 +363,7 @@ void run(int argc, char** argv)
         std::cout << "____________________________________________________________________________________________" << std::endl;
         std::cout << "Generating input data" << std::endl;
         timer t2;
-        auto [coo, csr, csc] = generate_sparse_matrices(nrows, ncols, min_nnz_per_row, max_nnz_per_col, max_value);
+        auto [coo, csr, csc, coo_blocked] = generate_sparse_matrices(nrows, ncols, min_nnz_per_row, max_nnz_per_col, max_value);
         std::cout << "Generating matrices done in " << t2.elapsed() << " seconds" << std::endl;
         const std::vector<unsigned int> vector_values = generate_vector(ncols, max_value);
         const unsigned int nnz = coo.rows.size();
@@ -288,6 +390,7 @@ void run(int argc, char** argv)
         coo.load_to_vram();
         csr.load_to_vram();
         csc.load_to_vram();
+        coo_blocked.load_to_vram();
         gpu::gpu_mem_32u vector_values_gpu(ncols);
         gpu::gpu_mem_32u output_vector_values_gpu(nrows);
         vector_values_gpu.writeN(vector_values.data(), vector_values.size());
@@ -321,8 +424,25 @@ void run(int argc, char** argv)
                                 output_vector_values_gpu
                         );
                     } else if (algorithm_names[algorithm_index] == "GPU CSR") {
-                        // TODO
-                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                        cuda::sparse_csr_matrix_vector_multiplication_csr(
+                                csr.row_offsets_gpu,
+                                csr.cols_gpu,
+                                csr.values_gpu,
+                                nnz,
+                                nrows,
+                                vector_values_gpu,
+                                output_vector_values_gpu
+                        );
+                    } else if (algorithm_names[algorithm_index] == "GPU COO vertical blocks") {
+                        cuda::sparse_csr_matrix_vector_multiplication_coo_blocks(
+                                coo_blocked.rows_gpu,
+                                coo_blocked.cols_gpu,
+                                coo_blocked.values_gpu,
+                                coo_blocked.bucket_offsets_gpu,
+                                ncols,
+                                vector_values_gpu,
+                                output_vector_values_gpu
+                        );
                     } else if (algorithm_names[algorithm_index] == "GPU CSC") {
                         cuda::sparse_csr_matrix_vector_multiplication_csc(
                                 csc.rows_gpu,
@@ -373,12 +493,15 @@ void run(int argc, char** argv)
     // Среднее арифметическое производительностей по наборам матриц с одинаковым весом каждого набора.
     std::cout << "____________________________________________________________________________________________" << std::endl;
     std::cout << "Average SpMV performance across " << count << " matrix configurations:" << std::endl;
+    double cpu_speed = cpu_throughput_sum / count;
     std::cout << "CPU mean effective RAM bandwidth: " << cpu_bandwidth_sum / count << " GB/s ("
-              << cpu_throughput_sum / count << " uint millions/s)" << std::endl;
+              << cpu_speed << " uint millions/s)" << std::endl;
     for (size_t algorithm_index = 0; algorithm_index < algorithms_count; ++algorithm_index) {
+        double gpu_speed = gpu_throughput_sums[algorithm_index] / count;
         std::cout << algorithm_names[algorithm_index] << " mean real VRAM bandwidth: "
                   << gpu_bandwidth_sums[algorithm_index] / count << " GB/s ("
-                  << gpu_throughput_sums[algorithm_index] / count << " uint millions/s)" << std::endl;
+                  << gpu_speed << " uint millions/s)"
+                  << " x" << (gpu_speed / cpu_speed) << " over CPU" << std::endl;
     }
 }
 

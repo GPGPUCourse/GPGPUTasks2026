@@ -94,7 +94,9 @@ if (GPU_CUDA_SUPPORT)
     set(CUDA_SOURCES
             src/kernels/cu/aplusb.cu
             src/kernels/cu/sparse_csr_matrix_vector_multiplication_coo.cu
-            src/kernels/cu/sparse_csr_matrix_vector_multiplication_csc.cu)
+            src/kernels/cu/sparse_csr_matrix_vector_multiplication_coo_blocks.cu
+            src/kernels/cu/sparse_csr_matrix_vector_multiplication_csc.cu
+            src/kernels/cu/sparse_csr_matrix_vector_multiplication_csr.cu)
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})

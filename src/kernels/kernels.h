@@ -21,6 +21,24 @@ void sparse_csr_matrix_vector_multiplication_csc(
     gpu::gpu_mem_32u& vtr,
     gpu::gpu_mem_32u& dst
 );
+void sparse_csr_matrix_vector_multiplication_csr(
+    gpu::gpu_mem_32u& row_offsets,
+    gpu::gpu_mem_32u& cols,
+    gpu::gpu_mem_32u& values,
+    uint n,
+    uint nrows,
+    gpu::gpu_mem_32u& vtr,
+    gpu::gpu_mem_32u& dst
+);
+void sparse_csr_matrix_vector_multiplication_coo_blocks(
+    gpu::gpu_mem_32u& rows,
+    gpu::gpu_mem_32u& cols,
+    gpu::gpu_mem_32u& values,
+    gpu::gpu_mem_32u& bucket_offsets,
+    uint ncols,
+    gpu::gpu_mem_32u& vtr,
+    gpu::gpu_mem_32u& dst
+);
 }
 
 namespace ocl {
