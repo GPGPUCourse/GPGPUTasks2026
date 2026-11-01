@@ -56,7 +56,8 @@ __kernel void merge_sort(
 
     unsigned int k = sorted_k;
 
-    uint base = (i / (2u * k)) * (2u * k);
+    const uint block_size = 2u * k;
+    const uint base = i & ~(block_size - 1u);
 
     const uint count = (uint)n;
     uint mid = min(base + k, count);
@@ -71,4 +72,47 @@ __kernel void merge_sort(
     }
 
     output_data[pos] = x;
+}
+
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__kernel void local_sort(
+    __global const  uint* input_data,
+    __global        uint* output_data,
+                    int n)
+{
+    const uint gid = get_global_id(0);
+    const uint lid = get_local_id(0);
+
+    __local uint tile[GROUP_SIZE];
+
+    tile[lid] = gid < (uint)n ? input_data[gid] : 0xffffffffu;
+
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    for (uint span = 2; span <= GROUP_SIZE; span <<= 1) {
+        for (uint stride = span >> 1; stride > 0; stride >>= 1) {
+
+            if ((lid & stride) == 0) {
+                const uint partner = lid ^ stride;
+
+                const uint a = tile[lid];
+                const uint b = tile[partner];
+
+                const bool ascending = ((lid & span) == 0);
+                if (ascending) {
+                    tile[lid] = min(a, b);
+                    tile[partner] = max(a, b);
+                } else {
+                    tile[lid] = max(a, b);
+                    tile[partner] = min(a, b);
+                }
+            }
+
+            barrier(CLK_LOCAL_MEM_FENCE);
+        }
+    }
+
+    if (gid < (uint)n) {
+        output_data[gid] = tile[lid];
+    }
 }

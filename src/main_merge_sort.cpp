@@ -40,6 +40,9 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_mergeSort(ocl::getMergeSort());
     ocl_mergeSort.precompile();
 
+    ocl::KernelSource ocl_localSort(ocl::getMergeSort(), "local_sort");
+    ocl_localSort.precompile();
+
     avk2::KernelSource vk_mergeSort(avk2::getMergeSort());
 
     FastRandom r;
@@ -81,9 +84,9 @@ void run(int argc, char** argv)
         std::cout << "CPU std::sort effective RAM bandwidth: " << memory_size_gb / elapsed << " GB/s (" << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
-    int passes = 0;
+    int passes = 1;
 
-    for (int k = 1; k < n; k *= 2) {
+    for (int k = GROUP_SIZE; k < n; k *= 2) {
         ++passes;
     }
 
@@ -113,9 +116,14 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
+            ocl_localSort.exec(gpu::WorkSize(GROUP_SIZE, n), *current_input, *current_output, n);
 
-            for (int k = 1; k < n; k *= 2) {
-                ocl_mergeSort.exec(gpu::WorkSize(256, n), *current_input, *current_output, k, n);
+            current_input = current_output;
+            current_output = (current_output == &buffer1_gpu) ? &buffer_output_gpu : &buffer1_gpu;
+
+            for (int k = GROUP_SIZE; k < n; k *= 2) {
+                ocl_mergeSort.exec(gpu::WorkSize(GROUP_SIZE, n), *current_input, *current_output, k, n);
+
                 current_input = current_output;
                 current_output = (current_output == &buffer1_gpu) ? &buffer_output_gpu : &buffer1_gpu;
             }
