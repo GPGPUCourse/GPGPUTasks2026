@@ -19,6 +19,7 @@ void run(int argc, char** argv)
     gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
 
     ocl::KernelSource ocl_mergeSort(ocl::getMergeSort());
+    ocl::KernelSource ocl_mergeSortOneGroup(ocl::getMergeSortOneGroup());
 
     FastRandom r;
 
@@ -75,11 +76,13 @@ void run(int argc, char** argv)
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    for (int iter = 0; iter < 1; ++iter) {
+    for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
-        int num = n;
-        int i = 0;
+        ocl_mergeSortOneGroup.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, buffer1_gpu, n);
+
+        int num = n >> GROUP_SHIFT;
+        int i = GROUP_SHIFT;
         while (num > 1) {
             gpu::gpu_mem_32u& input = (num == n ? input_gpu : (i % 2 == 0 ? buffer1_gpu : buffer2_gpu));
             gpu::gpu_mem_32u& output = ((num + 1) / 2 == 1 ? buffer_output_gpu : (i % 2 == 0 ? buffer2_gpu : buffer1_gpu));
