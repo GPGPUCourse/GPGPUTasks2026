@@ -9,7 +9,20 @@
 #include "kernels/kernels.h"
 
 #include <fstream>
+#include <vector>
+#include <memory>
+#include <utility>
 
+struct BlockSumLevel {
+    std::unique_ptr<gpu::gpu_mem_32u> prefix;
+    std::unique_ptr<gpu::gpu_mem_32u> sums;
+    unsigned int blocks;
+};
+
+static size_t get_blocks(size_t n, size_t b)
+{
+    return n / b + (n % b != 0);
+}
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -41,7 +54,7 @@ void run(int argc, char** argv)
     avk2::KernelSource vk_sum_reduction(avk2::getPrefixSum01Reduction());
     avk2::KernelSource vk_prefix_accumulation(avk2::getPrefixSum02PrefixAccumulation());
 
-    unsigned int n = 100*1000*1000;
+    unsigned int n = 100 * 1000 * 1000;
     std::vector<unsigned int> as(n, 0);
     size_t total_sum = 0;
     for (size_t i = 0; i < n; ++i) {
@@ -68,7 +81,7 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer1_pow2_sum_gpu(n), buffer2_pow2_sum_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(n), output_gpu(n), block_sum(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -82,26 +95,31 @@ void run(int argc, char** argv)
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
             // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fill_with_zeros.exec();
-            // ocl_sum_reduction.exec();
-            // ocl_prefix_accumulation.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::prefix_sum_01_reduction();
-            // cuda::prefix_sum_02_prefix_accumulation();
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fill_with_zeros.exec();
-            // vk_sum_reduction.exec();
-            // vk_prefix_accumulation.exec();
-        } else {
-            rassert(false, 4531412341, context.type());
+            gpu::WorkSize ws(GROUP_SIZE, get_blocks(n, GROUP_SIZE) * GROUP_SIZE);
+            std::vector<BlockSumLevel> bs;
+            ocl_sum_reduction.exec(
+                {GROUP_SIZE, get_blocks(n, GROUP_SIZE * 8) * GROUP_SIZE},
+                input_gpu, output_gpu, block_sum, n);
+            gpu::gpu_mem_32u* current = &block_sum;
+            for (unsigned int blocks = get_blocks(n, GROUP_SIZE * 8); blocks > 1; blocks = get_blocks(blocks, GROUP_SIZE * 8)) {
+                auto block_block_sum = std::make_unique<gpu::gpu_mem_32u>(blocks);
+                auto block_block_block_sum = std::make_unique<gpu::gpu_mem_32u>(get_blocks(blocks, GROUP_SIZE * 8));
+                ocl_sum_reduction.exec(
+                    {GROUP_SIZE, get_blocks(blocks, GROUP_SIZE * 8) * GROUP_SIZE},
+                    *current, *block_block_sum, *block_block_block_sum, blocks);
+                bs.push_back({std::move(block_block_sum), std::move(block_block_block_sum), blocks});
+                current = bs.back().sums.get();
+            }
+            for (size_t i = bs.size(); i > 1; --i) {
+                ocl_prefix_accumulation.exec(
+                    {GROUP_SIZE, get_blocks(bs[i - 2].blocks, GROUP_SIZE) * GROUP_SIZE},
+                    i == 2 ? block_sum : *bs[i - 3].sums,
+                    *bs[i - 2].prefix, *bs[i - 1].prefix, bs[i - 2].blocks, 0u);
+            }
+            ocl_prefix_accumulation.exec(
+                ws, input_gpu, output_gpu,
+                bs.empty() ? block_sum : *bs.front().prefix, n, 1u);
         }
-
         times.push_back(t.elapsed());
     }
     std::cout << "prefix sum times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
@@ -113,7 +131,7 @@ void run(int argc, char** argv)
               << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
+    std::vector<unsigned int> gpu_prefix_sum = output_gpu.readVector();
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
