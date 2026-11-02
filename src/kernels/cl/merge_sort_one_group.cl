@@ -33,7 +33,9 @@ __kernel void merge_sort_one_group(
         const unsigned int other_base = y & ~((1 << iter) - 1);
 
         unsigned int l = 0, r = (1 << iter);
-        while (l + 1 < r) {
+
+        #pragma unroll
+        for (int i = 0; i < iter; ++i) {
             const unsigned int m = (l + r) / 2;
             const unsigned int vm = GET(other_base + m);
             if (vm < vx || (on_right && vm == vx)) {

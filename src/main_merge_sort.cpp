@@ -22,10 +22,6 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_mergeSortOneGroup(ocl::getMergeSortOneGroup());
     ocl::KernelSource ocl_mergeSortGroupDiag(ocl::getMergeSortGroupDiag());
 
-    ocl_mergeSort.precompile();
-    ocl_mergeSortOneGroup.precompile();
-    ocl_mergeSortGroupDiag.precompile();
-
     FastRandom r;
 
     int n = 100*1000*1000;

@@ -40,17 +40,13 @@ __kernel void merge_sort(
         ? 0 : gr_d - left_cnt_prev;
 
     __local unsigned int buf[GROUP_SIZE];
-    if (lid < block_width) {
-        unsigned int idx;
-        if (lid < left_cnt) {
-            idx = base + lid + left_cnt_prev;
-        } else {
-            idx = base + shift + right_cnt_prev + (lid - left_cnt);
-        }
-        buf[lid] = input_data[idx];
+    unsigned int idx;
+    if (lid < left_cnt) {
+        idx = base + lid + left_cnt_prev;
     } else {
-        buf[lid] = 0xFFFFFFFFu;
+        idx = base + shift + right_cnt_prev + (lid - left_cnt);
     }
+    buf[lid] = input_data[idx];
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
@@ -77,7 +73,5 @@ __kernel void merge_sort(
 
     unsigned int this = (l >= left_cnt ? 0 : buf[l]);
     unsigned int other = (lid - l - 1 >= right_cnt ? 0 : buf[left_cnt + lid - l - 1]);
-    if (lid < block_width) {
-        output_data[gid] = MAX(this, other);
-    }
+    output_data[gid] = MAX(this, other);
 }
