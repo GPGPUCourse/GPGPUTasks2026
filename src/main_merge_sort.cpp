@@ -69,7 +69,7 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n);
+    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), group_diag(n / GROUP_SIZE + 1);
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -79,6 +79,7 @@ void run(int argc, char** argv)
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
     buffer1_gpu.fill(255);
     buffer2_gpu.fill(255);
+    group_diag.fill(255);
     buffer_output_gpu.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
@@ -93,7 +94,8 @@ void run(int argc, char** argv)
         while (num > 1) {
             gpu::gpu_mem_32u& input = (num == n ? input_gpu : (i % 2 == 0 ? buffer1_gpu : buffer2_gpu));
             gpu::gpu_mem_32u& output = ((num + 1) / 2 == 1 ? buffer_output_gpu : (i % 2 == 0 ? buffer2_gpu : buffer1_gpu));
-            ocl_mergeSort.exec(gpu::WorkSize(GROUP_SIZE, n), input, output, i, n);
+            ocl_mergeSortGroupDiag.exec(gpu::WorkSize(GROUP_SIZE, (n + GROUP_SIZE - 1) / GROUP_SIZE), input, group_diag, i, n);
+            ocl_mergeSort.exec(gpu::WorkSize(GROUP_SIZE, n), input, group_diag, output, i, n);
             num = (num + 1) / 2;
             ++i;
         }
