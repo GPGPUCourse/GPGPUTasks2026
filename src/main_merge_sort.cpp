@@ -124,7 +124,7 @@ void run(int argc, char** argv)
             current_input = current_output;
             current_output = (current_output == &buffer1_gpu) ? &buffer_output_gpu : &buffer1_gpu;
 
-            constexpr int ITEMS_PER_THREAD = 4;
+            constexpr int ITEMS_PER_THREAD = 8;
             const int work_items = (n + ITEMS_PER_THREAD - 1) / ITEMS_PER_THREAD;
 
             for (int k = GROUP_SIZE; k < n; k *= 2) {
