@@ -13,35 +13,35 @@ __global__ void merge_sort(
     int sorted_k,
     int n)
 {
-    int pair = blockIdx.x * blockDim.x + threadIdx.x;
-
-    int pair_size = 2 * sorted_k;
-    int pair_count = (n + pair_size - 1) / pair_size;
-
-    if (pair >= pair_count)
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n)
         return;
 
-    int begin = pair * pair_size;
+    int pair_size = 2 * sorted_k;
+    int begin = (i / pair_size) * pair_size;
     int middle = min(begin + sorted_k, n);
     int end = min(begin + pair_size, n);
 
-    int a = begin;
-    int b = middle;
-    int out = begin;
+    bool from_left = i < middle;
+    int own_begin = from_left ? begin : middle;
+    int other_begin = from_left ? middle : begin;
+    int low = other_begin;
+    int high = from_left ? end : middle;
+    unsigned int value = input_data[i];
 
-    while (a < middle && b < end) {
-        if (input_data[a] <= input_data[b])
-            output_data[out++] = input_data[a++];
+    while (low < high) {
+        int mid = low + (high - low) / 2;
+        if (input_data[mid] < value || (!from_left && input_data[mid] == value))
+            low = mid + 1;
         else
-            output_data[out++] = input_data[b++];
+            high = mid;
     }
 
-    while (a < middle)
-        output_data[out++] = input_data[a++];
-
-    while (b < end)
-        output_data[out++] = input_data[b++];
+    int own_rank = i - own_begin;
+    int other_rank = low - other_begin;
+    output_data[begin + own_rank + other_rank] = value;
 }
+
 namespace cuda {
 void merge_sort(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32u& input_data, gpu::gpu_mem_32u& output_data, int sorted_k, int n)

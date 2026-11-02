@@ -116,10 +116,8 @@ void run(int argc, char** argv)
                 else
                     destination = &buffer1_gpu;
 
-                int pair_count = (n + 2 * sorted_k - 1) / (2 * sorted_k);
-
                 cuda::merge_sort(
-                    gpu::WorkSize(256, pair_count),
+                    gpu::WorkSize(256, n),
                     *source,
                     *destination,
                     sorted_k,
