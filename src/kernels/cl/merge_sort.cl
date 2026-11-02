@@ -18,16 +18,27 @@ __kernel void small_blocks_sort(
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    for (int i = 0; i < GROUP_SIZE + GROUP_SIZE; ++i) {
-        if (((local_index ^ i) & 1) && local_index < GROUP_SIZE - 1) {
-            uint a = loc_mem[local_index];
-            uint b = loc_mem[local_index + 1];
-            if (a > b) {
-                loc_mem[local_index] = b;
-                loc_mem[local_index + 1] = a;
+    int cur_block = 2;
+    while (cur_block <= GROUP_SIZE) {
+        int cur_len = cur_block / 2;
+
+        while (cur_len >= 1) {
+            int to_swap = local_index ^ cur_len;
+
+            if (to_swap > local_index) {
+                uint a = loc_mem[local_index];
+                uint b = loc_mem[to_swap];
+                if (((local_index & cur_block) == 0) == (a > b)) {
+                    loc_mem[local_index] = b;
+                    loc_mem[to_swap] = a;
+                }
             }
+
+            cur_len >>= 1;
+            barrier(CLK_LOCAL_MEM_FENCE);
         }
-        barrier(CLK_LOCAL_MEM_FENCE);
+
+        cur_block += cur_block;
     }
 
     output_data[global_index] = loc_mem[local_index];
