@@ -24,6 +24,11 @@ void merge_sort(const gpu::WorkSize &workSize,
 #endif
 
 namespace ocl {
+const ProgramBinaries& getSmallBlocksSort()
+{
+    return opencl_binaries_merge_sort;
+}
+
 const ocl::ProgramBinaries& getAplusB()
 {
     return opencl_binaries_aplusb;
