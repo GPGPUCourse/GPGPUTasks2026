@@ -14,7 +14,31 @@ __global__ void merge_sort(
                    int  n)
 {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    // TODO
+    if(i >= n) return;
+    const int block_size = 2 * sorted_k;
+    const int block_start = (i - i % block_size);
+    bool is_first_half = !(((i - i % sorted_k) / sorted_k) % 2);
+    int low = block_start + sorted_k * is_first_half;
+    int high = min(low + sorted_k, n);
+    const uint value = input_data[i];
+    while (low < high){
+        int midle = (low + high) / 2;
+        if(input_data[midle] < value){
+            low = midle + 1;
+        }
+        else if (input_data[midle] == value){
+            if(is_first_half){
+                high = midle;
+            }
+            else{
+                low = midle + 1;
+            }
+        }
+        else{
+            high = midle;
+        }
+    }
+    output_data[i + low - block_start - sorted_k] = value;
 }
 
 namespace cuda {
