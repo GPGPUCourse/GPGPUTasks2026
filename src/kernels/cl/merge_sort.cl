@@ -44,7 +44,7 @@ __kernel void small_blocks_sort(
     output_data[global_index] = loc_mem[local_index];
 }
 
-__attribute__((reqd_work_group_size(32, 1, 1)))
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void merge_sort(
     __global const uint* input_data,
     __global       uint* output_data,
@@ -52,7 +52,7 @@ __kernel void merge_sort(
                    int  n)
 {
     int global_index = get_global_id(0);
-    int local_index = get_local_id(0);
+
     int global_block_start = (global_index & (~((1 << pw2) - 1)));
 
     if (global_block_start + (1 << (pw2 - 1)) >= n) {
@@ -60,8 +60,7 @@ __kernel void merge_sort(
         return;
     }
 
-    int local_block_start = (global_index & (~(32 - 1)));
-    int flex = local_block_start - global_block_start + 1;
+    int flex = global_index - global_block_start + 1;
     int right_size = min(1 << (pw2 - 1), n - global_block_start - (1 << (pw2 - 1)));
 
     // flex - m <= right_size
@@ -80,46 +79,11 @@ __kernel void merge_sort(
         }
     }
 
-    __local uint left_part[32];
-    __local uint right_part[32];
-
-    int left_part_start_from_global = global_block_start + max(l - 1, 0);
-
-    left_part[local_index] = (left_part_start_from_global + local_index < global_block_start + (1 << (pw2 - 1)) ? input_data[left_part_start_from_global + local_index] : UINT_MAX);
-
-    int right_part_start_from_global = global_block_start + (1 << (pw2 - 1)) + max(0, flex - l - 1);
-
-    right_part[local_index] = (right_part_start_from_global + local_index < global_block_start + (1 << (pw2 - 1)) + right_size ? input_data[right_part_start_from_global + local_index] : UINT_MAX);
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    int first_left = l;
-    flex = global_index - global_block_start + 1;
-
-    l = max(first_left, flex - right_size);
-    r = min(min(flex, 1 << (pw2 - 1)), first_left + local_index) + 1;
-
-    while (r - l > 1) {
-        int m = (l + r) / 2;
-
-        int left_index = global_block_start + m - 1;
-        int right_index = global_block_start + (1 << (pw2 - 1)) + flex - m;
-
-        left_index -= left_part_start_from_global;
-        right_index -= right_part_start_from_global;
-
-        if (left_part[left_index] <= right_part[right_index]) {
-            l = m;
-        } else {
-            r = m;
-        }
-    }
-
     int left_index = global_block_start + l - 1;
     int right_index = global_block_start + (1 << (pw2 - 1)) + flex - l - 1;
 
-    uint cand_l = (left_index >= left_part_start_from_global ? left_part[left_index - left_part_start_from_global] : 0);
-    uint cand_r = (right_index >= right_part_start_from_global ? right_part[right_index - right_part_start_from_global] : 0);
+    uint cand_l = (l > 0 ? input_data[left_index] : 0);
+    uint cand_r = (flex - l > 0 ? input_data[right_index] : 0);
 
     uint res = max(cand_l, cand_r);
     output_data[global_index] = res;

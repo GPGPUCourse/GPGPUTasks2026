@@ -102,7 +102,7 @@ void run(int argc, char** argv)
         while ((1 << pw2) < GROUP_SIZE) ++pw2;
 
         while ((1 << pw2) < n) {
-            ocl_mergeSort.exec(gpu::WorkSize(32, n), *cur_res, *oth, pw2 + 1, n);
+            ocl_mergeSort.exec(gpu::WorkSize(GROUP_SIZE, n), *cur_res, *oth, pw2 + 1, n);
             std::swap(cur_res, oth);
             ++pw2;
         }
