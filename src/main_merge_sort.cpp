@@ -1,8 +1,8 @@
 #include <libbase/stats.h>
 #include <libutils/misc.h>
 
-#include <libbase/timer.h>
 #include <libbase/fast_random.h>
+#include <libbase/timer.h>
 #include <libgpu/vulkan/engine.h>
 #include <libgpu/vulkan/tests/test_utils.h>
 
@@ -26,7 +26,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -40,7 +40,8 @@ void run(int argc, char** argv)
 
     FastRandom r;
 
-    int n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+    int n = 100'000'000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+                         // TODO для финального замера верните n = 100 * 1000 * 1000
     int min_value = 1; // это сделано для упрощения, чтобы существовало очевидное -INFINITY значение
     int max_value = std::numeric_limits<int>::max() - 1; // TODO при отладке используйте минимальное max_value (например max_value=8) при котором воспроизводится бага
     std::vector<unsigned int> as(n, 0);
@@ -102,8 +103,25 @@ void run(int argc, char** argv)
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            const gpu::WorkSize workSize(GROUP_SIZE, n);
+
+            // Первый проход (sorted_k=1) читает прямо из входного буфера:
+            // input_gpu нельзя перезаписывать, он используется в следующих итерациях
+            cuda::merge_sort(workSize, input_gpu, buffer1_gpu, 1, n);
+
+            // Дальше слияние идет снизу вверх с удвоением длины отрезков,
+            // результат каждого прохода пишется в другой буфер (ping-pong между buffer1_gpu и buffer2_gpu)
+            gpu::gpu_mem_32u* src = &buffer1_gpu;
+            gpu::gpu_mem_32u* dst = &buffer2_gpu;
+            for (int sorted_k = 2; sorted_k < n; sorted_k *= 2) {
+                cuda::merge_sort(workSize, *src, *dst, sorted_k, n);
+                gpu::gpu_mem_32u* tmp = src;
+                src = dst;
+                dst = tmp;
+            }
+
+            // Результат последнего прохода лежит в src - копируем его в выходной буфер
+            src->copyToN(buffer_output_gpu, n);
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
