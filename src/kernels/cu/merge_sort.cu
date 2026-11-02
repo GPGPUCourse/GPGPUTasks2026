@@ -61,21 +61,57 @@ __device__ void find_ratio(const uint32_t *input, int d, int lenA, int lenB, int
   *countA = l;
 }
 
-__global__ void merge_sort(const unsigned int *input_data,
-                               unsigned int *output_data, int sorted_k, int n) {
+__global__ void find_ratios(const uint32_t *input, unsigned int *output, int sorted_k, int n) {
   const int i = blockIdx.x * blockDim.x + threadIdx.x;
-  if (i >= n) return;
-  uint32_t range_i = i / sorted_k;
-  uint32_t offset = (range_i % 2 == 0) ? range_i * sorted_k : (range_i - 1) * sorted_k;
+  const int blockOffset = i * GROUP_SIZE;
+  if (blockOffset >= n) return;
+  int range_i = blockOffset / sorted_k;
+  int offset = (range_i % 2 == 0) ? range_i * sorted_k : (range_i - 1) * sorted_k;
   int lenA = min(sorted_k, n - offset);
   int lenB = min(sorted_k, n - offset - lenA);
-  int d = (i - offset) + 1;
+  int d = blockOffset - offset;
+  int res = 0;
+  find_ratio(input + offset, d, lenA, lenB, &res);
+  output[i] = res;
+}
+
+__global__ void merge_sort(const unsigned int *input_data,
+                            const unsigned int *ratios,
+                            unsigned int *output_data, int sorted_k, int n) {
+  __shared__ uint32_t arr[GROUP_SIZE];
+
+  const int i = blockIdx.x * blockDim.x + threadIdx.x;
+  const int blockOffset = blockIdx.x * blockDim.x;
+
+  int range_i = blockOffset / sorted_k;
+  int rangeOffset = (range_i % 2 == 0) ? range_i * sorted_k : (range_i - 1) * sorted_k;
+  int lenA = min(sorted_k, n - rangeOffset);
+  int lenB = min(sorted_k, n - rangeOffset - lenA);
+
+  int startCntA = ratios[blockIdx.x];
+  int startCntB = (blockOffset - rangeOffset) - startCntA;
+  bool lastInRange = (blockOffset + GROUP_SIZE >= rangeOffset + lenA + lenB);
+  int endCntA = lastInRange ? lenA : ratios[blockIdx.x + 1];
+  int totalA = endCntA - startCntA;
+
+  if (threadIdx.x < totalA) {
+    int index = rangeOffset + startCntA + threadIdx.x;
+    arr[threadIdx.x] = (index < n) ? input_data[index] : -1u;
+  } else {
+    int index = rangeOffset + lenA + startCntB + (threadIdx.x - totalA);
+    arr[threadIdx.x] = (index < n) ? input_data[index] : -1u;
+  }
+
+  int d = threadIdx.x + 1;
   int countA = 0;
-  find_ratio(input_data+offset, d, lenA, lenB, &countA);
+  __syncthreads();
+  find_ratio(arr, d, totalA, GROUP_SIZE - totalA, &countA);
   int countB = d - countA;
-  uint32_t elemA = (countA > 0) ? input_data[offset+countA-1] : 0u;
-  uint32_t elemB = (countB > 0) ? input_data[offset+lenA+countB-1] : 0u;
-  output_data[i] = max(elemA, elemB);
+  uint32_t elemA = (countA > 0) ? arr[countA - 1] : 0u;
+  uint32_t elemB = (countB > 0) ? arr[totalA + countB - 1] : 0u;
+  if (i < n) {
+    output_data[i] = max(elemA, elemB);
+  }
 }
 
 __global__ void merge256(const unsigned int *input_data,
@@ -105,12 +141,12 @@ __global__ void merge256(const unsigned int *input_data,
 
 namespace cuda {
 void merge_sort(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32u &input_data, gpu::gpu_mem_32u &output_data, int sorted_k, int n)
+            const gpu::gpu_mem_32u &input_data, const gpu::gpu_mem_32u &ratios, gpu::gpu_mem_32u &output_data, int sorted_k, int n)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::merge_sort<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(input_data.cuptr(), output_data.cuptr(), sorted_k, n);
+    ::merge_sort<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(input_data.cuptr(), ratios.cuptr(), output_data.cuptr(), sorted_k, n);
     CUDA_CHECK_KERNEL(stream);
 }
 
@@ -121,6 +157,16 @@ void merge256(const gpu::WorkSize &workSize,
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124313, context.type());
     cudaStream_t stream = context.cudaStream();
     ::merge256<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(input_data.cuptr(), output_data.cuptr(), n);
+    CUDA_CHECK_KERNEL(stream);
+}
+
+void find_ratios(const gpu::WorkSize &workSize,
+            const gpu::gpu_mem_32u &input_data, gpu::gpu_mem_32u &output_data, int sorted_k, int n)
+{
+    gpu::Context context;
+    rassert(context.type() == gpu::Context::TypeCUDA, 34523543124313, context.type());
+    cudaStream_t stream = context.cudaStream();
+    ::find_ratios<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(input_data.cuptr(), output_data.cuptr(), sorted_k, n);
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda

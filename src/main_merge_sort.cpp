@@ -81,6 +81,7 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
     gpu::gpu_mem_32u buffer_output_gpu(n);
+    gpu::gpu_mem_32u buffer_ratios(div_ceil(n, 256));
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -114,7 +115,8 @@ void run(int argc, char** argv)
                   (next_sorted_k >= n)
                       ? buffer_output_gpu
                       : ((i % 2 == 0) ? buffer2_gpu : buffer1_gpu);
-              cuda::merge_sort(gpu::WorkSize(GROUP_SIZE, n), input, output, sorted_k, n);
+              cuda::find_ratios(gpu::WorkSize(GROUP_SIZE, div_ceil(n, 256)), input, buffer_ratios, sorted_k, n);
+              cuda::merge_sort(gpu::WorkSize(GROUP_SIZE, n), input, buffer_ratios, output, sorted_k, n);
               sorted_k = next_sorted_k;
               i += 1;
             }
