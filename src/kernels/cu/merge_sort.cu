@@ -14,7 +14,35 @@ __global__ void merge_sort(
                    int  n)
 {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    // TODO
+    if (i >= n) return;
+    const int nblocks = (n + (1 << sorted_k) - 1) >> sorted_k;
+    const int block_ind = i >> sorted_k;
+    const unsigned int value = input_data[i];
+    if (nblocks % 2 == 1 && block_ind == nblocks - 1) {
+        output_data[i] = value;
+        return;
+    }
+    int l = block_ind % 2 ? (block_ind - 1) * (1 << sorted_k) : (block_ind + 1) * (1 << sorted_k);
+    int r = block_ind % 2 ? (block_ind) * (1 << sorted_k) : (block_ind + 2) * (1 << sorted_k);
+    if (block_ind == nblocks - 2 && block_ind % 2 == 0) {
+        r = n;
+    }
+    const bool right = block_ind % 2;
+    int m;
+    unsigned int m_val;
+    while (r - l > 0) {
+        m = (r + l) / 2;
+        m_val = input_data[m];
+        if (m_val > value || (m_val == value && !right)) {
+            r = m;
+        }else {
+            l = m + 1;
+        }
+    }
+    const int inner_shift = i - (block_ind << sorted_k);
+    const int outer_shift = block_ind % 2 ? l - (block_ind - 1) * (1 << sorted_k) : l - (block_ind + 1) * (1 << sorted_k);
+    const int output_ind = ((block_ind - static_cast<int>(right)) << sorted_k) + inner_shift + outer_shift;
+    output_data[output_ind] = value;
 }
 
 namespace cuda {
