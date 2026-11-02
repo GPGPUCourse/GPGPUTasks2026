@@ -34,6 +34,7 @@ void run(int argc, char** argv)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
+    ocl::KernelSource ocl_localSort(ocl::getMergeSort(), "local_sort");
     ocl::KernelSource ocl_mergeSort(ocl::getMergeSort());
 
     avk2::KernelSource vk_mergeSort(avk2::getMergeSort());
@@ -97,10 +98,13 @@ void run(int argc, char** argv)
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
-        const gpu::gpu_mem_32u* input = &input_gpu;
-        gpu::gpu_mem_32u* output = &buffer1_gpu;
+        gpu::gpu_mem_32u* output = n <= GROUP_SIZE ? &buffer_output_gpu : &buffer1_gpu;
+        ocl_localSort.exec(work_size, input_gpu, *output, n);
 
-        for (int sorted_k = 1; sorted_k < n; sorted_k *= 2) {
+        const gpu::gpu_mem_32u* input = output;
+        output = output == &buffer1_gpu ? &buffer2_gpu : &buffer1_gpu;
+
+        for (int sorted_k = GROUP_SIZE; sorted_k < n; sorted_k *= 2) {
             if (2 * sorted_k >= n) {
                 output = &buffer_output_gpu;
             }
