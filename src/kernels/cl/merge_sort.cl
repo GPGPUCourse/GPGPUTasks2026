@@ -5,13 +5,6 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-#define GUARDL(x, v) \
-    ((x) < group_diag ? (v) : 0)
-#define GUARDR(x, v) \
-    ((group_diag <= (x) && (x) < GROUP_SIZE) ? (v) : 0x8FFFFFFF)
-#define GETL(x) GUARDL(x, buf[x])
-#define GETR(x) GUARDR(x, buf[x])
-
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 
@@ -25,39 +18,43 @@ __kernel void merge_sort(
 {
     const unsigned int gid = get_global_id(0);
     const unsigned int lid = get_local_id(0);
-    const unsigned int base = gid & ~((1 << (iter + 1)) - 1);
+    
     const unsigned int shift = (1 << iter);
+    const unsigned int block_mask = (1 << (iter + 1)) - 1;
+
+    const unsigned int base = gid & ~block_mask;
 
     const unsigned int gr_id = get_group_id(0);
-    const unsigned int gr_d = (gr_id * GROUP_SIZE) & ((1 << (iter + 1)) - 1);
+    const unsigned int gr_d = (gr_id * GROUP_SIZE) & block_mask;
 
     const unsigned int block_len = MIN(1 << (iter + 1), (unsigned)n - base);
     const unsigned int block_width = MIN(GROUP_SIZE, (unsigned)n - gr_id * GROUP_SIZE);
 
     const unsigned int left_cnt =
-        (gr_d + block_width >= block_len || ((((gr_id + 1) * GROUP_SIZE) & ((1 << (iter + 1)) - 1)) == 0)
-        ? MIN(1 << iter, block_len) : group_diags[gr_id + 1]) - group_diags[gr_id];
+        (gr_d + block_width >= block_len ? MIN(1 << iter, block_len) : group_diags[gr_id + 1]) - group_diags[gr_id];
     const unsigned int right_cnt = block_width - left_cnt;
     
     const unsigned int left_cnt_prev = group_diags[gr_id];
     const unsigned int right_cnt_prev =
-        ((gr_id * GROUP_SIZE) & ((1 << (iter + 1)) - 1)) == 0
+        ((gr_id * GROUP_SIZE) & block_mask) == 0
         ? 0 : gr_d - left_cnt_prev;
 
     __local unsigned int buf[GROUP_SIZE];
     if (lid < block_width) {
+        unsigned int idx;
         if (lid < left_cnt) {
-            buf[lid] = input_data[base + lid + left_cnt_prev];
+            idx = base + lid + left_cnt_prev;
         } else {
-            buf[lid] = input_data[base + shift + right_cnt_prev + (lid - left_cnt)];
+            idx = base + shift + right_cnt_prev + (lid - left_cnt);
         }
+        buf[lid] = input_data[idx];
     } else {
         buf[lid] = 0xFFFFFFFFu;
     }
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    unsigned int l = -1, r = MIN(lid, left_cnt);
+    int l = -1, r = MIN(lid, left_cnt);
     while (l + 1 < r) {
         unsigned int m = (l + r) / 2;
 
@@ -78,8 +75,8 @@ __kernel void merge_sort(
         
     }
 
-    unsigned int this = ((l < 0 || l >= left_cnt) ? 0 : buf[l]);
-    unsigned int other = ((lid - l - 1 < 0 || lid - l - 1 >= right_cnt) ? 0 : buf[left_cnt + lid - l - 1]);
+    unsigned int this = (l >= left_cnt ? 0 : buf[l]);
+    unsigned int other = (lid - l - 1 >= right_cnt ? 0 : buf[left_cnt + lid - l - 1]);
     if (lid < block_width) {
         output_data[gid] = MAX(this, other);
     }
