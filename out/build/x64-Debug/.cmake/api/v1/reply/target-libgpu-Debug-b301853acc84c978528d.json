@@ -1,0 +1,1253 @@
+{
+	"archive" : 
+	{
+		"commandFragments" : 
+		[
+			{
+				"fragment" : "/machine:x64",
+				"role" : "flags"
+			}
+		]
+	},
+	"artifacts" : 
+	[
+		{
+			"path" : "libs/gpu/libgpu.lib"
+		}
+	],
+	"backtrace" : 2,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"_add_library",
+			"add_library",
+			"target_link_libraries",
+			"add_custom_command",
+			"compile_opencl_nospir",
+			"compile_opencl",
+			"target_include_directories"
+		],
+		"files" : 
+		[
+			"C:/vcpkg/scripts/buildsystems/vcpkg.cmake",
+			"libs/gpu/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 1
+			},
+			{
+				"command" : 1,
+				"file" : 1,
+				"line" : 221,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 666,
+				"parent" : 1
+			},
+			{
+				"command" : 2,
+				"file" : 1,
+				"line" : 225,
+				"parent" : 0
+			},
+			{
+				"command" : 5,
+				"file" : 1,
+				"line" : 175,
+				"parent" : 0
+			},
+			{
+				"command" : 4,
+				"file" : 1,
+				"line" : 158,
+				"parent" : 4
+			},
+			{
+				"command" : 3,
+				"file" : 1,
+				"line" : 131,
+				"parent" : 5
+			},
+			{
+				"command" : 6,
+				"file" : 1,
+				"line" : 224,
+				"parent" : 0
+			}
+		]
+	},
+	"codemodelVersion" : 
+	{
+		"major" : 2,
+		"minor" : 10
+	},
+	"compileDependencies" : 
+	[
+		{
+			"backtrace" : 3,
+			"id" : "libbase::@d48220785f25ebd6faca"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libimages::@c1ddea42c537df556aff"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libclew::@9cb7e33744a6ab8991c7"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libutils::@e42e11acb977bccfc0e7"
+		}
+	],
+	"compileGroups" : 
+	[
+		{
+			"compileCommandFragments" : 
+			[
+				{
+					"fragment" : "/DWIN32 /D_WINDOWS /EHsc -openmp /Zi /Ob0 /Od /RTC1 -std:c++17 -MDd"
+				}
+			],
+			"defines" : 
+			[
+				{
+					"backtrace" : 3,
+					"define" : "GTEST_LINKED_AS_SHARED_LIBRARY=1"
+				}
+			],
+			"includes" : 
+			[
+				{
+					"backtrace" : 7,
+					"path" : "C:/Users/user/GPGPUTasks2026/libs/gpu"
+				},
+				{
+					"backtrace" : 7,
+					"path" : "C:/VulkanSDK/1.4.357.0/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/user/GPGPUTasks2026/libs/base"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/user/GPGPUTasks2026/libs/images"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/user/GPGPUTasks2026/libs/clew"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/user/GPGPUTasks2026/libs/utils"
+				},
+				{
+					"backtrace" : 3,
+					"isSystem" : true,
+					"path" : "C:/vcpkg/installed/x64-windows/include"
+				}
+			],
+			"language" : "CXX",
+			"languageStandard" : 
+			{
+				"backtraces" : 
+				[
+					3
+				],
+				"standard" : "17"
+			},
+			"sourceIndexes" : 
+			[
+				0,
+				1,
+				2,
+				3,
+				4,
+				5,
+				6,
+				7,
+				8,
+				9,
+				10,
+				11,
+				12,
+				13,
+				14,
+				15,
+				16,
+				17,
+				18,
+				19,
+				20,
+				21
+			]
+		}
+	],
+	"dependencies" : 
+	[
+		{
+			"backtrace" : 3,
+			"id" : "libbase::@d48220785f25ebd6faca"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libimages::@c1ddea42c537df556aff"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libclew::@9cb7e33744a6ab8991c7"
+		},
+		{
+			"backtrace" : 6,
+			"id" : "hexdumparray::@90375ef4966b2202aea0"
+		}
+	],
+	"id" : "libgpu::@90375ef4966b2202aea0",
+	"interfaceCompileDependencies" : 
+	[
+		{
+			"backtrace" : 3,
+			"id" : "libbase::@d48220785f25ebd6faca"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libimages::@c1ddea42c537df556aff"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libclew::@9cb7e33744a6ab8991c7"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libutils::@e42e11acb977bccfc0e7"
+		}
+	],
+	"interfaceLinkLibraries" : 
+	[
+		{
+			"backtrace" : 3,
+			"id" : "libbase::@d48220785f25ebd6faca"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libimages::@c1ddea42c537df556aff"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libclew::@9cb7e33744a6ab8991c7"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libutils::@e42e11acb977bccfc0e7"
+		}
+	],
+	"linkLibraries" : 
+	[
+		{
+			"backtrace" : 3,
+			"id" : "libbase::@d48220785f25ebd6faca"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libimages::@c1ddea42c537df556aff"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libclew::@9cb7e33744a6ab8991c7"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libutils::@e42e11acb977bccfc0e7"
+		}
+	],
+	"name" : "libgpu",
+	"nameOnDisk" : "libgpu.lib",
+	"orderDependencies" : 
+	[
+		{
+			"backtrace" : 6,
+			"id" : "hexdumparray::@90375ef4966b2202aea0"
+		}
+	],
+	"paths" : 
+	{
+		"build" : "libs/gpu",
+		"source" : "libs/gpu"
+	},
+	"sourceGroups" : 
+	[
+		{
+			"name" : "Source Files",
+			"sourceIndexes" : 
+			[
+				0,
+				1,
+				2,
+				3,
+				4,
+				5,
+				6,
+				7,
+				8,
+				9,
+				10,
+				11,
+				12,
+				13,
+				14,
+				15,
+				16,
+				17,
+				18,
+				19,
+				20,
+				21
+			]
+		},
+		{
+			"name" : "Header Files",
+			"sourceIndexes" : 
+			[
+				22,
+				23,
+				24,
+				25,
+				26,
+				27,
+				28,
+				29,
+				30,
+				31,
+				32,
+				33,
+				34,
+				35,
+				36,
+				37,
+				38,
+				39,
+				40,
+				41,
+				42,
+				43,
+				44,
+				45,
+				46,
+				47,
+				48,
+				49,
+				50,
+				51,
+				52,
+				53,
+				54,
+				55,
+				56,
+				57,
+				58,
+				59,
+				60,
+				61,
+				62,
+				63,
+				64,
+				65,
+				66,
+				67,
+				68,
+				69,
+				70,
+				71,
+				72,
+				73,
+				74,
+				75,
+				76,
+				77,
+				78,
+				79,
+				80,
+				81,
+				82,
+				83,
+				84,
+				85,
+				86,
+				87,
+				88,
+				89,
+				90,
+				91,
+				92,
+				93,
+				94,
+				95
+			]
+		},
+		{
+			"name" : "CMake Rules",
+			"sourceIndexes" : 
+			[
+				96,
+				97,
+				98,
+				99,
+				100,
+				101,
+				102,
+				103,
+				104,
+				105,
+				106,
+				107,
+				108,
+				109,
+				110,
+				111,
+				112,
+				113,
+				114,
+				115,
+				116,
+				117,
+				118,
+				119,
+				120,
+				121,
+				122,
+				123,
+				124,
+				125,
+				126,
+				127,
+				128,
+				129,
+				130,
+				131,
+				132,
+				133,
+				134,
+				135,
+				136,
+				137,
+				138,
+				139,
+				140,
+				141
+			]
+		}
+	],
+	"sources" : 
+	[
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/opencl/device_info.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/opencl/engine.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/opencl/enum.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/opencl/utils.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/vulkan/spirv_reflect/shader_module_info.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/vulkan/spirv_reflect/spirv_reflect.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/vulkan/vk/common_host.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/vulkan/data_buffer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/vulkan/data_image.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/vulkan/device.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/vulkan/engine.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/vulkan/enum.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/vulkan/utils.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/vulkan/vulkan_api_headers.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/context.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/device.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/device_memory_pool.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/gold_helpers.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/shared_device_buffer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/shared_device_image.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/shared_host_buffer.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/gpu/libgpu/utils.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/opencl/device_info.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/opencl/engine.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/opencl/enum.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/opencl/exceptions.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/opencl/utils.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/spirv_reflect/include/spirv/unified1/spirv.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/spirv_reflect/shader_module_info.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/spirv_reflect/spirv_reflect.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/kernels.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/test_utils.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/data_buffer.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/data_image.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/device.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/engine.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/enum.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/utils.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/vulkan_api_headers.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/context.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/device.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/device_memory_pool.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/gold_helpers.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/shared_device_buffer.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/shared_device_image.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/shared_host_buffer.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/utils.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/work_size.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/opencl/cl/generated_kernels/dummy_kernel_nospir_opencl120.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/opencl/tests/kernels/generated_kernels/aplusb_nospir_opencl120.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/aplusb_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/aplusb_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/atomic_add_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/atomic_add_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/batched_binary_search_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/batched_binary_search_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/rasterize_vert_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/rasterize_vert.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/rasterize_frag_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/rasterize_frag.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/rasterize_blending_frag_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/rasterize_blending_frag.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/write_value_at_index_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/write_value_at_index_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_1_T_8U_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_1_T_8U_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_2_T_8U_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_2_T_8U_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_3_T_8U_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_3_T_8U_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_4_T_8U_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_4_T_8U_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_1_T_16U_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_1_T_16U_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_2_T_16U_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_2_T_16U_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_3_T_16U_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_3_T_16U_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_4_T_16U_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_4_T_16U_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_1_T_32F_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_1_T_32F_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_2_T_32F_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_2_T_32F_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_3_T_32F_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_3_T_32F_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_4_T_32F_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_4_T_32F_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_conversion_from_float_to_T_T_8U_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_conversion_from_float_to_T_T_8U_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_conversion_from_float_to_T_T_16U_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_conversion_from_float_to_T_T_16U_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_conversion_from_float_to_T_T_32F_comp_spirv_vulkan.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_conversion_from_float_to_T_T_32F_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_conversion_from_float_to_T_comp.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/opencl/cl/generated_kernels/dummy_kernel_nospir_opencl120.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/opencl/tests/kernels/generated_kernels/aplusb_nospir_opencl120.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/aplusb_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/atomic_add_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/batched_binary_search_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/rasterize_vert_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/rasterize_frag_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/rasterize_blending_frag_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/write_value_at_index_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_1_T_8U_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_2_T_8U_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_3_T_8U_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_4_T_8U_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_1_T_16U_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_2_T_16U_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_3_T_16U_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_4_T_16U_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_1_T_32F_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_2_T_32F_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_3_T_32F_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_4_T_32F_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_conversion_from_float_to_T_T_8U_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_conversion_from_float_to_T_T_16U_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_conversion_from_float_to_T_T_32F_comp_spirv_vulkan.h.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/aplusb_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/atomic_add_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/batched_binary_search_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/rasterize_vert_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/rasterize_frag_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/rasterize_blending_frag_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/write_value_at_index_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_1_T_8U_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_2_T_8U_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_3_T_8U_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_4_T_8U_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_1_T_16U_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_2_T_16U_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_3_T_16U_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_4_T_16U_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_1_T_32F_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_2_T_32F_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_3_T_32F_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_interpolation_NCHANNELS_4_T_32F_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_conversion_from_float_to_T_T_8U_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_conversion_from_float_to_T_T_16U_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		},
+		{
+			"backtrace" : 0,
+			"isGenerated" : true,
+			"path" : "libs/gpu/libgpu/vulkan/tests/kernels/generated_kernels/image_conversion_from_float_to_T_T_32F_comp_spirv_vulkan.spir.rule",
+			"sourceGroupIndex" : 2
+		}
+	],
+	"type" : "STATIC_LIBRARY"
+}

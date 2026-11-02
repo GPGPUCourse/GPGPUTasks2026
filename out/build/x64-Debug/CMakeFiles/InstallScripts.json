@@ -1,0 +1,15 @@
+{
+	"InstallScripts" : 
+	[
+		"C:/Users/user/GPGPUTasks2026/out/build/x64-Debug/cmake_install.cmake",
+		"C:/Users/user/GPGPUTasks2026/out/build/x64-Debug/libs/cmake_install.cmake",
+		"C:/Users/user/GPGPUTasks2026/out/build/x64-Debug/libs/base/cmake_install.cmake",
+		"C:/Users/user/GPGPUTasks2026/out/build/x64-Debug/libs/images/cmake_install.cmake",
+		"C:/Users/user/GPGPUTasks2026/out/build/x64-Debug/libs/utils/cmake_install.cmake",
+		"C:/Users/user/GPGPUTasks2026/out/build/x64-Debug/libs/clew/cmake_install.cmake",
+		"C:/Users/user/GPGPUTasks2026/out/build/x64-Debug/libs/gpu/cmake_install.cmake",
+		"C:/Users/user/GPGPUTasks2026/out/build/x64-Debug/libs/gpu/libgpu/vulkan/cmake_install.cmake",
+		"C:/Users/user/GPGPUTasks2026/out/build/x64-Debug/libs/json/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
