@@ -31,8 +31,8 @@ __kernel void merge_sort_local(
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    #pragma unroll
-    __attribute__((opencl_unroll_hint))
+    // #pragma unroll
+    __attribute__((opencl_unroll_hint(7)))
     for (uint power = 0, size = 1 << power; size < GROUP_SIZE; ++power, size<<=1) {
         uint next_size = size << 1;
         bool is_left = id % next_size < size;
