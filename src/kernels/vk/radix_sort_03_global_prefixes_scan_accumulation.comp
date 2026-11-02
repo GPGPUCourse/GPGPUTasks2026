@@ -4,12 +4,13 @@
 
 #include "../defines.h"
 
-// we want to make it finally so that prefix_sum_accum[i] = sum[0, i]
-layout (std430, binding = 0)           buffer PrefixSum   { uint pref_sum[]; };
+// Propagate block offsets for all four digit counts at once.
+layout (std430, binding = 0)           buffer PrefixSum   { uvec4 pref_sum[]; };
 
 layout (push_constant) uniform PushConstants {
     uint n;
     uint st_pow;
+    uint bit;
 } params;
 
 uint GetBlockIndex(uint global_idx) {
@@ -29,7 +30,7 @@ void main()
         return;
     }
 
-    const uint offset = pref_sum[GetBlockIndex(group_start - 1)];
+    const uvec4 offset = pref_sum[GetBlockIndex(group_start - 1)];
     if (idx < min(group_start + GROUP_SIZE, cur_size) - 1) {
         pref_sum[GetBlockIndex(idx)] += offset;
     }

@@ -91,7 +91,7 @@ void run(int argc, char** argv) {
 
   // Аллоцируем буферы в VRAM
   gpu::gpu_mem_32u input_gpu(n);
-  gpu::gpu_mem_32u ones_cnt(n), prefix_sum_accum_gpu(n);
+  gpu::gpu_mem_32u prefix_sum_accum_gpu(size_t(n) * 4); // four counters per key
   gpu::gpu_mem_32u buffer_output_gpu_1(n), buffer_output_gpu_2(n);
 
   // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -105,38 +105,31 @@ void run(int argc, char** argv) {
 
   // Запускаем кернел (несколько раз и с замером времени выполнения)
   std::vector<double> times;
-  for (int iter = 0; iter < 10; ++iter) {
+  for (int iter = 0; iter < 1; ++iter) {
     timer t;
 
     input_arr = &input_gpu;
     sorted_arr = &buffer_output_gpu_1;
 
-    for (unsigned i = 0; i < 32; ++i) {
-      struct {
-        unsigned n;
-        unsigned bit;
-      } count_params{.n = n, .bit = i};
-
-      vk_radixSort01LocalCounting.exec(count_params,
-                                       gpu::WorkSize(GROUP_SIZE, n), *input_arr, ones_cnt);
-
+    for (unsigned i = 0; i < 32; i += 2) {
       struct {
         unsigned n;
         unsigned st_pow;
-      } prefix_params = {.n = n, .st_pow = 0};
+        unsigned bit;
+      } prefix_params = {.n = n, .st_pow = 0, .bit = i};
       unsigned tmp_n = n;
 
-      auto* sum_in = &ones_cnt;
+      auto* sum_in = input_arr;
       auto* sum_out = &prefix_sum_accum_gpu;
 
-      while (tmp_n > 1) {
+      do {
         vk_radixSort02GlobalPrefixesScanSumReduction.exec(
           prefix_params, gpu::WorkSize(GROUP_SIZE, tmp_n),
           *sum_in, *sum_out);
         tmp_n = div_ceil(tmp_n, (unsigned)GROUP_SIZE);
         sum_in = sum_out;
         prefix_params.st_pow += 8;
-      }
+      } while (tmp_n > 1);
 
       while (prefix_params.st_pow != 0) {
         prefix_params.st_pow -= 8;
@@ -146,7 +139,12 @@ void run(int argc, char** argv) {
           prefix_sum_accum_gpu);
       }
 
-      vk_radixSort04Scatter.exec(count_params, gpu::WorkSize(GROUP_SIZE, n),
+      struct {
+        unsigned n;
+        unsigned bit;
+      } scatter_params{.n = n, .bit = i};
+
+      vk_radixSort04Scatter.exec(scatter_params, gpu::WorkSize(GROUP_SIZE, n),
                                  *input_arr, prefix_sum_accum_gpu,
                                  *sorted_arr);
       if (i == 0) {
@@ -170,7 +168,7 @@ void run(int argc, char** argv) {
     stats::median(times) << " uint millions/s)" << std::endl;
 
   // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-  std::vector<unsigned int> gpu_sorted = sorted_arr->readVector();
+  std::vector<unsigned int> gpu_sorted = input_arr->readVector();
 
   // Сверяем результат
   for (size_t i = 0; i < n; ++i) {

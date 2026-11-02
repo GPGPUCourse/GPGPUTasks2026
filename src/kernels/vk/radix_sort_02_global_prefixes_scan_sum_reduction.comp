@@ -4,16 +4,18 @@
 
 #include "../defines.h"
 
-// we want to make it finally so that prefix_sum_accum[i] = sum[0, i]
+// Inclusive prefix counts for the four values of the current two-bit digit.
+// The first level reads keys; higher levels read four counters per element.
 layout (std430, binding = 0) readonly  buffer SumIn   { uint sum_in[]; };
-layout (std430, binding = 1) writeonly buffer SumOut  { uint sum_out[]; };
+layout (std430, binding = 1) writeonly buffer SumOut  { uvec4 sum_out[]; };
 
 layout (push_constant) uniform PushConstants {
     uint n;
     uint st_pow;
+    uint bit;
 } params;
 
-shared uint local_buffer[GROUP_SIZE];
+shared uvec4 local_buffer[GROUP_SIZE];
 
 uint GetBlockIndex(uint global_idx) {
     return min((global_idx + 1) << params.st_pow, params.n) - 1;
@@ -28,11 +30,18 @@ void main()
     const uint block_idx = GetBlockIndex(idx);
     const uint cur_size = (params.n + (1 << params.st_pow) - 1) >> params.st_pow;
 
+    uvec4 val = uvec4(0);
     if (idx < cur_size) {
-        local_buffer[local_idx] = sum_in[block_idx];
-    } else {
-        local_buffer[local_idx] = 0;
+        if (params.st_pow == 0) {
+            const uint digit = (sum_in[block_idx] >> params.bit) & 3u;
+            val[digit] = 1u;
+        } else {
+            const uint base = 4u * block_idx;
+            val = uvec4(sum_in[base], sum_in[base + 1],
+                        sum_in[base + 2], sum_in[base + 3]);
+        }
     }
+    local_buffer[local_idx] = val;
     barrier();
 
     if (local_idx == 0) {

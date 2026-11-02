@@ -4,7 +4,7 @@
 
 #include "../defines.h"
 
-layout (std430, binding = 0) readonly buffer Buffer1In  { uint arr[]; };
+layout (std430, binding = 0) readonly buffer BufferIn  { uint arr[]; };
 layout (std430, binding = 1)          buffer Buffer2Out { uint cnt[]; };
 
 layout (push_constant) uniform PushConstants {
