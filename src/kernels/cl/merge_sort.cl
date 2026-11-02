@@ -57,17 +57,25 @@ __kernel void merge_sort(
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    unsigned int l = -1, r = MIN(lid, left_cnt) + 1;
+    unsigned int l = -1, r = MIN(lid, left_cnt);
     while (l + 1 < r) {
         unsigned int m = (l + r) / 2;
 
-        const bool lim_l = m < left_cnt, lim_r = lid - m < right_cnt;
+        const bool lim_r = lid - m < right_cnt;
 
-        if ((!lim_l && lim_r) || (lim_l && lim_r && buf[m] > buf[left_cnt + lid - m])) {
+        if (lim_r && buf[m] > buf[left_cnt + lid - m]) {
             r = m;
         } else {
             l = m;
         }
+    }
+
+    {
+        const bool lim_l = r < left_cnt, lim_r = lid - r < right_cnt;
+        if (!((!lim_l && lim_r) || (lim_l && lim_r && buf[r] > buf[left_cnt + lid - r]))) {
+            l = r;
+        }
+        
     }
 
     unsigned int this = ((l < 0 || l >= left_cnt) ? 0 : buf[l]);
