@@ -13,8 +13,42 @@ __global__ void merge_sort(
                    int  sorted_k,
                    int  n)
 {
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    // TODO
+    const unsigned int width = sorted_k;
+    const unsigned int count = n;
+    const unsigned int items = min(8u, 2 * width);
+    const unsigned int start = (blockIdx.x * blockDim.x + threadIdx.x) * items;
+    if (start >= count) {
+        return;
+    }
+
+    const unsigned int base = start / (2 * width) * (2 * width);
+    const unsigned int left_size = min(width, count - base);
+    const unsigned int right_size = min(width, count - base - left_size);
+    const unsigned int diagonal = start - base;
+    const unsigned int* left = input_data + base;
+    const unsigned int* right = left + left_size;
+    unsigned int low = diagonal > right_size ? diagonal - right_size : 0;
+    unsigned int high = min(diagonal, left_size);
+    while (low < high) {
+        const unsigned int a = low + (high - low) / 2;
+        const unsigned int b = diagonal - a;
+        if (b > 0 && a < left_size && right[b - 1] >= left[a]) {
+            low = a + 1;
+        } else {
+            high = a;
+        }
+    }
+
+    unsigned int a = low;
+    unsigned int b = diagonal - a;
+    const unsigned int end = start + min(items, count - start);
+    for (unsigned int i = start; i < end; ++i) {
+        if (a < left_size && (b >= right_size || left[a] <= right[b])) {
+            output_data[i] = left[a++];
+        } else {
+            output_data[i] = right[b++];
+        }
+    }
 }
 
 namespace cuda {
