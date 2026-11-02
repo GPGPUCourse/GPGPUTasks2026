@@ -24,6 +24,11 @@ struct CudaEvent {
     CudaEvent(const CudaEvent&) = delete;
     CudaEvent& operator=(const CudaEvent&) = delete;
 };
+
+struct MergePassEvents {
+    CudaEvent partition_start, partition_end;
+    CudaEvent merge_start, merge_end;
+};
 } // namespace
 #endif
 
@@ -130,7 +135,10 @@ void run(int argc, char** argv)
     std::vector<double> times;
 #ifdef CUDA_SUPPORT
     CudaEvent local_start, local_end;
+    // События создаются один раз и переиспользуются между итерациями.
+    std::vector<MergePassEvents> pass_events(merge_passes.size());
     std::vector<double> local_times_ms;
+    std::vector<double> partition_times_ms, merge_times_ms;
 #endif
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
@@ -149,11 +157,23 @@ void run(int argc, char** argv)
         const gpu::gpu_mem_32u* source = &buffer_output_gpu;
         gpu::gpu_mem_32u* destination = &scratch_gpu;
         // На шаге k вход содержит отсортированные серии длины 2^k.
-        for (const auto& pass : merge_passes) {
+        for (size_t pass_id = 0; pass_id < merge_passes.size(); ++pass_id) {
+            const auto& pass = merge_passes[pass_id];
+#ifdef CUDA_SUPPORT
+            auto& events = pass_events[pass_id];
+            CUDA_SAFE_CALL(cudaEventRecord(events.partition_start.handle, context.cudaStream()));
+#endif
             cuda::merge_path_partition(pass.partition_work_size, *source, tile_bounds_a_gpu,
                 pass.sorted_k, n, pass.tiles_per_pair, pass.boundary_count);
+#ifdef CUDA_SUPPORT
+            CUDA_SAFE_CALL(cudaEventRecord(events.partition_end.handle, context.cudaStream()));
+            CUDA_SAFE_CALL(cudaEventRecord(events.merge_start.handle, context.cudaStream()));
+#endif
             cuda::merge_path_merge(pass.merge_work_size, *source, tile_bounds_a_gpu, *destination,
                 pass.sorted_k, n, pass.tiles_per_pair, pass.tile_count);
+#ifdef CUDA_SUPPORT
+            CUDA_SAFE_CALL(cudaEventRecord(events.merge_end.handle, context.cudaStream()));
+#endif
             source = destination;
             destination = (destination == &buffer_output_gpu)
                 ? &scratch_gpu : &buffer_output_gpu;
@@ -171,18 +191,35 @@ void run(int argc, char** argv)
 
         times.push_back(t.elapsed());
 #ifdef CUDA_SUPPORT
-        // Stream уже завершён: события охватывают только локальный этап.
+        // Stream уже завершён: читаем GPU-время без ожиданий между кернелами.
         float local_ms = 0.0f;
         if (n > 0) {
             CUDA_SAFE_CALL(cudaEventElapsedTime(&local_ms, local_start.handle, local_end.handle));
         }
         local_times_ms.push_back(local_ms);
+        double partition_ms = 0.0, merge_ms = 0.0;
+        for (const auto& events : pass_events) {
+            float elapsed_ms = 0.0f;
+            CUDA_SAFE_CALL(cudaEventElapsedTime(&elapsed_ms,
+                events.partition_start.handle, events.partition_end.handle));
+            partition_ms += elapsed_ms;
+            CUDA_SAFE_CALL(cudaEventElapsedTime(&elapsed_ms,
+                events.merge_start.handle, events.merge_end.handle));
+            merge_ms += elapsed_ms;
+        }
+        partition_times_ms.push_back(partition_ms);
+        merge_times_ms.push_back(merge_ms);
 #endif
     }
     std::cout << "GPU merge-sort times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 #ifdef CUDA_SUPPORT
     std::cout << "GPU local merge-sort times (in milliseconds) - "
               << stats::valuesStatsLine(local_times_ms) << std::endl;
+    // Partition и merge вызываются на каждом уровне: выводим сумму за одну сортировку.
+    std::cout << "GPU merge-path partition totals per sort (in milliseconds) - "
+              << stats::valuesStatsLine(partition_times_ms) << std::endl;
+    std::cout << "GPU merge-path merge totals per sort (in milliseconds) - "
+              << stats::valuesStatsLine(merge_times_ms) << std::endl;
 #endif
 
     // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили его переупорядоченным)

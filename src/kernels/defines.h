@@ -5,7 +5,7 @@
 #define GROUP_SIZE_X 16
 #define GROUP_SIZE_Y 16
 
-#define MERGE_TILE_SIZE 256
+#define MERGE_TILE_SIZE 2048
 
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
 

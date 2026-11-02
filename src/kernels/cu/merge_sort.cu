@@ -269,42 +269,41 @@ __global__ void merge_path_merge(
 
     __syncthreads();
 
-    if (i >= size_a + size_b) {
-        return;
-    }
+    for (int j = i; j < size_a + size_b; j += GROUP_SIZE) {
+        unsigned int value = local[j];
 
-    unsigned int value = local[i];
-
-    int tl, tr;
-    if (i < size_a) {
-        tl = size_a - 1;
-        tr = size_a + size_b;
-    }
-    else {
-        tl = -1;
-        tr = size_a;
-    }
-
-    while (tl + 1 < tr) {
-        int tm = (tl + tr) / 2;
-        if ((i < size_a) ? (local[tm] < value) : (local[tm] <= value)) {
-            tl = tm;
+        int tl, tr;
+        if (j < size_a) {
+            tl = size_a - 1;
+            tr = size_a + size_b;
         }
         else {
-            tr = tm;
+            tl = -1;
+            tr = size_a;
         }
-    }
 
-    size_t local_pos;
-    if (i < size_a) {
-        local_pos = i + (tr - size_a);
-    }
-    else {
-        local_pos = (i - size_a) + tr;
-    }
+        while (tl + 1 < tr) {
+            int tm = (tl + tr) / 2;
+            if ((j < size_a) ? (local[tm] < value) : (local[tm] <= value)) {
+                tl = tm;
+            }
+            else {
+                tr = tm;
+            }
+        }
 
-    size_t global_pos = blocks_left + tile_in_block * MERGE_TILE_SIZE + local_pos;
-    output_data[global_pos] = value;
+        size_t local_pos;
+        if (i < size_a) {
+            local_pos = j + (tr - size_a);
+        }
+        else {
+            local_pos = (j - size_a) + tr;
+        }
+
+        size_t global_pos = blocks_left + tile_in_block * MERGE_TILE_SIZE + local_pos;
+        output_data[global_pos] = value;
+
+    }
 }
 
 namespace cuda {
