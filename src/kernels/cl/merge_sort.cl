@@ -8,6 +8,9 @@
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 
+#define GET(x) \
+    input_data[((x) < left_cnt) ? base + (x) + left_cnt_prev : base + shift + right_cnt_prev + ((x) - left_cnt)]
+
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void merge_sort(
     __global const uint* input_data,
@@ -39,39 +42,28 @@ __kernel void merge_sort(
         ((gr_id * GROUP_SIZE) & block_mask) == 0
         ? 0 : gr_d - left_cnt_prev;
 
-    __local unsigned int buf[GROUP_SIZE];
-    unsigned int idx;
-    if (lid < left_cnt) {
-        idx = base + lid + left_cnt_prev;
-    } else {
-        idx = base + shift + right_cnt_prev + (lid - left_cnt);
-    }
-    buf[lid] = input_data[idx];
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-
     int l = -1, r = MIN(lid, left_cnt);
+
+    unsigned int this, other;
+
     while (l + 1 < r) {
         unsigned int m = (l + r) / 2;
 
         const bool lim_r = lid - m < right_cnt;
 
-        if (lim_r && buf[m] > buf[left_cnt + lid - m]) {
+        if (lim_r && GET(m) > GET(left_cnt + lid - m)) {
             r = m;
         } else {
             l = m;
         }
     }
 
-    {
-        const bool lim_l = r < left_cnt, lim_r = lid - r < right_cnt;
-        if (!((!lim_l && lim_r) || (lim_l && lim_r && buf[r] > buf[left_cnt + lid - r]))) {
-            l = r;
-        }
-        
+    const bool lim_l = r < left_cnt, lim_r = lid - r < right_cnt;
+    if (!((!lim_l && lim_r) || (lim_l && lim_r && GET(r) > GET(left_cnt + lid - r)))) {
+        l = r;
     }
-
-    unsigned int this = (l >= left_cnt ? 0 : buf[l]);
-    unsigned int other = (lid - l - 1 >= right_cnt ? 0 : buf[left_cnt + lid - l - 1]);
+    this = (l >= left_cnt ? 0 : GET(l));
+    other = (lid - l - 1 >= right_cnt ? 0 : GET(left_cnt + lid - l - 1));
+        
     output_data[gid] = MAX(this, other);
 }
