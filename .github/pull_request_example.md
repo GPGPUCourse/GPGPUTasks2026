@@ -7,7 +7,7 @@
 <details><summary>Локальный вывод</summary><p>
 
 <pre>
-$ ./main_sparse_matrix_multiply
+$ ./build/main_linear_bvh
 ...
 </pre>
 

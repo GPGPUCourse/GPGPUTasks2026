@@ -235,7 +235,7 @@ void debug_io::dumpImage(const std::string &name, const AnyImage &image, bool ve
 		return;
 	}
 
-	if (verbose) { 
+	if (verbose) {
 		std::cout << "saving " << name << ", " << image.width() << " x " << image.height() << ", " << image.channels() << " channels..." << std::endl;
 	}
 
@@ -248,6 +248,8 @@ void debug_io::dumpImage(const std::string &name, const AnyImage &image, bool ve
 		image.savePNG(name);
 	} else if (name_ext == "jpg" || name_ext == "jpeg") {
 		image.saveJPEG(name);
+	} else if (name_ext == "bmp") {
+		image.saveBMP(name);
 	} else {
 		throw std::runtime_error("unsupported image extension '" + name_ext + "' (name: " + name + ")");
 	}

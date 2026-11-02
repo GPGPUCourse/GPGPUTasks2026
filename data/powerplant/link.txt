@@ -1,0 +1,8 @@
+Power plant model can be downloaded here:
+https://disk.yandex.ru/d/u4ORSCvWdITAkw
+https://casual-effects.com/g3d/data10/research/model/powerplant/powerplant.zip
+
+After unzipping you should have file data/powerplant/powerplant.obj
+
+List of all models:
+https://casual-effects.com/data/

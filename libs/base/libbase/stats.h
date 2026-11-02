@@ -20,11 +20,17 @@ namespace stats {
 	}
 
 	template<typename T>
-	T avg(const std::vector<T> &values) {
+	T sum(const std::vector<T> &values) {
 		T sum = 0;
 		for (size_t i = 0; i < values.size(); ++i) {
 			sum += values[i];
 		}
+		return sum;
+	}
+
+	template<typename T>
+	T avg(const std::vector<T> &values) {
+		T sum = stats::sum(values);
 		T avg;
 		if (values.size() > 0) {
 			avg = sum / values.size();

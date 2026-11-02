@@ -62,7 +62,7 @@ jobs:
         ./main_aplusb 0
         ./main_aplusb 1
 
-    - name: Run main_sparse_matrix_multiply
-      working-directory: ${{github.workspace}}/build
+    - name: Run main_linear_bvh
+      working-directory: ${{github.workspace}}/
       run: |
-        ./main_sparse_matrix_multiply 0
+        ./build/main_linear_bvh 0

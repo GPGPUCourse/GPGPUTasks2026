@@ -37,10 +37,14 @@ add_subdirectory(libs)
 
 set(HEADERS
         src/kernels/kernels.h
+        src/io/camera_reader.h
+        src/io/scene_reader.h
 )
 
 set(SOURCES
         src/kernels/kernels.cpp
+        src/io/camera_reader.cpp
+        src/io/scene_reader.cpp
 )
 
 set(LIBRARIES
@@ -59,9 +63,10 @@ set(LIBRARIES
 # Обратите внимание что это происходит на этапе компиляции, кроме того эта команда делает так чтобы файл src/kernels/vk/aplusb.h был перечислен среди HEADERS для компиляции при вызове add_executable
 set(OPENCL_SOURCES
         src/kernels/cl/aplusb.cl
-        src/kernels/cl/sparse_csr_matrix_vector_multiplication.cl)
+        src/kernels/cl/ray_tracing_render_brute_force.cl
+        src/kernels/cl/ray_tracing_render_using_lbvh.cl)
 
-set(OPENCL_INCLUDES src/kernels/defines.h src/kernels/cl/helpers/rassert.cl)
+set(OPENCL_INCLUDES src/kernels/defines.h src/kernels/cl/helpers/rassert.cl src/kernels/cl/camera_helpers.cl src/kernels/cl/geometry_helpers.cl src/kernels/cl/random_helpers.cl src/kernels/shared_structs/aabb_gpu_shared.h src/kernels/shared_structs/bvh_node_gpu_shared.h src/kernels/shared_structs/camera_gpu_shared.h src/kernels/shared_structs/morton_code_gpu_shared.h src/kernels/shared_structs/struct_helpers.h)
 set(OPENCL_DEFINES)
 foreach(CL_FILE IN LISTS OPENCL_SOURCES)
     compile_opencl(HEADERS ${CL_FILE} OPENCL_INCLUDES OPENCL_DEFINES)
@@ -76,7 +81,8 @@ endforeach()
 # Обратите внимание что это происходит на этапе компиляции, кроме того эта команда делает так чтобы файл src/kernels/vk/aplusb_comp.h был перечислен среди HEADERS для компиляции при вызове add_executable
 set(VULKAN_SOURCES
         src/kernels/vk/aplusb.comp
-        src/kernels/vk/sparse_csr_matrix_vector_multiplication.comp)
+        src/kernels/vk/ray_tracing_render_brute_force.comp
+        src/kernels/vk/ray_tracing_render_using_lbvh.comp)
 
 set(VULKAN_DEFINES)
 foreach(VK_FILE IN LISTS VULKAN_SOURCES)
@@ -93,7 +99,8 @@ if (GPU_CUDA_SUPPORT)
     # Вероятно вам стоит выставить в CMake options: -DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
     set(CUDA_SOURCES
             src/kernels/cu/aplusb.cu
-            src/kernels/cu/sparse_csr_matrix_vector_multiplication.cu)
+            src/kernels/cu/ray_tracing_render_brute_force.cu
+            src/kernels/cu/ray_tracing_render_using_lbvh.cu)
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
@@ -104,13 +111,13 @@ else ()
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
 endif ()
 
-add_executable(main_aplusb                 src/main_aplusb.cpp)
-add_executable(main_sparse_matrix_multiply src/main_csr_spmv.cpp)
+add_executable(main_aplusb     src/main_aplusb.cpp)
+add_executable(main_linear_bvh src/main_linear_bvh.cpp)
 
-target_link_libraries(main_aplusb                 ${PROJECT_NAME}_core)
-target_link_libraries(main_sparse_matrix_multiply ${PROJECT_NAME}_core)
+target_link_libraries(main_aplusb     ${PROJECT_NAME}_core)
+target_link_libraries(main_linear_bvh ${PROJECT_NAME}_core)
 
 if (GPU_CUDA_SUPPORT)
-    target_include_directories(main_aplusb                 PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
-    target_include_directories(main_sparse_matrix_multiply PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_include_directories(main_aplusb     PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_include_directories(main_linear_bvh PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 endif ()
