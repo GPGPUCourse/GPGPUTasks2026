@@ -5,7 +5,7 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-#define ITEMS_PER_THREAD 8u
+#define ITEMS_PER_THREAD 4u
 
 // Функция lower_bound для работы с глобальной памятью
 uint lower_bound(__global const uint* arr, uint size, uint value) {
