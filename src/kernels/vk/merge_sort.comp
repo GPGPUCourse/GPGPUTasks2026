@@ -12,9 +12,89 @@ layout (push_constant) uniform PushConstants {
     int n;
 } params;
 
-layout (local_size_x = 1) in;
+layout (local_size_x = GROUP_SIZE) in;
+
+struct Range {
+    int begin;
+    int end;
+};
+
+Range make_range(int i, int k, int offset, int n) {
+    Range r = Range(2*i*k + offset, min(n, 2*i*k + k + offset));
+    return r;
+}
+
+void mergeA(const Range range_l, const Range range_r, const Range range_o) {
+    int i = range_l.begin;
+    int j = range_r.begin;
+    int o = range_o.begin;
+    while(o < range_o.end) {
+        uint l = i < range_l.end ? input_data[i] : 0xFFFFFFFFu;
+        uint r = j < range_r.end ? input_data[j] : 0xFFFFFFFFu;
+        if (l <= r) {
+            output_data[o] = l;
+            i++;
+        } else {
+            output_data[o] = r;
+            j++;
+        }
+        o++;
+    }
+}
+
+void mergeB(const int pair, const int li) {
+    const int k = params.sorted_k;
+    Range l_range = make_range(pair, k, 0, params.n);
+    Range r_range = make_range(pair, k, k, params.n);
+    const int lenA = l_range.end - l_range.begin;
+    const int lenB = max(0, r_range.end - r_range.begin);
+    const int len = r_range.end - l_range.begin;
+    const int base = len / GROUP_SIZE;
+    const int rem = len % GROUP_SIZE;
+    const int s0 = li * base + min(li, rem);
+    const int s1 = (li + 1) * base + min(li + 1, rem);
+    int l = max(0, s0 - lenB);
+    int r = min(lenA, s0);
+    while(l < r) {
+        int m = (l + r) / 2;
+        if (input_data[l_range.begin + m] <= input_data[r_range.begin + s0 - m - 1]) {
+            l = m+1;
+        } else {
+            r = m;
+        }
+    }
+    const int p = l;
+    const int q = s0 - p;
+
+    Range out_range = Range(l_range.begin + s0, l_range.begin + s1);
+    l_range.begin += p;
+    r_range.begin += q;
+
+    mergeA(l_range, r_range, out_range);
+}
+
+int int_ceil(int n, int d) {
+    return (n + d - 1) / d;
+}
+
 void main()
 {
-    const uint i = gl_GlobalInvocationID.x;
-    // TODO
+    const int i = int(gl_GlobalInvocationID.x);
+
+    if (params.sorted_k < GROUP_SIZE) {
+        if (i >= int_ceil(params.n, 2*params.sorted_k)) {
+            return;
+        }
+        Range left = make_range(i, params.sorted_k, 0, params.n);
+        Range right = make_range(i, params.sorted_k, params.sorted_k, params.n);
+        Range outp = Range(left.begin, right.end);
+        mergeA(left, right, outp);
+    } else {
+        const int pair = int(gl_WorkGroupID.x);
+        const int li = int(gl_LocalInvocationID.x);
+        if (pair >= int_ceil(params.n, 2*params.sorted_k)) {
+            return;
+        }
+        mergeB(pair, li);
+    }
 }
