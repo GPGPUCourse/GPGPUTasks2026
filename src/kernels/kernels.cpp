@@ -26,6 +26,21 @@ void merge_sort(const gpu::WorkSize &workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
+void merge_path_partition(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32u& input_data, gpu::gpu_mem_32u& bounds_a,
+    int sorted_k, int n, size_t tiles_per_pair, size_t boundary_count)
+{
+    // dummy implementation if CUDA_SUPPORT is disabled
+    rassert(false, 54623523412413);
+}
+void merge_path_merge(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32u& input_data, const gpu::gpu_mem_32u& bounds_a,
+    gpu::gpu_mem_32u& output_data,
+    int sorted_k, int n, size_t tiles_per_pair, size_t tile_count)
+{
+    // dummy implementation if CUDA_SUPPORT is disabled
+    rassert(false, 54623523412413);
+}
 } // namespace cuda
 #endif
 

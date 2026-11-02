@@ -78,10 +78,45 @@ void run(int argc, char** argv)
         std::cout << "CPU std::sort effective RAM bandwidth: " << memory_size_gb / elapsed << " GB/s (" << n / 1e6 / elapsed << " uint millions/s)" << std::endl;
     }
 
-    // Аллоцируем буферы в VRAM
+    static_assert(MERGE_TILE_SIZE > 0, "MERGE_TILE_SIZE must be positive");
+    int local_sorted_k = 0;
+    for (size_t width = 1; width < GROUP_SIZE; width *= 2) {
+        ++local_sorted_k;
+    }
+    const gpu::WorkSize workSize(GROUP_SIZE, n);
+
+    struct MergePass {
+        int sorted_k;
+        size_t tiles_per_pair;
+        size_t boundary_count;
+        size_t tile_count;
+        gpu::WorkSize partition_work_size;
+        gpu::WorkSize merge_work_size;
+    };
+    std::vector<MergePass> merge_passes;
+    size_t max_boundary_count = 0;
+    int sorted_k = local_sorted_k;
+    for (size_t run_length = GROUP_SIZE; run_length < static_cast<size_t>(n);
+         run_length *= 2, ++sorted_k) {
+        const size_t pair_length = 2 * run_length;
+        const size_t pair_count = (size_t(n) + pair_length - 1) / pair_length;
+        const size_t tiles_per_pair = (pair_length + MERGE_TILE_SIZE - 1) / MERGE_TILE_SIZE;
+        const size_t last_pair_length = size_t(n) - (pair_count - 1) * pair_length;
+        const size_t last_pair_tiles = (last_pair_length + MERGE_TILE_SIZE - 1) / MERGE_TILE_SIZE;
+        const size_t tile_count = (pair_count - 1) * tiles_per_pair + last_pair_tiles;
+        // Храним только правую границу каждой плитки; начальный ноль не нужен.
+        const size_t boundary_count = tile_count;
+        max_boundary_count = std::max(max_boundary_count, boundary_count);
+        merge_passes.push_back({sorted_k, tiles_per_pair, boundary_count, tile_count,
+            gpu::WorkSize(GROUP_SIZE, boundary_count),
+            gpu::WorkSize(GROUP_SIZE, tile_count * GROUP_SIZE)});
+    }
+
+    // Аллоцируем буферы в VRAM; границы переиспользуются между проходами.
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u scratch_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
+    gpu::gpu_mem_32u tile_bounds_a_gpu(max_boundary_count);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -90,12 +125,6 @@ void run(int argc, char** argv)
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
     scratch_gpu.fill(255);
     buffer_output_gpu.fill(255);
-
-    int local_sorted_k = 0;
-    for (size_t width = 1; width < GROUP_SIZE; width *= 2) {
-        ++local_sorted_k;
-    }
-    const gpu::WorkSize workSize(GROUP_SIZE, n);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
@@ -119,11 +148,12 @@ void run(int argc, char** argv)
         }
         const gpu::gpu_mem_32u* source = &buffer_output_gpu;
         gpu::gpu_mem_32u* destination = &scratch_gpu;
-        int sorted_k = local_sorted_k;
         // На шаге k вход содержит отсортированные серии длины 2^k.
-        for (size_t run_length = GROUP_SIZE; run_length < static_cast<size_t>(n);
-             run_length *= 2, ++sorted_k) {
-            cuda::merge_sort(workSize, *source, *destination, sorted_k, n);
+        for (const auto& pass : merge_passes) {
+            cuda::merge_path_partition(pass.partition_work_size, *source, tile_bounds_a_gpu,
+                pass.sorted_k, n, pass.tiles_per_pair, pass.boundary_count);
+            cuda::merge_path_merge(pass.merge_work_size, *source, tile_bounds_a_gpu, *destination,
+                pass.sorted_k, n, pass.tiles_per_pair, pass.tile_count);
             source = destination;
             destination = (destination == &buffer_output_gpu)
                 ? &scratch_gpu : &buffer_output_gpu;
