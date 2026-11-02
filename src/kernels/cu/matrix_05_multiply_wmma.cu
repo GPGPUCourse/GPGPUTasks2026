@@ -20,7 +20,34 @@ __global__ void matrix_multiply_wmma(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO 020 Это добровольное задание за супер-пупер-баллы престижа сверх нормы
+    const unsigned tile_x = (blockIdx.x * blockDim.x + threadIdx.x) / 16;
+    const unsigned tile_y = (blockIdx.y * blockDim.y + threadIdx.y) / 2;
+    const unsigned wx = tile_x * WMMA_TILE_SIZE;
+    const unsigned wy = tile_y * WMMA_TILE_SIZE;
+
+    __shared__ float tile_a[WMMA_TILE_SIZE][WMMA_TILE_SIZE];
+    __shared__ float tile_b[WMMA_TILE_SIZE][WMMA_TILE_SIZE];
+
+    wmma::fragment<wmma::accumulator, WMMA_TILE_SIZE, WMMA_TILE_SIZE, 8, float> c_frag;
+
+    wmma::fill_fragment(c_frag, 0.0f);
+
+    for (int i = 0; i < k; i += 8) {
+        wmma::fragment<wmma::matrix_a, WMMA_TILE_SIZE, WMMA_TILE_SIZE, 8, wmma::precision::tf32, wmma::row_major> a_frag;
+        wmma::fragment<wmma::matrix_b, WMMA_TILE_SIZE, WMMA_TILE_SIZE, 8, wmma::precision::tf32, wmma::row_major> b_frag;
+
+        wmma::load_matrix_sync(a_frag, a + wy * k + i, k);
+        wmma::load_matrix_sync(b_frag, b + i * w + wx, w);
+
+        for (int t = 0; t < a_frag.num_elements; ++t)
+            a_frag.x[t] = wmma::__float_to_tf32(a_frag.x[t]);
+        for (int t = 0; t < b_frag.num_elements; ++t)
+            b_frag.x[t] = wmma::__float_to_tf32(b_frag.x[t]);
+
+        wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+    }
+
+    wmma::store_matrix_sync(c + wy * w + wx, c_frag, w, wmma::mem_row_major);
 }
 
 namespace cuda {
