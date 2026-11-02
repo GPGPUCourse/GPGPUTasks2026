@@ -103,6 +103,9 @@ void run(int argc, char** argv)
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
             for (int i = 1; i < n; i *= 2) {
+                if (1 < i && i < GROUP_SIZE) {
+                    continue;
+                }
                 ocl_mergeSort.exec(
                     work_size,
                     (i > 1) ? (k % 2) ? buffer1_gpu : buffer2_gpu : input_gpu,

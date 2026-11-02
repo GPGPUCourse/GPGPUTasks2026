@@ -39,20 +39,45 @@ __kernel void merge_sort(
 
     int n_a, n_b, segment, diag;
 
-    const uint merged_len = 2 * sorted_k;
+    uint merged_len = 2 * sorted_k;
 
-    if (merged_len <= GROUP_SIZE) {
-        if (id < n) buffer[local_id] = input_data[id];
+    __local uint temp[GROUP_SIZE];
+    if (sorted_k == 1) {
+        buffer[local_id] = (id < n) ? input_data[id] : 0xFFFFFFFFu;
         barrier(CLK_LOCAL_MEM_FENCE);
 
-        segment = local_id / merged_len * merged_len;
-        diag = local_id - segment;
-        const int rest = n - group_offset - segment;
-        n_a = min(sorted_k, rest);
-        n_b = min(sorted_k, rest - n_a);
+        __local uint* src = buffer;
+        __local uint* dst = temp;
+
+        for (int k = 1; k < GROUP_SIZE; k *= 2) {
+            merged_len = 2 * k;
+
+            segment = local_id / merged_len * merged_len;
+            diag = local_id - segment;
+
+            const int left = merge_path_left_local(
+                src + segment,
+                src + segment + k,
+                k, k, diag
+            );
+
+            const int right = diag - left;
+            const uint x = (left < k) ? src[segment + left] : 0xFFFFFFFFu;
+            const uint y = (right < k) ? src[segment + k + right] : 0xFFFFFFFFu;
+
+            dst[local_id] = min(x, y);
+            barrier(CLK_LOCAL_MEM_FENCE);
+
+            __local uint* ptr = src;
+            src = dst;
+            dst = ptr;
+        }
+
+        if (id < n)
+            output_data[id] = src[local_id];
     }
     else {
-        const int block_offset = id / merged_len * merged_len;
+        const int block_offset = group_offset / merged_len * merged_len;
         const int rest = n - block_offset;
         const int N_a = min(sorted_k, rest);
         const int N_b = min(sorted_k, rest - N_a);
@@ -80,17 +105,17 @@ __kernel void merge_sort(
 
         segment = 0;
         diag = local_id;
-    }
 
-    if (id < n) {
-        int left = merge_path_left_local(
-            buffer + segment,
-            buffer + segment + n_a,
-            n_a, n_b, diag
-        );
-        int right = diag - left;
-        uint x = (left < n_a) ? buffer[segment + left] : 0xFFFFFFFFu;
-        uint y = (right < n_b) ? buffer[segment + n_a + right] : 0xFFFFFFFFu;
-        output_data[id] = (x <= y) ? x : y;
+        if (id < n) {
+            int left = merge_path_left_local(
+                buffer + segment,
+                buffer + segment + n_a,
+                n_a, n_b, diag
+            );
+            int right = diag - left;
+            uint x = (left < n_a) ? buffer[segment + left] : 0xFFFFFFFFu;
+            uint y = (right < n_b) ? buffer[segment + n_a + right] : 0xFFFFFFFFu;
+            output_data[id] = min(x, y);
+        }
     }
 }
