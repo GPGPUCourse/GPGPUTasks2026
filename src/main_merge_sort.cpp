@@ -100,7 +100,19 @@ void run(int argc, char** argv)
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
             // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            gpu::gpu_mem_32u in_gpu = input_gpu;
+            for (unsigned int sorted_k = 1, step = 0; sorted_k < (unsigned int)n; sorted_k <<= 1, ++step) {
+                bool last_step = sorted_k >= (unsigned int)n - sorted_k;
+                gpu::gpu_mem_32u out_gpu = last_step ? buffer_output_gpu
+                    : (step % 2 == 0 ? buffer1_gpu : buffer2_gpu);
+
+                if (last_step) {
+                    ocl_mergeSort.exec(gpu::WorkSize(GROUP_SIZE, n), in_gpu, out_gpu, sorted_k, n);
+                } else {
+                    ocl_mergeSort.execAsynchronized(gpu::WorkSize(GROUP_SIZE, n), in_gpu, out_gpu, sorted_k, n);
+                }
+                in_gpu = out_gpu;
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
