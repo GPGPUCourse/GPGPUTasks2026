@@ -9,7 +9,9 @@
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
 
-#include <fstream>
+#include <algorithm>
+#include <limits>
+#include <vector>
 
 void run(int argc, char** argv)
 {
@@ -45,7 +47,7 @@ void run(int argc, char** argv)
     int max_value = std::numeric_limits<int>::max() - 1; // TODO при отладке используйте минимальное max_value (например max_value=8) при котором воспроизводится бага
     std::vector<unsigned int> as(n, 0);
     std::vector<unsigned int> sorted(n, 0);
-    for (size_t i = 0; i < n; ++i) {
+    for (size_t i = 0; i < as.size(); ++i) {
         as[i] = r.next(min_value, max_value);
     }
     std::cout << "n=" << n << " values in range [" << min_value << "; " << max_value << "]" << std::endl;
@@ -79,7 +81,8 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u buffer_gpu(n);
+
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -87,20 +90,32 @@ void run(int argc, char** argv)
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
+    buffer_gpu.fill(255);
     buffer_output_gpu.fill(255);
+
+    int passes = 0;
+    for (unsigned int width = 1; width < static_cast<unsigned int>(n); width *= 2)
+        ++passes;
+    const gpu::WorkSize work_size(GROUP_SIZE, n);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
+    for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
             // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            const gpu::gpu_mem_32u* source = &input_gpu;
+            gpu::gpu_mem_32u* destination = (passes % 2 == 1) ? &buffer_output_gpu : &buffer_gpu;
+            for (unsigned int width = 1; width < static_cast<unsigned int>(n); width *= 2) {
+                ocl_mergeSort.exec(work_size, *source, *destination, static_cast<int>(width), n);
+                source = destination;
+                destination = (destination == &buffer_gpu) ? &buffer_output_gpu : &buffer_gpu;
+            }
+            if (n == 1)
+                input_gpu.copyToN(buffer_output_gpu, 1);
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -123,13 +138,13 @@ void run(int argc, char** argv)
     std::vector<unsigned int> gpu_sorted = buffer_output_gpu.readVector();
 
     // Сверяем результат
-    for (size_t i = 0; i < n; ++i) {
+    for (size_t i = 0; i < sorted.size(); ++i) {
         rassert(sorted[i] == gpu_sorted[i], 566324523452323, sorted[i], gpu_sorted[i], i);
     }
 
     // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
     std::vector<unsigned int> input_values = input_gpu.readVector();
-    for (size_t i = 0; i < n; ++i) {
+    for (size_t i = 0; i < input_values.size(); ++i) {
         rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
     }
 }
