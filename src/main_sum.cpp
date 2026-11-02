@@ -71,11 +71,20 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u reduction_buffer1_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
     gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
 
-    // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
-    input_gpu.writeN(values.data(), n);
-    // TODO 1) замерьте здесь какая достигнута пропускная пособность PCI-E шины
-    // TODO 2) сделайте замер хотя бы три раза
-    // TODO 3) и выведите рассчет на основании медианного времени (в легко понятной форме - GB/s)
+    // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM, замеряя пропускную способность шины.
+    // Делаем несколько замеров (первый может включать разовые накладные расходы), а результат считаем по медиане.
+    std::vector<double> upload_times;
+    for (int iter = 0; iter < 10; ++iter) {
+        timer t;
+        input_gpu.writeN(values.data(), n);
+        upload_times.push_back(t.elapsed());
+    }
+    std::cout << "PCI-E upload times (in seconds) - " << stats::valuesStatsLine(upload_times) << std::endl;
+
+    double upload_size_gb = sizeof(unsigned int) * n / 1024.0 / 1024.0 / 1024.0;
+    double upload_median_time = stats::median(upload_times);
+    std::cout << "PCI-E upload median bandwidth: " << upload_size_gb / upload_median_time << " GB/s"
+              << " (copied " << upload_size_gb << " GB in " << upload_median_time << " seconds)" << std::endl;
 
     std::vector<std::string> algorithm_names = {
         "CPU",
