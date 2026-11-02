@@ -102,7 +102,7 @@ void run(int argc, char** argv)
             gpu::WorkSize work_size(GROUP_SIZE, n);
             ocl_mergeSort.exec(work_size, input_gpu, buffer1_gpu, 1, n);
             bool is_first = true;
-            int k = 2;
+            int k = 256;
             for (; k * 2 < n; k *= 2) {
                 gpu::gpu_mem_32u& input = is_first ? buffer1_gpu : buffer2_gpu;
                 gpu::gpu_mem_32u& output = is_first ? buffer2_gpu : buffer1_gpu;
