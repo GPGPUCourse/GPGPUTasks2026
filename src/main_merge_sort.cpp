@@ -40,9 +40,9 @@ void run(int argc, char** argv)
 
     FastRandom r;
 
-    int n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+    int n = 100*1000*1000;
     int min_value = 1; // это сделано для упрощения, чтобы существовало очевидное -INFINITY значение
-    int max_value = std::numeric_limits<int>::max() - 1; // TODO при отладке используйте минимальное max_value (например max_value=8) при котором воспроизводится бага
+    int max_value = std::numeric_limits<int>::max() - 1;
     std::vector<unsigned int> as(n, 0);
     std::vector<unsigned int> sorted(n, 0);
     for (size_t i = 0; i < n; ++i) {
@@ -79,7 +79,7 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n);
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -93,14 +93,23 @@ void run(int argc, char** argv)
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
+    for (int iter = 0; iter < 10; ++iter) {
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            // ping-pong между buffer1/buffer2, первый проход читает input, последний пишет прямо в output
+            int passes = 0;
+            while ((1ll << passes) < n) ++passes;
+            rassert(passes > 0, 3245234523);
+            gpu::WorkSize workSize(GROUP_SIZE, n);
+            const gpu::gpu_mem_32u* src = &input_gpu;
+            for (int p = 0; p < passes; ++p) {
+                gpu::gpu_mem_32u* dst = (p == passes - 1) ? &buffer_output_gpu : ((p % 2 == 0) ? &buffer1_gpu : &buffer2_gpu);
+                ocl_mergeSort.exec(workSize, *src, *dst, 1 << p, n);
+                src = dst;
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
