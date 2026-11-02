@@ -186,3 +186,117 @@ __kernel void merge_tiled(
         b += (uint)(!takeA);
     }
 }
+
+// Experimental hierarchical merge-path kernel
+#define HMERGE_TILE 2048u
+#define HMERGE_VT 8u
+
+inline uint hmerge_partition_global(
+    __global const uint* data, uint base, uint mid,
+    uint len_a, uint len_b, uint diag)
+{
+    uint lo = diag > len_b ? diag - len_b : 0u;
+    uint hi = min(diag, len_a);
+    while (lo < hi) {
+        const uint a = lo + ((hi - lo) >> 1);
+        const uint b = diag - a;
+        if (b > 0u && a < len_a &&
+            data[mid + b - 1u] >= data[base + a])
+            lo = a + 1u;
+        else
+            hi = a;
+    }
+    return lo;
+}
+
+inline uint hmerge_partition_local(
+    __local const uint* data, uint len_a, uint len_b, uint diag)
+{
+    uint lo = diag > len_b ? diag - len_b : 0u;
+    uint hi = min(diag, len_a);
+    while (lo < hi) {
+        const uint a = lo + ((hi - lo) >> 1);
+        const uint b = diag - a;
+        if (b > 0u && a < len_a &&
+            data[len_a + b - 1u] >= data[a])
+            lo = a + 1u;
+        else
+            hi = a;
+    }
+    return lo;
+}
+
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__kernel void merge_hierarchical(
+    __global const uint* input_data,
+    __global uint* output_data,
+    int sorted_k, int n)
+{
+    const uint lid = get_local_id(0);
+    const uint tile_begin = get_group_id(0) * HMERGE_TILE;
+    const uint N = (uint)n;
+    if (tile_begin >= N) return; // Uniform across the whole workgroup.
+
+    const uint tile_end = min(tile_begin + HMERGE_TILE, N);
+    const uint k = (uint)sorted_k;
+    const uint pair_len = 2u * k;
+    const uint base = tile_begin & ~(pair_len - 1u);
+    const uint mid = min(base + k, N);
+    const uint pair_end = min(base + pair_len, N);
+    const uint len_a = mid - base;
+    const uint len_b = pair_end - mid;
+
+    // A 2048-output tile must never cross a merge-pair boundary.
+    // The host must invoke this only for k >= 1024 (power of 2).
+    // Consequently pair_len is divisible by 2048.
+
+    __local uint boundaries[4];
+    __local uint local_in[HMERGE_TILE];
+    __local uint local_out[HMERGE_TILE];
+
+    if (lid == 0u) {
+        const uint d0 = tile_begin - base;
+        const uint d1 = tile_end - base;
+        const uint a0 = hmerge_partition_global(input_data, base, mid, len_a, len_b, d0);
+        const uint a1 = hmerge_partition_global(input_data, base, mid, len_a, len_b, d1);
+        boundaries[0] = a0;
+        boundaries[1] = d0 - a0;
+        boundaries[2] = a1;
+        boundaries[3] = d1 - a1;
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    const uint a0 = boundaries[0];
+    const uint b0 = boundaries[1];
+    const uint na = boundaries[2] - a0;
+    const uint nb = boundaries[3] - b0;
+    const uint count = na + nb;
+
+    // Coalesced, once-per-element global loads into shared memory.
+    for (uint i = lid; i < na; i += GROUP_SIZE)
+        local_in[i] = input_data[base + a0 + i];
+    for (uint i = lid; i < nb; i += GROUP_SIZE)
+        local_in[na + i] = input_data[mid + b0 + i];
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    // Each thread produces eight consecutive output items.
+    const uint offset = lid * HMERGE_VT;
+    if (offset < count) {
+        uint a = hmerge_partition_local(local_in, na, nb, offset);
+        uint b = offset - a;
+        const uint stop = min(offset + HMERGE_VT, count);
+        for (uint j = offset; j < stop; ++j) {
+            const uint va = a < na ? local_in[a] : 0xffffffffu;
+            const uint vb = b < nb ? local_in[na + b] : 0xffffffffu;
+            const int take_a = a < na && (b >= nb || va <= vb);
+            local_out[j] = take_a ? va : vb;
+            a += (uint)take_a;
+            b += (uint)(!take_a);
+        }
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    // Coalesced global stores, one contiguous 2048-item tile per workgroup.
+    for (uint i = lid; i < count; i += GROUP_SIZE)
+        output_data[tile_begin + i] = local_out[i];
+}

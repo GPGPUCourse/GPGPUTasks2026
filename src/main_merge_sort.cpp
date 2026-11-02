@@ -46,6 +46,9 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_mergeTiled(ocl::getMergeSort(),"merge_tiled" );
     ocl_mergeTiled.precompile();
 
+    ocl::KernelSource ocl_mergeHierarchical(ocl::getMergeSort(),"merge_hierarchical");
+    ocl_mergeHierarchical.precompile();
+
     avk2::KernelSource vk_mergeSort(avk2::getMergeSort());
 
     FastRandom r;
@@ -125,10 +128,20 @@ void run(int argc, char** argv)
             current_output = (current_output == &buffer1_gpu) ? &buffer_output_gpu : &buffer1_gpu;
 
             constexpr int ITEMS_PER_THREAD = 4;
-            const int work_items = (n + ITEMS_PER_THREAD - 1) / ITEMS_PER_THREAD;
+            constexpr int HMERGE_TILE = 2048;
+
+            const int tiled_work_items = (n + ITEMS_PER_THREAD - 1) / ITEMS_PER_THREAD;
+
+            const int hierarchical_groups = (n + HMERGE_TILE - 1) / HMERGE_TILE;
+
+            const int hierarchical_work_items = hierarchical_groups * GROUP_SIZE;
 
             for (int k = GROUP_SIZE; k < n; k *= 2) {
-                ocl_mergeTiled.exec(gpu::WorkSize(GROUP_SIZE, work_items), *current_input, *current_output, k, n);
+                if (k < 1024) {
+                    ocl_mergeTiled.exec(gpu::WorkSize(GROUP_SIZE, tiled_work_items),*current_input,*current_output,k,n);
+                } else {
+                    ocl_mergeHierarchical.exec(gpu::WorkSize(GROUP_SIZE, hierarchical_work_items),*current_input,*current_output,k,n);
+                }
 
                 current_input = current_output;
                 current_output = (current_output == &buffer1_gpu) ? &buffer_output_gpu : &buffer1_gpu;
