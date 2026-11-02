@@ -15,10 +15,38 @@
 #define MIN(x, y) ((x) < (y) ? (x) : (y))
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 
+
+unsigned int get_group_diag(
+    __global const uint* input_data,
+    int iter, int n, int gid)
+{
+    const unsigned int base = (gid * GROUP_SIZE) & ~((1 << (iter + 1)) - 1);
+    const unsigned int d = (gid * GROUP_SIZE) & ((1 << (iter + 1)) - 1);
+    const int shift = (1 << iter);
+    if (gid * GROUP_SIZE >= n) {
+        return 9;
+    }
+
+    const unsigned int block_len = MIN(1 << (iter + 1), (unsigned)n - base);
+    const unsigned int left_cnt = MIN(1 << iter, block_len);
+    const unsigned int right_cnt = block_len - left_cnt;
+
+    unsigned int l = MAX(0, (int)d - (int)right_cnt) - 1, r = MIN(d, left_cnt) + 1;
+    while (l + 1 < r) {
+        unsigned int m = (l + r) / 2;
+        if (m == 0 || d - m >= right_cnt || input_data[base + m - 1] <= input_data[base + shift + d - m]) {
+            l = m;
+        } else {
+            r = m;
+        }
+    }
+
+    return l;
+}
+
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void merge_sort(
     __global const uint* input_data,
-    __global const uint* group_diags,
     __global       uint* output_data,
                    int  iter,
                    int  n)
@@ -34,12 +62,15 @@ __kernel void merge_sort(
     const unsigned int block_len = MIN(1 << (iter + 1), (unsigned)n - base);
     const unsigned int block_width = MIN(GROUP_SIZE, (unsigned)n - gr_id * GROUP_SIZE);
 
+    const unsigned int gr_diag_next = get_group_diag(input_data, iter, n, gr_id + 1);
+    const unsigned int gr_diag = get_group_diag(input_data, iter, n, gr_id);
+
     const unsigned int left_cnt =
         (gr_d + block_width >= block_len || ((((gr_id + 1) * GROUP_SIZE) & ((1 << (iter + 1)) - 1)) == 0)
-        ? MIN(1 << iter, block_len) : group_diags[gr_id + 1]) - group_diags[gr_id];
+        ? MIN(1 << iter, block_len) : gr_diag_next) - gr_diag;
     const unsigned int right_cnt = block_width - left_cnt;
     
-    const unsigned int left_cnt_prev = group_diags[gr_id];
+    const unsigned int left_cnt_prev = gr_diag;
     const unsigned int right_cnt_prev =
         ((gr_id * GROUP_SIZE) & ((1 << (iter + 1)) - 1)) == 0
         ? 0 : gr_d - left_cnt_prev;
