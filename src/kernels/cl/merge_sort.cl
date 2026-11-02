@@ -18,19 +18,18 @@ __kernel void small_blocks_sort(
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if (local_index == 0) {
-        for (int i = 0; i < GROUP_SIZE; ++i) {
-            for (int j = 0; j + 1 < GROUP_SIZE; ++j) {
-                if (loc_mem[j] > loc_mem[j + 1]) {
-                    loc_mem[j] ^= loc_mem[j + 1];
-                    loc_mem[j + 1] ^= loc_mem[j];
-                    loc_mem[j] ^= loc_mem[j + 1];
-                }
+    for (int i = 0; i < GROUP_SIZE + GROUP_SIZE; ++i) {
+        if (((local_index ^ i) & 1) && local_index < GROUP_SIZE - 1) {
+            uint a = loc_mem[local_index];
+            uint b = loc_mem[local_index + 1];
+            if (a > b) {
+                loc_mem[local_index] = b;
+                loc_mem[local_index + 1] = a;
             }
         }
+        barrier(CLK_LOCAL_MEM_FENCE);
     }
 
-    barrier(CLK_LOCAL_MEM_FENCE);
     output_data[global_index] = loc_mem[local_index];
 }
 
