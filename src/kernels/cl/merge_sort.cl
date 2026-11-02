@@ -44,7 +44,7 @@ __kernel void small_blocks_sort(
     output_data[global_index] = loc_mem[local_index];
 }
 
-__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__attribute__((reqd_work_group_size(32, 1, 1)))
 __kernel void merge_sort(
     __global const uint* input_data,
     __global       uint* output_data,
@@ -60,7 +60,7 @@ __kernel void merge_sort(
         return;
     }
 
-    int local_block_start = (global_index & (~(GROUP_SIZE - 1)));
+    int local_block_start = (global_index & (~(32 - 1)));
     int flex = local_block_start - global_block_start + 1;
     int right_size = min(1 << (pw2 - 1), n - global_block_start - (1 << (pw2 - 1)));
 
@@ -80,8 +80,8 @@ __kernel void merge_sort(
         }
     }
 
-    __local uint left_part[GROUP_SIZE];
-    __local uint right_part[GROUP_SIZE];
+    __local uint left_part[32];
+    __local uint right_part[32];
 
     int left_part_start_from_global = global_block_start + max(l - 1, 0);
 
