@@ -34,13 +34,14 @@ void run(int argc, char** argv)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
+    ocl::KernelSource ocl_mergeSortLocal(ocl::getMergeSortLocal());
     ocl::KernelSource ocl_mergeSort(ocl::getMergeSort());
 
     avk2::KernelSource vk_mergeSort(avk2::getMergeSort());
 
     FastRandom r;
 
-    int n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+    unsigned n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
     int min_value = 1; // это сделано для упрощения, чтобы существовало очевидное -INFINITY значение
     int max_value = std::numeric_limits<int>::max() - 1; // TODO при отладке используйте минимальное max_value (например max_value=8) при котором воспроизводится бага
     std::vector<unsigned int> as(n, 0);
@@ -99,8 +100,18 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            gpu::gpu_mem_32u& local_target = (n <= GROUP_SIZE) ? buffer_output_gpu : buffer1_gpu;
+            ocl_mergeSortLocal.exec({GROUP_SIZE, n}, input_gpu, local_target, n);
+
+            gpu::gpu_mem_32u* source = &buffer1_gpu;
+            gpu::gpu_mem_32u* target = &buffer2_gpu;
+
+            for (unsigned int power = 8, size = 1 << power; size < n; ++power, size <<= 1) {
+                if ((size << 1) >= n) target = &buffer_output_gpu; // Write to output on last iteration
+                ocl_mergeSort.exec({GROUP_SIZE, n}, *source, *target, power, n);
+
+                std::swap(source, target);
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
