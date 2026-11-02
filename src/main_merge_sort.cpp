@@ -13,6 +13,18 @@
 #include <libgpu/work_size.h>
 #ifdef CUDA_SUPPORT
 #include <libgpu/cuda/utils.h>
+
+namespace {
+struct CudaEvent {
+    cudaEvent_t handle = nullptr;
+
+    CudaEvent() { CUDA_SAFE_CALL(cudaEventCreate(&handle)); }
+    ~CudaEvent() { cudaEventDestroy(handle); }
+
+    CudaEvent(const CudaEvent&) = delete;
+    CudaEvent& operator=(const CudaEvent&) = delete;
+};
+} // namespace
 #endif
 
 void run(int argc, char** argv)
@@ -87,13 +99,23 @@ void run(int argc, char** argv)
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
+#ifdef CUDA_SUPPORT
+    CudaEvent local_start, local_end;
+    std::vector<double> local_times_ms;
+#endif
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
         // Сначала сортируем по GROUP_SIZE элементов внутри каждой workgroup.
         // Для GROUP_SIZE=256 это заменяет глобальные проходы k=0,...,7.
         if (n > 0) {
+#ifdef CUDA_SUPPORT
+            CUDA_SAFE_CALL(cudaEventRecord(local_start.handle, context.cudaStream()));
+#endif
             cuda::merge_sort_local(workSize, input_gpu, buffer_output_gpu, n);
+#ifdef CUDA_SUPPORT
+            CUDA_SAFE_CALL(cudaEventRecord(local_end.handle, context.cudaStream()));
+#endif
         }
         const gpu::gpu_mem_32u* source = &buffer_output_gpu;
         gpu::gpu_mem_32u* destination = &scratch_gpu;
@@ -118,8 +140,20 @@ void run(int argc, char** argv)
 #endif
 
         times.push_back(t.elapsed());
+#ifdef CUDA_SUPPORT
+        // Stream уже завершён: события охватывают только локальный этап.
+        float local_ms = 0.0f;
+        if (n > 0) {
+            CUDA_SAFE_CALL(cudaEventElapsedTime(&local_ms, local_start.handle, local_end.handle));
+        }
+        local_times_ms.push_back(local_ms);
+#endif
     }
     std::cout << "GPU merge-sort times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+#ifdef CUDA_SUPPORT
+    std::cout << "GPU local merge-sort times (in milliseconds) - "
+              << stats::valuesStatsLine(local_times_ms) << std::endl;
+#endif
 
     // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили его переупорядоченным)
     double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
