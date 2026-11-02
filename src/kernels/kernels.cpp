@@ -3,6 +3,7 @@
 #include "cl/generated_kernels/aplusb.h"
 #include "cl/generated_kernels/merge_sort.h"
 #include "cl/generated_kernels/merge_sort_one_group.h"
+#include "cl/generated_kernels/merge_sort_group_diag.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/merge_sort_comp.h"
@@ -33,6 +34,11 @@ const ocl::ProgramBinaries& getAplusB()
 const ProgramBinaries& getMergeSortOneGroup()
 {
     return opencl_binaries_merge_sort_one_group;
+}
+
+const ProgramBinaries& getMergeSortGroupDiag()
+{
+    return opencl_binaries_merge_sort_group_diag;
 }
 
 const ProgramBinaries& getMergeSort()

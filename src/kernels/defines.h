@@ -1,8 +1,8 @@
 #ifndef my_defines_vk // pragma once
 #define my_defines_vk
 
-#define GROUP_SHIFT  8
-#define GROUP_SIZE   256
+#define GROUP_SHIFT  2
+#define GROUP_SIZE   4
 #define GROUP_SIZE_X 16
 #define GROUP_SIZE_Y 16
 

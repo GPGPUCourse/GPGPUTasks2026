@@ -60,6 +60,7 @@ set(LIBRARIES
 set(OPENCL_SOURCES
         src/kernels/cl/aplusb.cl
         src/kernels/cl/merge_sort.cl
+        src/kernels/cl/merge_sort_group_diag.cl
         src/kernels/cl/merge_sort_one_group.cl)
 
 set(OPENCL_INCLUDES src/kernels/defines.h src/kernels/cl/helpers/rassert.cl)
