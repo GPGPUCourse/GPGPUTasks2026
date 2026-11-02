@@ -4,7 +4,8 @@
 
 namespace cuda {
 void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n);
-void merge_sort(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &input_data, gpu::gpu_mem_32u &output_data, int sorted_k, int n);
+void merge_sort_borders(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &input_data, gpu::gpu_mem_32i &boards, int sorted_k, int n);
+void merge_sort(const gpu::WorkSize &workSize, const gpu::gpu_mem_32u &input_data, gpu::gpu_mem_32u &output_data, const gpu::gpu_mem_32i &boards, int sorted_k, int n);
 }
 
 namespace ocl {

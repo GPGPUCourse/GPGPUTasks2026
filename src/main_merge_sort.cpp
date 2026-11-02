@@ -81,6 +81,8 @@ void run(int argc, char** argv)
     gpu::gpu_mem_32u input_gpu(n);
     gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
     gpu::gpu_mem_32u buffer_output_gpu(n);
+    const int groups = (n + GROUP_SIZE - 1) / GROUP_SIZE;
+    gpu::gpu_mem_32i boards_gpu(2 * groups);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -96,6 +98,7 @@ void run(int argc, char** argv)
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
         gpu::WorkSize workSize(GROUP_SIZE, n);
+        gpu::WorkSize boards_work_size(GROUP_SIZE, groups);
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
@@ -106,12 +109,15 @@ void run(int argc, char** argv)
             int sorted_k = 1;
             gpu::gpu_mem_32u* src = &input_gpu;
             gpu::gpu_mem_32u* dist = &buffer1_gpu;
-            cuda::merge_sort(workSize, *src, *dist, sorted_k, n);
+            cuda::merge_sort(workSize, *src, *dist, boards_gpu, sorted_k, n);
             src = &buffer2_gpu;
             sorted_k = 2;
             while(sorted_k < n){
                 std::swap(src, dist);
-                cuda::merge_sort(workSize, *src, *dist, sorted_k, n);
+                if(sorted_k >= GROUP_SIZE){
+                    cuda::merge_sort_borders(boards_work_size, *src, boards_gpu, sorted_k, n);
+                }
+                cuda::merge_sort(workSize, *src, *dist, boards_gpu, sorted_k, n);
                 sorted_k *= 2;
             }
             buffer_output_gpu = *dist;
