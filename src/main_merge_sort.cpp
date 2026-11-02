@@ -43,6 +43,9 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_localSort(ocl::getMergeSort(), "local_sort");
     ocl_localSort.precompile();
 
+    ocl::KernelSource ocl_mergeTiled(ocl::getMergeSort(),"merge_tiled" );
+    ocl_mergeTiled.precompile();
+
     avk2::KernelSource vk_mergeSort(avk2::getMergeSort());
 
     FastRandom r;
@@ -121,8 +124,11 @@ void run(int argc, char** argv)
             current_input = current_output;
             current_output = (current_output == &buffer1_gpu) ? &buffer_output_gpu : &buffer1_gpu;
 
+            constexpr int ITEMS_PER_THREAD = 4;
+            const int work_items = (n + ITEMS_PER_THREAD - 1) / ITEMS_PER_THREAD;
+
             for (int k = GROUP_SIZE; k < n; k *= 2) {
-                ocl_mergeSort.exec(gpu::WorkSize(GROUP_SIZE, n), *current_input, *current_output, k, n);
+                ocl_mergeTiled.exec(gpu::WorkSize(GROUP_SIZE, work_items), *current_input, *current_output, k, n);
 
                 current_input = current_output;
                 current_output = (current_output == &buffer1_gpu) ? &buffer_output_gpu : &buffer1_gpu;

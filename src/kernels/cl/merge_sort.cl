@@ -5,6 +5,8 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
+#define ITEMS_PER_THREAD 4u
+
 // Функция lower_bound для работы с глобальной памятью
 uint lower_bound(__global const uint* arr, uint size, uint value) {
     uint left = 0;
@@ -114,5 +116,73 @@ __kernel void local_sort(
 
     if (gid < (uint)n) {
         output_data[gid] = tile[lid];
+    }
+}
+
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__kernel void merge_tiled(
+    __global const uint* input_data,
+    __global uint* output_data,
+    int sorted_k,
+    int n)
+{
+    const uint gid = get_global_id(0);
+    const uint N = (uint)n;
+
+    // Каждый поток записывает до 4 элементов результата
+    const uint out_begin = gid * ITEMS_PER_THREAD;
+    if (out_begin >= N) return;
+
+    const uint k = (uint)sorted_k;
+    const uint pair_size = 2u * k;
+
+    // Находим пару отсортированных подмассивов
+    const uint base = out_begin & ~(pair_size - 1u);
+    const uint mid = min(base + k, N);
+    const uint end = min(base + pair_size, N);
+
+    const uint lenA = mid - base;
+    const uint lenB = end - mid;
+
+    // Позиция начала нашего участка внутри результата слияния
+    const uint diag = out_begin - base;
+
+    // Находим разбиение: a + b = diag
+    uint low = diag > lenB ? diag - lenB : 0u;
+    uint high = min(diag, lenA);
+
+    while (low < high) {
+        const uint a = low + ((high - low) >> 1);
+        const uint b = diag - a;
+
+        // При равенстве элементы A должны идти раньше B
+        if (b > 0u && a < lenA &&
+            input_data[mid + b - 1u] >= input_data[base + a]) {
+            low = a + 1u;
+        } else {
+            high = a;
+        }
+    }
+
+    uint a = low;
+    uint b = diag - a;
+
+    // Последовательно формируем до 4 элементов результата
+    const uint out_end = min(out_begin + ITEMS_PER_THREAD, end);
+
+    for (uint out = out_begin; out < out_end; ++out) {
+        const uint va = a < lenA
+            ? input_data[base + a] : 0xffffffffu;
+
+        const uint vb = b < lenB
+            ? input_data[mid + b] : 0xffffffffu;
+
+        const bool takeA =
+            a < lenA && (b >= lenB || va <= vb);
+
+        output_data[out] = takeA ? va : vb;
+
+        a += (uint)takeA;
+        b += (uint)(!takeA);
     }
 }
