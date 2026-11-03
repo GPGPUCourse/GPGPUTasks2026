@@ -91,7 +91,7 @@ void run(int argc, char** argv) {
 
   // Аллоцируем буферы в VRAM
   gpu::gpu_mem_32u input_gpu(n);
-  gpu::gpu_mem_32u prefix_sum_accum_gpu(size_t(n) * 4); // four counters per key
+  gpu::gpu_mem_32u prefix_sum_accum_gpu(n * 4);
   gpu::gpu_mem_32u buffer_output_gpu_1(n), buffer_output_gpu_2(n);
 
   // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -100,12 +100,12 @@ void run(int argc, char** argv) {
   auto* input_arr = &input_gpu;
   auto* sorted_arr = &buffer_output_gpu_1;
 
-  buffer_output_gpu_1.fill(239);
-  buffer_output_gpu_2.fill(267);
+  buffer_output_gpu_1.fill(255);
+  buffer_output_gpu_2.fill(255);
 
   // Запускаем кернел (несколько раз и с замером времени выполнения)
   std::vector<double> times;
-  for (int iter = 0; iter < 1; ++iter) {
+  for (int iter = 0; iter < 10; ++iter) {
     timer t;
 
     input_arr = &input_gpu;

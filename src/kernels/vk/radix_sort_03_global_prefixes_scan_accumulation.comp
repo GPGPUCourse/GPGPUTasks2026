@@ -4,8 +4,7 @@
 
 #include "../defines.h"
 
-// Propagate block offsets for all four digit counts at once.
-layout (std430, binding = 0)           buffer PrefixSum   { uvec4 pref_sum[]; };
+layout (std430, binding = 0) buffer PrefixSum { uint pref_sum[]; };
 
 layout (push_constant) uniform PushConstants {
     uint n;
@@ -30,8 +29,11 @@ void main()
         return;
     }
 
-    const uvec4 offset = pref_sum[GetBlockIndex(group_start - 1)];
     if (idx < min(group_start + GROUP_SIZE, cur_size) - 1) {
-        pref_sum[GetBlockIndex(idx)] += offset;
+        const uint offset_idx = GetBlockIndex(group_start - 1);
+        for (uint d = 0; d < 4; ++d) {
+            const uint base = d * params.n;
+            pref_sum[base + block_idx] += pref_sum[base + offset_idx];
+        }
     }
 }
