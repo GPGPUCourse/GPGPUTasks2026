@@ -5,7 +5,7 @@
 #include "../defines.h"
 
 layout (std430, binding = 0) readonly buffer InArray { uint arr[]; };
-layout (std430, binding = 1) readonly buffer PrefSum  { uint pref[]; };
+layout (std430, binding = 1) readonly buffer PrefSum  { uvec4 pref[]; };
 layout (std430, binding = 2) writeonly buffer OutArray { uint sorted[]; };
 
 layout (push_constant) uniform PushConstants {
@@ -24,13 +24,14 @@ void main()
 
     const uint num = arr[i];
     const uint digit = (num >> params.bit) & 3u;
-    const uint before_i = i == 0 ? 0 : pref[digit * params.n + i - 1];
+    const uvec4 before_i = i == 0 ? uvec4(0) : pref[i - 1];
+    const uvec4 totals = pref[params.n - 1];
 
     uint bucket_start = 0;
     for (uint d = 0; d < digit; ++d) {
-        bucket_start += pref[d * params.n + params.n - 1];
+        bucket_start += totals[d];
     }
 
-    const uint dest = bucket_start + before_i;
+    const uint dest = bucket_start + before_i[digit];
     sorted[dest] = num;
 }
