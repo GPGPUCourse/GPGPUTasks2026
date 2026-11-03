@@ -4,17 +4,55 @@
 
 #include "../defines.h"
 
-// это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-// НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-layout (std430, binding = 0) readonly buffer Buffer1In  { uint buffer1[]; };
-layout (std430, binding = 1)          buffer Buffer2Out { uint buffer2[]; };
+// Inclusive prefix counts for the four values of the current two-bit digit.
+// The first level reads keys; higher levels read four counters per element.
+layout (std430, binding = 0) readonly  buffer SumIn   { uint sum_in[]; };
+layout (std430, binding = 1) writeonly buffer SumOut  { uvec4 sum_out[]; };
 
 layout (push_constant) uniform PushConstants {
-    uint a1;
+    uint n;
+    uint st_pow;
+    uint bit;
 } params;
 
-layout (local_size_x = 1) in;
+shared uvec4 local_buffer[GROUP_SIZE];
+
+uint GetBlockIndex(uint global_idx) {
+    return min((global_idx + 1) << params.st_pow, params.n) - 1;
+}
+
+layout (local_size_x = GROUP_SIZE) in;
 void main()
 {
-    // TODO
+    const uint idx = gl_GlobalInvocationID.x;
+    const uint local_idx = gl_LocalInvocationID.x;
+    const uint group_start = gl_WorkGroupID.x * GROUP_SIZE;
+    const uint block_idx = GetBlockIndex(idx);
+    const uint cur_size = (params.n + (1 << params.st_pow) - 1) >> params.st_pow;
+
+    uvec4 val = uvec4(0);
+    if (idx < cur_size) {
+        if (params.st_pow == 0) {
+            const uint digit = (sum_in[block_idx] >> params.bit) & 3u;
+            val[digit] = 1u;
+        } else {
+            const uint base = 4u * block_idx;
+            val = uvec4(sum_in[base], sum_in[base + 1],
+                        sum_in[base + 2], sum_in[base + 3]);
+        }
+    }
+    local_buffer[local_idx] = val;
+    barrier();
+
+    if (local_idx == 0) {
+        for (uint k = 1; k < GROUP_SIZE && group_start + k < cur_size; ++k) {
+            local_buffer[k] += local_buffer[k - 1];
+        }
+    }
+    barrier();
+
+
+    if (idx < cur_size) {
+        sum_out[GetBlockIndex(idx)] = local_buffer[local_idx];
+    }
 }
