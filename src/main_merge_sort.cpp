@@ -1,3 +1,4 @@
+#include <iostream>
 #include <libbase/stats.h>
 #include <libutils/misc.h>
 
@@ -8,35 +9,15 @@
 
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
+#include "libgpu/work_size.h"
 
 #include <fstream>
 
 void run(int argc, char** argv)
 {
-    // chooseGPUVkDevices:
-    // - Если не доступо ни одного устройства - кинет ошибку
-    // - Если доступно ровно одно устройство - вернет это устройство
-    // - Если доступно N>1 устройства:
-    //   - Если аргументов запуска нет или переданное число не находится в диапазоне от 0 до N-1 - кинет ошибку
-    //   - Если аргумент запуска есть и он от 0 до N-1 - вернет устройство под указанным номером
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
-    // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
-    // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
-    // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
-    // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
-    // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
-    // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
-    // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
-    //          если же вас это не останавливает - профилировщик (nsight-systems) при запуске на NVIDIA тоже работает (хоть и менее мощный чем nsight-compute)
-    //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
-    //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
-
-    ocl::KernelSource ocl_mergeSort(ocl::getMergeSort());
-
-    avk2::KernelSource vk_mergeSort(avk2::getMergeSort());
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
 
     FastRandom r;
 
@@ -79,7 +60,7 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u buffer_odd_gpu(n), buffer_even_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
     gpu::gpu_mem_32u buffer_output_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
@@ -87,9 +68,9 @@ void run(int argc, char** argv)
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer_output_gpu.fill(255);
+    buffer_odd_gpu.fill(239239);
+    buffer_odd_gpu.fill(239239);
+    buffer_output_gpu.fill(239239);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
@@ -98,15 +79,26 @@ void run(int argc, char** argv)
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+        if (context.type() == gpu::Context::TypeCUDA) {
+            cuda::initial_sort(gpu::WorkSize(256, (n+255)/256*256), input_gpu, buffer_odd_gpu, n);
+            int curr_sorted = 256;
+            bool in_even = false;
+            while(curr_sorted * 2 < n){
+                if(in_even){
+                    cuda::merge_sort(gpu::WorkSize(256, (n+255)/256*256), buffer_even_gpu, buffer_odd_gpu, curr_sorted, n);
+                }
+                else{
+                    cuda::merge_sort(gpu::WorkSize(256, (n+255)/256*256), buffer_odd_gpu, buffer_even_gpu, curr_sorted, n);
+                }
+                curr_sorted *= 2;
+                in_even = !in_even;
+            }
+            if(in_even){
+                cuda::merge_sort(gpu::WorkSize(256, (n+255)/256*256), buffer_even_gpu, buffer_output_gpu, curr_sorted, n);
+            }
+            else{
+                cuda::merge_sort(gpu::WorkSize(256, (n+255)/256*256), buffer_odd_gpu, buffer_output_gpu, curr_sorted, n);
+            }
         } else {
             rassert(false, 4531412341, context.type());
         }
