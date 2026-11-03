@@ -24,25 +24,33 @@ __global__ void matrix_multiply_wmma(
     const unsigned tile_y = (blockIdx.y * blockDim.y + threadIdx.y) / 2;
     const unsigned wx = tile_x * WMMA_TILE_SIZE;
     const unsigned wy = tile_y * WMMA_TILE_SIZE;
+    const unsigned tx = threadIdx.x;
+    const unsigned ty = threadIdx.y;
+    const unsigned warp = ty / 2;
 
-    __shared__ float tile_a[WMMA_TILE_SIZE][WMMA_TILE_SIZE];
-    __shared__ float tile_b[WMMA_TILE_SIZE][WMMA_TILE_SIZE];
+    const unsigned count_tiles = GROUP_SIZE / 32;
+    __shared__ half tile_a[count_tiles][WMMA_TILE_SIZE][WMMA_TILE_SIZE];
+    __shared__ half tile_b[count_tiles][WMMA_TILE_SIZE][WMMA_TILE_SIZE];
 
-    wmma::fragment<wmma::accumulator, WMMA_TILE_SIZE, WMMA_TILE_SIZE, 8, float> c_frag;
+    wmma::fragment<wmma::accumulator, WMMA_TILE_SIZE, WMMA_TILE_SIZE, WMMA_TILE_SIZE, float> c_frag;
 
     wmma::fill_fragment(c_frag, 0.0f);
 
-    for (int i = 0; i < k; i += 8) {
-        wmma::fragment<wmma::matrix_a, WMMA_TILE_SIZE, WMMA_TILE_SIZE, 8, wmma::precision::tf32, wmma::row_major> a_frag;
-        wmma::fragment<wmma::matrix_b, WMMA_TILE_SIZE, WMMA_TILE_SIZE, 8, wmma::precision::tf32, wmma::row_major> b_frag;
+    for (int i = 0; i < k; i += WMMA_TILE_SIZE) {
+        wmma::fragment<wmma::matrix_a, WMMA_TILE_SIZE, WMMA_TILE_SIZE, WMMA_TILE_SIZE, half, wmma::row_major> a_frag;
+        wmma::fragment<wmma::matrix_b, WMMA_TILE_SIZE, WMMA_TILE_SIZE, WMMA_TILE_SIZE, half, wmma::row_major> b_frag;
 
-        wmma::load_matrix_sync(a_frag, a + wy * k + i, k);
-        wmma::load_matrix_sync(b_frag, b + i * w + wx, w);
+        for (int y = 0; y < 8; ++y) {
+            tile_a[warp][(ty % 2) * 8 + y][tx] = __float2half(a[(wy + (ty % 2) * 8 + y) * k + i + tx]);
+            tile_b[warp][(ty % 2) * 8 + y][tx] = __float2half(b[(i + (ty % 2) * 8 + y) * w + wx + tx]);
+        }
 
-        for (int t = 0; t < a_frag.num_elements; ++t)
-            a_frag.x[t] = wmma::__float_to_tf32(a_frag.x[t]);
-        for (int t = 0; t < b_frag.num_elements; ++t)
-            b_frag.x[t] = wmma::__float_to_tf32(b_frag.x[t]);
+        __syncwarp();
+
+        wmma::load_matrix_sync(a_frag, &tile_a[warp][0][0], WMMA_TILE_SIZE);
+        wmma::load_matrix_sync(b_frag, &tile_b[warp][0][0], WMMA_TILE_SIZE);
+
+        __syncwarp();
 
         wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
     }
