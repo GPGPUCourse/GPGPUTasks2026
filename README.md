@@ -12,11 +12,11 @@
 
 1) Frame buffer с номером треугольника в каждом пикселе (удобно для тестирования и для [deffered rendering](https://learnopengl.com/Advanced-Lighting/Deferred-Shading))
 
-<img width="544" height="475" alt="image" src="https://github.com/user-attachments/assets/74cb28b1-8904-4d0f-9db5-074351ccd66c" />
+<img width="544" height="475" alt="Номера треугольников модели гнома" src="docs/images/gnome-face-ids.png" />
 
 2) Frame buffer с Ambient Occlusion показывающим как много внешнего прямого света попадает в эту точку поверхности, например у гнома внутри сумки поэтому темно, а на бороде - светло:
 
-<img width="544" height="475" alt="image" src="https://github.com/user-attachments/assets/5a3590d4-112c-47a4-9260-34c381bd469b" />
+<img width="544" height="475" alt="Ambient Occlusion модели гнома" src="docs/images/gnome-ambient-occlusion.png" />
 
 Статья которую мы обсуждали на лекции и идеям которой мы следуем: [Maximizing Parallelism in the Construction of BVHs, Octrees, and k-d Trees, Tero Karras, 2012](https://devblogs.nvidia.com/wp-content/uploads/2012/11/karras2012hpg_paper.pdf)
 
@@ -28,7 +28,7 @@
 
 Смотрите какая красота! Это отрисованный frame buffer с ambient occlusion для powerplant:
 
-<img width="1614" height="951" alt="image" src="https://github.com/user-attachments/assets/404c9b6d-9141-4b27-9e80-0347fe481004" />
+<img width="1614" height="951" alt="Ambient Occlusion модели электростанции" src="docs/images/powerplant-ambient-occlusion.png" />
 
 ## Структура исходников проекта в папке
 
