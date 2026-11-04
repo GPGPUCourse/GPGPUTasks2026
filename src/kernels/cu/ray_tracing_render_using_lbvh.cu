@@ -13,6 +13,8 @@
 #include "geometry_helpers.cu"
 #include "random_helpers.cu"
 
+#define MAX_STACK_SIZE 64
+
 // BVH traversal: closest hit along ray
 __device__ bool bvh_closest_hit(
     const float3& orig,
@@ -31,9 +33,50 @@ __device__ bool bvh_closest_hit(
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    outFaceId = -1;
+    float t, u, v;
 
-    return false; // no intersections found
+    int node = rootIndex;
+    unsigned int stack[MAX_STACK_SIZE];
+    int stackSize = 0;
+    do {
+        if (node >= leafStart) {
+            const auto faceIndex = leafTriIndices[node - leafStart];
+            const auto face = loadFace(faces, faceIndex);
+            const auto a = loadVertex(vertices, face.x);
+            const auto b = loadVertex(vertices, face.y);
+            const auto c = loadVertex(vertices, face.z);
+            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, outT, /*backface*/ false, t, u, v)) {
+                if (t < outT) {
+                    outT = t;
+                    outFaceId = faceIndex;
+                    outU = u;
+                    outV = v;
+                }
+            }
+            node = stackSize == 0 ? -1 : stack[--stackSize];
+            continue;
+        }
+
+        const auto leftChild = nodes[node].leftChildIndex;
+        const auto rightChild = nodes[node].rightChildIndex;
+        // Тут u, v используются лишь как заглушки для экономии регистров
+        const bool leftOverlaps = intersect_ray_aabb(orig, dir, nodes[leftChild].aabb, tMin, FLT_MAX, u, v);
+        const bool rightOverlaps = intersect_ray_aabb(orig, dir, nodes[rightChild].aabb, tMin, FLT_MAX, u, v);
+
+        if (leftOverlaps) {
+            if (rightOverlaps) {
+                stack[stackSize++] = rightChild;
+            }
+            node = leftChild;
+        } else if (rightOverlaps) {
+            node = rightChild;
+        } else {
+            node = stackSize == 0 ? -1 : stack[--stackSize];
+        }
+    } while (node != -1);
+
+    return outFaceId >= 0;
 }
 
 // BVH traversal: any hit (for AO rays)
@@ -51,7 +94,44 @@ __device__ bool any_hit_from(
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    float t, u, v;
+
+    int node = rootIndex;
+    unsigned int stack[MAX_STACK_SIZE];
+    int stackSize = 0;
+    do {
+        if (node >= leafStart) {
+            const auto faceIndex = leafTriIndices[node - leafStart];
+            if (faceIndex != ignore_face) {
+                const auto face = loadFace(faces, faceIndex);
+                const auto a = loadVertex(vertices, face.x);
+                const auto b = loadVertex(vertices, face.y);
+                const auto c = loadVertex(vertices, face.z);
+                if (intersect_ray_triangle_any(orig, dir, a, b, c, /*backface*/ false, t, u, v)) {
+                    return true;
+                }
+            }
+            node = stackSize == 0 ? -1 : stack[--stackSize];
+            continue;
+        }
+
+        const auto leftChild = nodes[node].leftChildIndex;
+        const auto rightChild = nodes[node].rightChildIndex;
+        // Тут u, v используются лишь как заглушки для экономии регистров
+        const bool leftOverlaps = intersect_ray_aabb_any(orig, dir, nodes[leftChild].aabb, u, v);
+        const bool rightOverlaps = intersect_ray_aabb_any(orig, dir, nodes[rightChild].aabb, u, v);
+
+        if (leftOverlaps) {
+            if (rightOverlaps) {
+                stack[stackSize++] = rightChild;
+            }
+            node = leftChild;
+        } else if (rightOverlaps) {
+            node = rightChild;
+        } else {
+            node = stackSize == 0 ? -1 : stack[--stackSize];
+        }
+    } while (node != -1);
 
     return false; // no intersections found
 }
