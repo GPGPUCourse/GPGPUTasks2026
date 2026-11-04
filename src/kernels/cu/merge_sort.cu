@@ -202,6 +202,7 @@ void initial_sort(
         input_data.cuptr(), 
         output_data.cuptr(),
     n);
+    CUDA_CHECK_KERNEL(stream);
 }
 void merge_sort(
         const gpu::WorkSize &workSize,
@@ -218,5 +219,6 @@ void merge_sort(
         output_data.cuptr(),
         sorted_len,
         n);
+    CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda
