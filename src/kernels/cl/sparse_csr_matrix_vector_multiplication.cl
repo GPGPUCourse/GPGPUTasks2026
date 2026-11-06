@@ -14,15 +14,34 @@ __kernel void sparse_csr_matrix_vector_multiplication(
     __global uint* output,
     uint n
 ) {
-    const uint idx = get_global_id(0);
+    const uint idx = get_group_id(0);
+    const uint local_idx = get_local_id(0);
     if (idx >= n) {
         return;
     }
 
+    __local uint buf[GROUP_SIZE];
     uint res = 0;
-    for (uint i = offsets[idx]; i < offsets[idx + 1]; ++i) {
+    for (uint i = offsets[idx] + local_idx; i < offsets[idx + 1]; i += GROUP_SIZE) {
         const uint col_idx = cols[i];
         res += vals[i] * vec[col_idx];
     }
-    output[idx] = res;
+    
+    buf[local_idx] = res;
+
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    uint shift = 1;
+    while (shift < GROUP_SIZE) {
+        if (local_idx % (2 * shift) == 0 && local_idx + shift < GROUP_SIZE) {
+            buf[local_idx] += buf[local_idx + shift];
+        }
+        shift *= 2;
+
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+    if (local_idx == 0) {
+        output[idx] = buf[0];
+    }
 }
