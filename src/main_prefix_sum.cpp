@@ -68,7 +68,7 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
-    gpu::gpu_mem_32u input_gpu(n), buffer_gpu(n), prefix_sum_accum_gpu(n);
+    gpu::gpu_mem_32u input_gpu(2 * n), prefix_sum_accum_gpu(n);
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
@@ -88,12 +88,15 @@ void run(int argc, char** argv)
             // ocl_prefix_accumulation.exec();
         } else if (context.type() == gpu::Context::TypeCUDA) {
             unsigned pow;
-            input_gpu.copyToN(buffer_gpu, n);
-            for (pow = 2; pow < n; pow *= 2) {
+            unsigned prev_off = 0;
+            unsigned off = n;
+            for (pow = 2; pow <= n; pow *= 2) {
                 unsigned sz = n / pow;
-                cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, sz), buffer_gpu, n, sz, pow);
+                cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, sz), input_gpu, prev_off, off, n, sz, pow);
+                prev_off = off;
+                off += sz;
             }
-            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), buffer_gpu, prefix_sum_accum_gpu, n, pow);
+            cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, n), input_gpu, prefix_sum_accum_gpu, n, pow, off);
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);

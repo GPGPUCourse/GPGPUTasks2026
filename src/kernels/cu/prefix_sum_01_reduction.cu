@@ -8,7 +8,8 @@
 #include "../defines.h"
 
 __global__ void prefix_sum_01_reduction(
-    unsigned *buf,
+    const unsigned *prev,
+    unsigned *next,
     unsigned n,
     unsigned sz,
     unsigned pow)
@@ -17,18 +18,20 @@ __global__ void prefix_sum_01_reduction(
     if (x >= sz)
         return;
 
-    unsigned acc = 0;
-    buf[(x + 1) * pow - 1] = buf[(x + 1) * pow - 1] + buf[(x + 1) * pow - 1 - pow / 2];
+    next[x] = prev[x * 2] + prev[x * 2 + 1];
 }
 
 namespace cuda {
 void prefix_sum_01_reduction(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32u &buf, unsigned n, unsigned sz, unsigned pow)
+            const gpu::gpu_mem_32u &gpu_buf, unsigned prev_off, unsigned next_off, unsigned n, unsigned sz, unsigned pow)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::prefix_sum_01_reduction<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(buf.cuptr(), n, sz, pow);
+    unsigned *buf = gpu_buf.cuptr();
+    const unsigned *prev_buf = buf + prev_off;
+    unsigned *next_buf = buf + next_off;
+    ::prefix_sum_01_reduction<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(prev_buf, next_buf, n, sz, pow);
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda
