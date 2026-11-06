@@ -1,0 +1,228 @@
+#include <libbase/stats.h>
+#include <libutils/misc.h>
+
+#include <libbase/timer.h>
+#include <libgpu/vulkan/engine.h>
+#include <libgpu/vulkan/tests/test_utils.h>
+
+#include "kernels/defines.h"
+#include "kernels/kernels.h"
+
+#include <fstream>
+#include <iomanip>
+
+#ifdef CUDA_SUPPORT
+#include <libgpu/cuda/utils.h>
+#endif
+
+unsigned int cpu::sum(const unsigned int* values, unsigned int n)
+{
+    unsigned int sum = 0;
+    for (size_t i = 0; i < n; ++i) {
+        sum += values[i];
+    }
+    return sum;
+}
+
+unsigned int cpu::sumOpenMP(const unsigned int* values, unsigned int n)
+{
+    unsigned int sum = 0;
+    #pragma omp parallel for schedule(dynamic, 1024) reduction(+ : sum)
+    for (ptrdiff_t i = 0; i < n; ++i) {
+        sum += values[i];
+    }
+    return sum;
+}
+
+void run(int argc, char** argv)
+{
+    gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
+
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
+
+    ocl::KernelSource ocl_sum01Atomics(ocl::getSum01Atomics());
+    ocl::KernelSource ocl_sum02AtomicsLoadK(ocl::getSum02AtomicsLoadK());
+    ocl::KernelSource ocl_sum03LocalMemoryAtomicPerWorkgroup(ocl::getSum03LocalMemoryAtomicPerWorkgroup());
+    ocl::KernelSource ocl_sum04LocalReduction(ocl::getSum04LocalReduction());
+
+    avk2::KernelSource vk_sum01Atomics(avk2::getSum01Atomics());
+    avk2::KernelSource vk_sum02AtomicsLoadK(avk2::getSum02AtomicsLoadK());
+    avk2::KernelSource vk_sum03LocalMemoryAtomicPerWorkgroup(avk2::getSum03LocalMemoryAtomicPerWorkgroup());
+    avk2::KernelSource vk_sum04LocalReduction(avk2::getSum04LocalReduction());
+
+    unsigned int n = 100 * 1000 * 1000;
+    rassert(n % LOAD_K_VALUES_PER_ITEM == 0, 4356345432524); // for simplicity
+    std::vector<unsigned int> values(n, 0);
+    size_t cpu_sum = 0;
+    for (size_t i = 0; i < n; ++i) {
+        values[i] = (3 * (i + 5) + 7) % 17;
+        cpu_sum += values[i];
+        rassert(cpu_sum < std::numeric_limits<unsigned int>::max(), 5462345234231, cpu_sum, values[i], i); // ensure no overflow
+    }
+
+    // Аллоцируем буферы в VRAM
+    gpu::gpu_mem_32u input_gpu(n);
+    gpu::gpu_mem_32u sum_accum_gpu(1);
+    gpu::gpu_mem_32u reduction_buffer1_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
+    gpu::gpu_mem_32u reduction_buffer2_gpu(div_ceil(n, (unsigned int)GROUP_SIZE));
+
+    // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
+    input_gpu.writeN(values.data(), n);
+    // Первая запись выше — прогрев. Затем пять измерений полной передачи.
+    std::vector<double> upload_times;
+    for (int iter = 0; iter < 5; ++iter) {
+        timer t;
+        input_gpu.writeN(values.data(), n);
+#ifdef CUDA_SUPPORT
+        // Ждём завершения копирования до остановки таймера.
+        CUDA_SAFE_CALL(cudaDeviceSynchronize());
+#endif
+        upload_times.push_back(t.elapsed());
+    }
+    const double upload_seconds = stats::median(upload_times);
+    const double upload_gb = double(n) * sizeof(unsigned int) / 1e9;
+    std::cout << "CPU -> GPU: median " << upload_seconds << " s, "
+              << upload_gb / upload_seconds << " GB/s (5 transfers)" << std::endl;
+
+    std::vector<std::string> algorithm_names = {
+        "CPU",
+        "CPU with OpenMP",
+        "01 atomicAdd from each workItem",
+        "02 atomicAdd but each workItem loads K values",
+        "03 local memory and atomicAdd from master thread",
+        "04 local reduction",
+    };
+
+    for (size_t algorithm_index = 0; algorithm_index < algorithm_names.size(); ++algorithm_index) {
+        const std::string& algorithm = algorithm_names[algorithm_index];
+        std::cout << "______________________________________________________" << std::endl;
+        std::cout << "Evaluating algorithm #" << (algorithm_index + 1) << "/" << algorithm_names.size() << ": " << algorithm << std::endl;
+
+        // Запускаем алгоритм (несколько раз и с замером времени выполнения)
+        std::vector<double> times;
+        unsigned int gpu_sum = 0;
+        for (int iter = 0; iter < 10; ++iter) {
+            timer t;
+
+            if (algorithm == "CPU") {
+                gpu_sum = cpu::sum(values.data(), n);
+            } else if (algorithm == "CPU with OpenMP") {
+                gpu_sum = cpu::sumOpenMP(values.data(), n);
+            } else {
+                // _______________________________OpenCL_____________________________________________
+                if (context.type() == gpu::Context::TypeOpenCL) {
+                    if (algorithm == "01 atomicAdd from each workItem") {
+                        sum_accum_gpu.fill(0);
+                        ocl_sum01Atomics.exec(gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu, n);
+                        sum_accum_gpu.readN(&gpu_sum, 1);
+                    } else if (algorithm == "02 atomicAdd but each workItem loads K values") {
+                        sum_accum_gpu.fill(0);
+                        ocl_sum02AtomicsLoadK.exec(gpu::WorkSize(GROUP_SIZE, n / LOAD_K_VALUES_PER_ITEM), input_gpu, sum_accum_gpu, n);
+                        sum_accum_gpu.readN(&gpu_sum, 1);
+                    } else if (algorithm == "03 local memory and atomicAdd from master thread") {
+                        // TODO ocl_sum03LocalMemoryAtomicPerWorkgroup.exec(...);
+                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                    } else if (algorithm == "04 local reduction") {
+                        // TODO ocl_sum04LocalReduction.exec(...);
+                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                    } else {
+                        rassert(false, 652345234321, algorithm, algorithm_index);
+                    }
+                    // _______________________________CUDA___________________________________________
+                } else if (context.type() == gpu::Context::TypeCUDA) {
+                    if (algorithm == "01 atomicAdd from each workItem") {
+                        sum_accum_gpu.fill(0);
+                        cuda::sum_01_atomics(gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu, n);
+                        sum_accum_gpu.readN(&gpu_sum, 1);
+                    } else if (algorithm == "02 atomicAdd but each workItem loads K values") {
+                        sum_accum_gpu.fill(0);
+                        cuda::sum_02_atomics_load_k(gpu::WorkSize(GROUP_SIZE, n / LOAD_K_VALUES_PER_ITEM), input_gpu, sum_accum_gpu, n);
+                        sum_accum_gpu.readN(&gpu_sum, 1);
+                    } else if (algorithm == "03 local memory and atomicAdd from master thread") {
+                        sum_accum_gpu.fill(0);
+                        cuda::sum_03_local_memory_atomic_per_workgroup(
+                            gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu, n);
+                        sum_accum_gpu.readN(&gpu_sum, 1);
+                    } else if (algorithm == "04 local reduction") {
+                        unsigned int count = n;
+                        const gpu::gpu_mem_32u* input = &input_gpu;
+                        gpu::gpu_mem_32u* output = &reduction_buffer1_gpu;
+                        while (count > 1) {
+                            cuda::sum_04_local_reduction(
+                                gpu::WorkSize(GROUP_SIZE, count), *input, *output, count);
+                            count = div_ceil(count, (unsigned int)GROUP_SIZE);
+                            input = output;
+                            output = (output == &reduction_buffer1_gpu)
+                                ? &reduction_buffer2_gpu : &reduction_buffer1_gpu;
+                        }
+                        input->readN(&gpu_sum, 1);
+                    } else {
+                        rassert(false, 652345234321, algorithm, algorithm_index);
+                    }
+                    // _______________________________Vulkan_________________________________________
+                } else if (context.type() == gpu::Context::TypeVulkan) {
+                    if (algorithm == "01 atomicAdd from each workItem") {
+                        sum_accum_gpu.fill(0);
+                        vk_sum01Atomics.exec(n, gpu::WorkSize(GROUP_SIZE, n), input_gpu, sum_accum_gpu);
+                        sum_accum_gpu.readN(&gpu_sum, 1);
+                    } else if (algorithm == "02 atomicAdd but each workItem loads K values") {
+                        sum_accum_gpu.fill(0);
+                        vk_sum02AtomicsLoadK.exec(n, gpu::WorkSize(GROUP_SIZE, n / LOAD_K_VALUES_PER_ITEM), input_gpu, sum_accum_gpu);
+                        sum_accum_gpu.readN(&gpu_sum, 1);
+                    } else if (algorithm == "03 local memory and atomicAdd from master thread") {
+                        // TODO vk_sum03LocalMemoryAtomicPerWorkgroup.exec(...);
+                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                    } else if (algorithm == "04 local reduction") {
+                        // TODO vk_sum04LocalReduction.exec(...);
+                        throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                    } else {
+                        rassert(false, 652345234321, algorithm, algorithm_index);
+                    }
+                } else {
+                    rassert(false, 546345243, context.type());
+                }
+            }
+
+            times.push_back(t.elapsed());
+        }
+        std::cout << "algorithm times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
+
+        // Вычисляем достигнутую эффективную пропускную способность алгоритма (из соображений что мы отработали в один проход по входному массиву)
+        double memory_size_gb = double(n) * sizeof(unsigned int) / 1e9;
+        std::cout << "sum median effective algorithm bandwidth: " << memory_size_gb / stats::median(times) << " GB/s" << std::endl;
+
+        // Сверяем результат
+        rassert(cpu_sum == gpu_sum, 3452341235234456, cpu_sum, gpu_sum);
+
+        // Проверяем что входные данные остались нетронуты (ведь мы их будем переиспользовать в других алгоритмах)
+        std::vector<unsigned int> input_values = input_gpu.readVector();
+        for (size_t i = 0; i < n; ++i) {
+            rassert(input_values[i] == values[i], 6573452432, input_values[i], values[i]);
+        }
+    }
+}
+
+int main(int argc, char** argv)
+{
+    int exit_code = 0;
+    try {
+        run(argc, argv);
+    } catch (std::exception& e) {
+        std::cerr << "Error: " << e.what() << std::endl;
+        if (e.what() == DEVICE_NOT_SUPPORT_API) {
+            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за выбора CUDA API (его нет на процессоре - т.е. в случае CI на GitHub Actions)
+            exit_code = 0;
+        } else if (e.what() == CODE_IS_NOT_IMPLEMENTED) {
+            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за того что задание еще не выполнено
+            exit_code = 0;
+        } else {
+            // Выставляем ненулевой exit code, чтобы сообщить, что случилась ошибка
+            exit_code = 1;
+        }
+    }
+
+    // we need to gracefully clear Vulkan context before it is too late (otherwise we encounter segfault on some systems)
+    avk2::InstanceContext::clearGlobalInstanceContext();
+
+    return exit_code;
+}
