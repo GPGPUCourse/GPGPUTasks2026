@@ -170,7 +170,7 @@ void run(int argc, char** argv)
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 // TODO
-                cuda::sparse_csr_matrix_vector_multiplication(gpu::WorkSize(256, nrows), csr_row_offsets_gpu, csr_columns_gpu, csr_values_gpu, vector_values_gpu, output_vector_values_gpu, nrows, ncols);
+                cuda::sparse_csr_matrix_vector_multiplication(gpu::WorkSize(256, nrows*THREADS_PER_ROW), csr_row_offsets_gpu, csr_columns_gpu, csr_values_gpu, vector_values_gpu, output_vector_values_gpu, nrows, ncols);
             } else if (context.type() == gpu::Context::TypeVulkan) {
                 // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
