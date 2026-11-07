@@ -15,42 +15,197 @@
 
 // BVH traversal: closest hit along ray
 static inline bool bvh_closest_hit(
-    const float3              orig,
-    const float3              dir,
+    const float3 orig,
+    const float3 dir,
     __global const BVHNodeGPU* nodes,
-    __global const uint*      leafTriIndices,
-    uint                      nfaces,
-    __global const float*     vertices,
-    __global const uint*      faces,
-    float                     tMin,
-    __private float*          outT, // сюда нужно записать t рассчитанный в intersect_ray_triangle(..., t, u, v)
-    __private int*            outFaceId,
-    __private float*          outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
-    __private float*          outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
+    __global const uint* leafTriIndices,
+    uint nfaces,
+    __global const float* vertices,
+    __global const uint* faces,
+    float tMin,
+    __private float* outT,
+    __private int* outFaceId,
+    __private float* outU,
+    __private float* outV)
 {
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    // Temporary variables
+    float tHitNear, tHitFar;
+    float t, u, v;
 
-    return false;
+    float tBest = FLT_MAX;
+    float uBest = 0.0f;
+    float vBest = 0.0f;
+    int faceBest = -1;
+
+    if (!intersect_ray_aabb(
+            orig, dir,
+            nodes[rootIndex].aabb,
+            tMin, tBest,
+            &tHitNear, &tHitFar)) {
+        goto LR;
+    }
+
+    uint stack[TRAVERSAL_MAX_STACK_SIZE];
+    uint stackSize = 0;
+    int node = rootIndex;
+
+    do {
+        if (node >= leafStart) {
+            const uint triIndex = leafTriIndices[node - leafStart];
+
+            if (triIndex < nfaces) {
+                const uint3 f = loadFace(faces, triIndex);
+
+                const float3 a = loadVertex(vertices, f.x);
+                const float3 b = loadVertex(vertices, f.y);
+                const float3 c = loadVertex(vertices, f.z);
+
+                if (intersect_ray_triangle(
+                        orig, dir,
+                        a, b, c,
+                        tMin, tBest,
+                        false,
+                        &t, &u, &v)) {
+                    if (t < tBest) {
+                        tBest = t;
+                        uBest = u;
+                        vBest = v;
+                        faceBest = triIndex;
+                    }
+                }
+            }
+
+            node = stackSize ? stack[--stackSize] : -1;
+
+            continue;
+        }
+
+        const uint childL = nodes[node].leftChildIndex;
+        const uint childR = nodes[node].rightChildIndex;
+
+        const bool overlapL = intersect_ray_aabb(
+            orig, dir,
+            nodes[childL].aabb,
+            tMin, tBest,
+            &tHitNear, &tHitFar);
+
+        const bool overlapR = intersect_ray_aabb(
+            orig, dir,
+            nodes[childR].aabb,
+            tMin, tBest,
+            &tHitNear, &tHitFar);
+
+        if (!overlapL && !overlapR) {
+            node = stackSize ? stack[--stackSize] : -1;
+        } else {
+            node = overlapL ? childL : childR;
+
+            if (overlapL && overlapR) {
+                rassert(stackSize < TRAVERSAL_MAX_STACK_SIZE, 52525252);
+                stack[stackSize++] = childR;
+            }
+        }
+
+    } while (node != -1);
+
+LR:
+    *outT = tBest;
+    *outFaceId = faceBest;
+    *outU = uBest;
+    *outV = vBest;
+
+    return faceBest >= 0;
 }
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
 static inline bool any_hit_from(
-    const float3              orig,
-    const float3              dir,
-    __global const float*     vertices,
-    __global const uint*      faces,
+    const float3 orig,
+    const float3 dir,
+    __global const float* vertices,
+    __global const uint* faces,
     __global const BVHNodeGPU* nodes,
-    __global const uint*      leafTriIndices,
-    uint                      nfaces,
-    int                       ignore_face)
+    __global const uint* leafTriIndices,
+    uint nfaces,
+    int ignore_face)
 {
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    const float tMin = 1e-4f;
+    const float tMax = FLT_MAX;
+
+    // Temporary variables
+    float tHitNear, tHitFar;
+    float t, u, v;
+
+    if (!intersect_ray_aabb(
+            orig, dir,
+            nodes[rootIndex].aabb,
+            tMin, tMax,
+            &tHitNear, &tHitFar)) {
+        return false;
+    }
+
+    uint stack[TRAVERSAL_MAX_STACK_SIZE];
+    uint stackSize = 0;
+    int node = rootIndex;
+
+    do {
+        if (node >= leafStart) {
+            const uint triIndex = leafTriIndices[node - leafStart];
+
+            if (triIndex < nfaces && triIndex != ignore_face) {
+                const uint3 f = loadFace(faces, triIndex);
+
+                const float3 a = loadVertex(vertices, f.x);
+                const float3 b = loadVertex(vertices, f.y);
+                const float3 c = loadVertex(vertices, f.z);
+
+                if (intersect_ray_triangle(
+                        orig, dir,
+                        a, b, c,
+                        tMin, tMax,
+                        false,
+                        &t, &u, &v)) {
+                    return true;
+                }
+            }
+
+            node = stackSize ? stack[--stackSize] : -1;
+
+            continue;
+        }
+
+        const uint childL = nodes[node].leftChildIndex;
+        const uint childR = nodes[node].rightChildIndex;
+
+        const bool overlapL = intersect_ray_aabb(
+            orig, dir,
+            nodes[childL].aabb,
+            tMin, tMax,
+            &tHitNear, &tHitFar);
+
+        const bool overlapR = intersect_ray_aabb(
+            orig, dir,
+            nodes[childR].aabb,
+            tMin, tMax,
+            &tHitNear, &tHitFar);
+
+        if (!overlapL && !overlapR) {
+            node = stackSize ? stack[--stackSize] : -1;
+        } else {
+            node = overlapL ? childL : childR;
+
+            if (overlapL && overlapR) {
+                rassert(stackSize < TRAVERSAL_MAX_STACK_SIZE, 67677676);
+                stack[stackSize++] = childR;
+            }
+        }
+
+    } while (node != -1);
 
     return false;
 }
