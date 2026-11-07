@@ -139,6 +139,7 @@ bool cuda_api_init()
 	return true;
 }
 
+#if CUDART_VERSION < 13000
 CUresult CUDAAPI cuDeviceGet(CUdevice *device, int ordinal)
 {
 	if (!pfn_cuDeviceGet) return CUDA_ERROR_NOT_INITIALIZED;
@@ -159,4 +160,5 @@ CUresult CUDAAPI cuCtxDestroy(CUcontext ctx)
 
 	return pfn_cuCtxDestroy(ctx);
 }
+#endif
 #endif
