@@ -11,7 +11,7 @@
 
 #include <fstream>
 
-std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<unsigned int>> generate_csr_matrix(
+std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<unsigned int>, std::vector<unsigned int>> generate_csr_matrix(
     unsigned int nrows, unsigned int ncols,
     unsigned int min_non_zero_values_per_row, unsigned int max_non_zero_values_per_row,
     unsigned int max_value)
@@ -26,6 +26,7 @@ std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<uns
 
     std::vector<unsigned int> csr_columns(number_of_non_zero_values, 0);
     std::vector<unsigned int> csr_values(number_of_non_zero_values, 0);
+    std::vector<unsigned int> csr_rows(number_of_non_zero_values, 0);
 
     #pragma omp parallel for
     for (int row = 0; row < nrows; ++row) {
@@ -37,10 +38,11 @@ std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<uns
             unsigned int value = r.next(0, max_value);
             csr_columns[csr_row_offsets[row] + i] = columns[i];
             csr_values[csr_row_offsets[row] + i] = value;
+            csr_rows[csr_row_offsets[row] + i] = row;
         }
     }
 
-    return {csr_row_offsets, csr_columns, csr_values};
+    return {csr_row_offsets, csr_columns, csr_values, csr_rows};
 }
 
 std::vector<unsigned int> generate_vector(
@@ -102,6 +104,8 @@ void run(int argc, char** argv)
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
     ocl::KernelSource ocl_spvm_1pr(ocl::getSparseCSRMatrixVectorMult1PR());
+    ocl::KernelSource ocl_fwz(ocl::getFillWithZeros());
+    ocl::KernelSource ocl_spvm_1pca(ocl::getSparseCSRMatrixVectorMult1PCA());
 
     avk2::KernelSource vk_spvm(avk2::getSparseCSRMatrixVectorMult());
 
@@ -123,7 +127,7 @@ void run(int argc, char** argv)
     double cpu_throughput_sum = 0.0, gpu_throughput_sum = 0.0;
     for (auto [min_nnz_per_row, max_nnz_per_col]: evaluated_min_max_nnz_per_row) {
         std::cout << "____________________________________________________________________________________________" << std::endl;
-        const auto [csr_row_offsets, csr_columns, csr_values] = generate_csr_matrix(nrows, ncols, min_nnz_per_row, max_nnz_per_col, max_value);
+        const auto [csr_row_offsets, csr_columns, csr_values, csr_rows] = generate_csr_matrix(nrows, ncols, min_nnz_per_row, max_nnz_per_col, max_value);
         const std::vector<unsigned int> vector_values = generate_vector(ncols, max_value);
         const unsigned int number_of_non_zero_values = csr_row_offsets[nrows];
         const unsigned int nnz = number_of_non_zero_values;
@@ -145,10 +149,11 @@ void run(int argc, char** argv)
         std::cout << "CPU effective bandwidth: " << memory_size_gb / elapsed << " GB/s (" << nnz / 1e6 / elapsed << " uint millions/s)" << std::endl;
 
         // Аллоцируем буферы в VRAM
-        gpu::gpu_mem_32u csr_row_offsets_gpu(nrows + 1), csr_columns_gpu(nnz), csr_values_gpu(nnz), vector_values_gpu(ncols), output_vector_values_gpu(nrows);
+        gpu::gpu_mem_32u csr_row_offsets_gpu(nrows + 1), csr_rows_gpu(nnz), csr_columns_gpu(nnz), csr_values_gpu(nnz), vector_values_gpu(ncols), output_vector_values_gpu(nrows);
 
         // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
         csr_row_offsets_gpu.writeN(csr_row_offsets.data(), csr_row_offsets.size());
+        csr_rows_gpu.writeN(csr_rows.data(), csr_rows.size());
         csr_columns_gpu.writeN(csr_columns.data(), csr_columns.size());
         csr_values_gpu.writeN(csr_values.data(), csr_values.size());
         vector_values_gpu.writeN(vector_values.data(), vector_values.size());
@@ -160,14 +165,15 @@ void run(int argc, char** argv)
 
         // Запускаем кернел (несколько раз и с замером времени выполнения)
         std::vector<double> times;
-        gpu::WorkSize workSize(GROUP_SIZE, vector_values.size());
         for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
             t.restart();
 
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             if (context.type() == gpu::Context::TypeOpenCL) {
-                ocl_spvm_1pr.exec(workSize, csr_row_offsets_gpu, csr_columns_gpu, csr_values_gpu, vector_values_gpu, output_vector_values_gpu, nnz, static_cast<unsigned int>(vector_values.size()));
+                // ocl_spvm_1pr.exec(gpu::WorkSize(GROUP_SIZE, vector_values.size()), csr_row_offsets_gpu, csr_columns_gpu, csr_values_gpu, vector_values_gpu, output_vector_values_gpu, nnz, static_cast<unsigned int>(vector_values.size()));
+                ocl_fwz.exec(gpu::WorkSize(GROUP_SIZE, vector_values.size()), output_vector_values_gpu, static_cast<unsigned int>(vector_values.size()));
+                ocl_spvm_1pca.exec(gpu::WorkSize(GROUP_SIZE, nnz), csr_rows_gpu, csr_columns_gpu, csr_values_gpu, vector_values_gpu, output_vector_values_gpu, nnz);
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
