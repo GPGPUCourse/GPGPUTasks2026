@@ -11,6 +11,6 @@ __kernel void fill_buffer_with_zeros(
     unsigned int n)
 {
     const unsigned int i = get_global_id(0);
-    if (i < n)
-        buffer[i] = 0;
+    if (i >= n) return;
+    buffer[i] = 0;
 }
