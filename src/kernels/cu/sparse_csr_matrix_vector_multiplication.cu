@@ -36,7 +36,9 @@ __global__ void sparse_csr_matrix_vector_multiplication(const uint32_t *csr_row_
     }
     result = warp_reduce_sum(result);
 
-    result_vector_values[vec_i] = result;
+    if (warp_tid == 0) {
+      result_vector_values[vec_i] = result;
+    }
 }
 
 namespace cuda {
