@@ -19,27 +19,16 @@ uint32_t warp_reduce_sum(uint32_t val) {
 
 __global__ void sparse_csr_matrix_vector_multiplication(const uint32_t *csr_row_offsets, const uint32_t *csr_columns, const uint32_t *csr_values, const uint32_t *vector_values, uint32_t *result_vector_values, int nrows, int ncols) // TODO input/output buffers
 {
-    __shared__ uint32_t row_result[ROWS_PER_GROUP];
-    if (threadIdx.x == 0) {
-      #pragma unroll
-      for (int i = 0; i < ROWS_PER_GROUP; ++i) {
-        row_result[i] = 0;
-      }
-    }
-    __syncthreads();
-
-    uint32_t vec_i = (blockIdx.x * blockDim.x + threadIdx.x) / THREADS_PER_ROW;
+    uint32_t vec_i = (blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE;
     if (vec_i >= nrows) return;
     
-    uint32_t warp_tid = threadIdx.x % WARP_SIZE;
-    uint32_t row_tid = threadIdx.x % THREADS_PER_ROW;
-    uint32_t row_id = vec_i % ROWS_PER_GROUP; 
+    uint32_t warp_tid = threadIdx.x % WARP_SIZE; 
     uint32_t mat_row = vec_i;
     uint32_t row_begin = csr_row_offsets[mat_row];
     uint32_t row_end = csr_row_offsets[mat_row+1];
     
     uint32_t result = 0;
-    for (int col_offset = row_tid; col_offset < row_end-row_begin; col_offset += THREADS_PER_ROW) {
+    for (int col_offset = warp_tid; col_offset < row_end-row_begin; col_offset += WARP_SIZE) {
       uint32_t mat_col = csr_columns[row_begin+col_offset];
       uint32_t mat_val = csr_values[row_begin+col_offset];
       uint32_t vec_elem = vector_values[mat_col];
@@ -47,14 +36,7 @@ __global__ void sparse_csr_matrix_vector_multiplication(const uint32_t *csr_row_
     }
     result = warp_reduce_sum(result);
 
-    if (warp_tid == 0) {
-      atomicAdd(&row_result[row_id], result);
-    }
-    __syncthreads();
-
-    if (row_tid == 0) {
-      result_vector_values[vec_i] = row_result[row_id];
-    }
+    result_vector_values[vec_i] = result;
 }
 
 namespace cuda {
