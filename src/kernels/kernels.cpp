@@ -8,14 +8,15 @@
 
 #ifndef CUDA_SUPPORT
 namespace cuda {
-void aplusb(const gpu::WorkSize& workSize,
-    const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n)
-{
+void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b,
+    gpu::gpu_mem_32u& c, unsigned int n) {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
-void sparse_csr_matrix_vector_multiplication(const gpu::WorkSize &workSize)
-{
+void sparse_csr_matrix_vector_multiplication(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32u& csr_row_offsets, const gpu::gpu_mem_32u& csr_columns,
+    const gpu::gpu_mem_32u& csr_values, const gpu::gpu_mem_32u& vector_values,
+    gpu::gpu_mem_32u& output_vector_values, unsigned int nrows) {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
@@ -23,25 +24,17 @@ void sparse_csr_matrix_vector_multiplication(const gpu::WorkSize &workSize)
 #endif
 
 namespace ocl {
-const ocl::ProgramBinaries& getAplusB()
-{
-    return opencl_binaries_aplusb;
-}
+const ocl::ProgramBinaries& getAplusB() { return opencl_binaries_aplusb; }
 
-const ProgramBinaries& getSparseCSRMatrixVectorMult()
-{
+const ProgramBinaries& getSparseCSRMatrixVectorMult() {
     return opencl_binaries_sparse_csr_matrix_vector_multiplication;
 }
 } // namespace ocl
 
 namespace avk2 {
-const ProgramBinaries& getAplusB()
-{
-    return vulkan_binaries_aplusb_comp;
-}
+const ProgramBinaries& getAplusB() { return vulkan_binaries_aplusb_comp; }
 
-const ProgramBinaries& getSparseCSRMatrixVectorMult()
-{
+const ProgramBinaries& getSparseCSRMatrixVectorMult() {
     return vulkan_binaries_sparse_csr_matrix_vector_multiplication_comp;
 }
 } // namespace avk2
