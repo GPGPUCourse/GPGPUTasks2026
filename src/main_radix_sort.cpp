@@ -163,7 +163,6 @@ void run(int argc, char** argv)
                     histogram, starts, levels, histogram_size);
                 ocl_radixSort04Scatter.exec(ws, input, output, starts, step, static_cast<unsigned int>(n));
             }
-            levels.back().sums->readVector();
         }
         times.push_back(t.elapsed());
     }
