@@ -65,7 +65,7 @@ inline void buildLBVH_GPU(
     gpu::gpu_mem_32f partial_min_gpu(3 * num_groups), partial_max_gpu(3 * num_groups);
     gpu::gpu_mem_32f centroid_bounds_gpu(6);
     gpu::gpu_mem_32u morton_gpu(n);
-    gpu::gpu_mem_32u parent_gpu(num_nodes), arrival_gpu(std::max(n - 1, 1u));
+    gpu::gpu_mem_32u parent_gpu(2 * num_nodes), arrival_gpu(std::max(n - 1, 1u));
     arrival_gpu.fill(0u);
 
     ocl_primitive_data.exec(workSize1D(n), vertices_gpu, faces_gpu,
