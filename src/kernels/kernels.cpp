@@ -10,6 +10,7 @@
 #include "cl/generated_kernels/radix_sort_01_local_counting.h"
 #include "cl/generated_kernels/radix_sort_02_global_prefixes_scan_sum_reduction.h"
 #include "cl/generated_kernels/radix_sort_03_scatter_kv.h"
+#include "cl/generated_kernels/build_lbvh_topology_and_leaves.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/ray_tracing_render_brute_force_comp.h"
@@ -96,6 +97,11 @@ const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction()
 const ProgramBinaries& getRadixSort03Scatter()
 {
     return opencl_binaries_radix_sort_03_scatter_kv;
+}
+
+const ProgramBinaries& getBuildLBVHTopologyAndLeaves()
+{
+    return opencl_binaries_build_lbvh_topology_and_leaves;
 }
 } // namespace ocl
 

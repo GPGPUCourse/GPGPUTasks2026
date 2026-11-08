@@ -14,109 +14,6 @@
 
 namespace albuquerque {
 
-// count leading zeros for 32-bit unsigned
-static inline int clz32(uint32_t x)
-{
-    if (x == 0u)
-        return 32;
-#if defined(_MSC_VER)
-    unsigned long idx;
-    _BitScanReverse(&idx, x);
-    return 31 - static_cast<int>(idx);
-#else
-    return __builtin_clz(x);
-#endif
-}
-
-// Compute common prefix length between sorted Morton codes at indices i and j
-// Uses index as a tiebreaker when codes are equal (like Karras 2013).
-static inline int common_prefix(const std::vector<MortonCode>& codes, int N, int i, int j)
-{
-    if (j < 0 || j >= N)
-        return -1;
-
-    MortonCode ci = codes[static_cast<size_t>(i)];
-    MortonCode cj = codes[static_cast<size_t>(j)];
-
-    if (ci == cj) {
-        uint32_t di = static_cast<uint32_t>(i);
-        uint32_t dj = static_cast<uint32_t>(j);
-        uint32_t diff = di ^ dj;
-        return 32 + clz32(diff);
-    } else {
-        uint32_t diff = ci ^ cj;
-        return clz32(diff);
-    }
-}
-
-// Determine range [first, last] of primitives covered by internal node i
-static inline void determine_range(const std::vector<uint32_t>& codes, int N, int i, int& outFirst, int& outLast)
-{
-    int cpL = common_prefix(codes, N, i, i - 1);
-    int cpR = common_prefix(codes, N, i, i + 1);
-
-    // Direction of the range
-    int d = (cpR > cpL) ? 1 : -1;
-
-    // Find upper bound on the length of the range
-    int deltaMin = common_prefix(codes, N, i, i - d);
-    int lmax = 2;
-
-    while (common_prefix(codes, N, i, i + lmax * d) > deltaMin) {
-        lmax <<= 1;
-    }
-
-    // Binary search to find exact range length
-    int l = 0;
-    for (int t = lmax >> 1; t > 0; t >>= 1) {
-        if (common_prefix(codes, N, i, i + (l + t) * d) > deltaMin) {
-            l += t;
-        }
-    }
-
-    int j = i + l * d;
-    outFirst = std::min(i, j);
-    outLast = std::max(i, j);
-}
-
-// Find split position inside range [first, last] using the same
-// prefix metric as determine_range (code + index tie-break)
-static inline int find_split(const std::vector<uint32_t>& codes,
-    int first, int last)
-{
-    const int N = static_cast<int>(codes.size());
-
-    // Degenerate case should not случаться в нормальном коде, но на всякий пожарный
-    if (first == last)
-        return first;
-
-    auto delta = [&](int i, int j) -> int {
-        return common_prefix(codes, N, i, j);
-    };
-
-    // Prefix between first and last (уже с учётом индекса, если коды равны)
-    int commonPrefix = delta(first, last);
-
-    int split = first;
-    int step = last - first;
-
-    // Binary search for the last index < last where
-    // prefix(first, i) > prefix(first, last)
-    do {
-        step = (step + 1) >> 1;
-        int newSplit = split + step;
-
-        if (newSplit < last) {
-            int splitPrefix = delta(first, newSplit);
-            if (splitPrefix > commonPrefix) {
-                split = newSplit;
-            }
-        }
-    } while (step > 1);
-
-    return split;
-}
-
 // Sorts (keys_a, vals_a) by key, ascending. Uses (keys_b, vals_b) as scratch.
 // Morton codes are 30 bits -> 30 passes (even), so the result ends up in the *_a buffers.
 inline void radixSortKV_GPU(
@@ -175,6 +72,7 @@ inline void buildLBVH_GPU(
     static ocl::KernelSource ocl_compute_primitive_data(ocl::getComputePrimitiveData());
     static ocl::KernelSource ocl_reduce_centroid_bounds(ocl::getReduceCentroidBounds());
     static ocl::KernelSource ocl_generate_morton_codes(ocl::getGenerateMortonCodes());
+    static ocl::KernelSource ocl_build_topology(ocl::getBuildLBVHTopologyAndLeaves());
 
     const size_t N = faces.size();
     outNodes.clear();
@@ -245,30 +143,10 @@ inline void buildLBVH_GPU(
         (unsigned int)N);
 
     ocl_reduce_centroid_bounds.exec(
-        gpu::WorkSize(WG, WG), // a single workgroup
+        gpu::WorkSize(WG, WG),
         partial_min_gpu, partial_max_gpu,
         centroid_bounds_gpu,
         numGroups);
-
-    // Read back (temporary, until the later stages move to the GPU)
-    std::vector<AABBGPU> gpu_aabbs(N);
-    std::vector<float> gpu_centroids(3 * N);
-    float gpu_bounds[6];
-    prim_aabbs_gpu.readN(gpu_aabbs.data(), N);
-    centroids_gpu.readN(gpu_centroids.data(), 3 * N);
-    centroid_bounds_gpu.readN(gpu_bounds, 6);
-
-    // Fill the same structures the CPU code already uses
-    std::vector<Prim> prims(N);
-    for (size_t i = 0; i < N; ++i) {
-        prims[i].triIndex = static_cast<uint32_t>(i);
-        prims[i].aabb = gpu_aabbs[i];
-        prims[i].centroid = { gpu_centroids[3 * i + 0],
-            gpu_centroids[3 * i + 1],
-            gpu_centroids[3 * i + 2] };
-    }
-    point3f cMin { gpu_bounds[0], gpu_bounds[1], gpu_bounds[2] };
-    point3f cMax { gpu_bounds[3], gpu_bounds[4], gpu_bounds[5] };
 
     // 2) Compute Morton codes for centroids (normalized to [0,1]^3)
     gpu::gpu_mem_32u morton_codes_gpu(N);
@@ -280,83 +158,27 @@ inline void buildLBVH_GPU(
         morton_codes_gpu, tri_indices_gpu,
         (unsigned int)N);
 
-    std::vector<uint32_t> gpu_morton(N);
-    morton_codes_gpu.readN(gpu_morton.data(), N);
-    for (size_t i = 0; i < N; ++i) {
-        prims[i].morton = gpu_morton[i];
-    }
-
     // 3) Sort primitives by Morton code
     gpu::gpu_mem_32u morton_tmp_gpu(N);
     gpu::gpu_mem_32u tri_tmp_gpu(N);
     radixSortKV_GPU(morton_codes_gpu, tri_indices_gpu, morton_tmp_gpu, tri_tmp_gpu, N);
 
-    std::vector<uint32_t> sorted_morton(N), sorted_tri(N);
-    morton_codes_gpu.readN(sorted_morton.data(), N);
-    tri_indices_gpu.readN(sorted_tri.data(), N);
-
-    // replaces the CPU Morton loop and the std::sort
-    std::vector<Prim> sorted(N);
-    for (size_t i = 0; i < N; ++i) {
-        sorted[i].triIndex = sorted_tri[i];
-        sorted[i].morton = sorted_morton[i];
-        sorted[i].aabb = gpu_aabbs[sorted_tri[i]];
-    }
-    prims.swap(sorted);
-
-    // 4) Prepare arrays
+    // 4-6) Leaves + topology
     const size_t numNodes = 2 * N - 1;
+    gpu::shared_device_buffer_typed<BVHNodeGPU> nodes_gpu(numNodes);
+
+    ocl_build_topology.exec(
+        gpu::WorkSize(WG, (numNodes + WG - 1) / WG * WG),
+        morton_codes_gpu, tri_indices_gpu,
+        prim_aabbs_gpu.clmem(), nodes_gpu.clmem(),
+        (unsigned int)N);
+
     outNodes.resize(numNodes);
     outLeafTriIndices.resize(N);
+    nodes_gpu.readN(outNodes.data(), numNodes);
+    tri_indices_gpu.readN(outLeafTriIndices.data(), N);
 
-    std::vector<uint32_t> sortedCodes(N);
-    for (size_t i = 0; i < N; ++i) {
-        sortedCodes[i] = prims[i].morton;
-        outLeafTriIndices[i] = prims[i].triIndex;
-    }
-
-    // 5) Initialize leaf nodes [N-1 .. 2*N-2]
     const GPUC_UINT INVALID = std::numeric_limits<GPUC_UINT>::max();
-
-    for (size_t i = 0; i < N; ++i) {
-        size_t leafIndex = (N - 1) + i;
-        BVHNodeGPU& leaf = outNodes[leafIndex];
-
-        leaf.aabb = prims[i].aabb;
-        leaf.leftChildIndex = INVALID;
-        leaf.rightChildIndex = INVALID;
-    }
-
-    // 6) Build internal nodes [0 .. N-2]
-    for (int i = 0; i < static_cast<int>(N) - 1; ++i) {
-        int first, last;
-        determine_range(sortedCodes, static_cast<int>(N), i, first, last);
-        int split = find_split(sortedCodes, first, last);
-
-        // Left child
-        int leftIndex;
-        if (split == first) {
-            // Range [first, split] has one primitive -> leaf
-            leftIndex = static_cast<int>((N - 1) + split);
-        } else {
-            // Internal node
-            leftIndex = split;
-        }
-
-        // Right child
-        int rightIndex;
-        if (split + 1 == last) {
-            // Range [split+1, last] has one primitive -> leaf
-            rightIndex = static_cast<int>((N - 1) + split + 1);
-        } else {
-            // Internal node
-            rightIndex = split + 1;
-        }
-
-        BVHNodeGPU& node = outNodes[static_cast<size_t>(i)];
-        node.leftChildIndex = static_cast<GPUC_UINT>(leftIndex);
-        node.rightChildIndex = static_cast<GPUC_UINT>(rightIndex);
-    }
 
     // 7.1) Enumerating bottom-up traversal order for internal nodes to build AABB
     std::vector<int> traversalOrder = { 0 }; // starting with root node

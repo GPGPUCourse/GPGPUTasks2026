@@ -37,6 +37,8 @@ const ProgramBinaries& getFillBufferWithZeros();
 const ProgramBinaries& getRadixSort01LocalCounting();
 const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction();
 const ProgramBinaries& getRadixSort03Scatter();
+
+const ProgramBinaries& getBuildLBVHTopologyAndLeaves();
 }
 
 namespace avk2 {
