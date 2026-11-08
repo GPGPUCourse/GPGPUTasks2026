@@ -34,13 +34,31 @@ __kernel void sparse_csr_matrix_vector_multiplication_CSR_BY_ROWS_WITH_SMALL_GRO
         results[local_id] = sum;
     }
 
-    // Суммируем все малые суммы в одну
-    for (uint sz = SMALL_GROUP_SIZE / 2; sz > 0; sz >>= 1) {
-        barrier(CLK_LOCAL_MEM_FENCE);
-
-        if (index_in_small_group < sz) {
-            results[local_id] += results[local_id + sz];
-        }
+    // Суммируем все малые суммы в одну (цикл развёрнут)
+    barrier(CLK_LOCAL_MEM_FENCE);
+    uint sz = 16;
+    if (index_in_small_group < sz) {
+        results[local_id] += results[local_id + sz];
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+    sz = 8;
+    if (index_in_small_group < sz) {
+        results[local_id] += results[local_id + sz];
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+    sz = 4;
+    if (index_in_small_group < sz) {
+        results[local_id] += results[local_id + sz];
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+    sz = 2;
+    if (index_in_small_group < sz) {
+        results[local_id] += results[local_id + sz];
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+    sz = 1;
+    if (index_in_small_group < sz) {
+        results[local_id] += results[local_id + sz];
     }
 
     if (row < nrows && index_in_small_group == 0) {
