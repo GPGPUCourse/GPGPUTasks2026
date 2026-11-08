@@ -28,6 +28,10 @@ const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getRTBruteForce();
 const ProgramBinaries& getRTWithLBVH();
+
+const ProgramBinaries& getComputePrimitiveData();
+const ProgramBinaries& getReduceCentroidBounds();
+const ProgramBinaries& getGenerateMortonCodes();
 }
 
 namespace avk2 {

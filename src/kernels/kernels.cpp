@@ -3,6 +3,9 @@
 #include "cl/generated_kernels/aplusb.h"
 #include "cl/generated_kernels/ray_tracing_render_brute_force.h"
 #include "cl/generated_kernels/ray_tracing_render_using_lbvh.h"
+#include "cl/generated_kernels/compute_primitive_data.h"
+#include "cl/generated_kernels/reduce_centroid_bounds.h"
+#include "cl/generated_kernels/generate_morton_codes.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/ray_tracing_render_brute_force_comp.h"
@@ -54,6 +57,21 @@ const ProgramBinaries& getRTBruteForce()
 const ProgramBinaries& getRTWithLBVH()
 {
     return opencl_binaries_ray_tracing_render_using_lbvh;
+}
+
+const ProgramBinaries& getComputePrimitiveData()
+{
+    return opencl_binaries_compute_primitive_data;
+}
+
+const ProgramBinaries& getReduceCentroidBounds()
+{
+    return opencl_binaries_reduce_centroid_bounds;
+}
+
+const ProgramBinaries& getGenerateMortonCodes()
+{
+    return opencl_binaries_generate_morton_codes;
 }
 } // namespace ocl
 

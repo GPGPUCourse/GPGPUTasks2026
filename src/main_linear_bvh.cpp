@@ -14,6 +14,7 @@
 #include "io/scene_reader.h"
 
 #include "cpu_helpers/build_bvh_cpu.h"
+#include "gpu_helpers/build_bvh_gpu.h"
 
 #include <filesystem>
 #include <fstream>
@@ -285,16 +286,21 @@ void run(int argc, char** argv)
         double gpu_lbvh_time_sum = 0.0;
         double rt_times_with_gpu_lbvh_sum = 0.0;
 
-        // TODO постройте LBVH на GPU
-        // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
+        bool gpu_lbvg_gpu_rt_done = true;
 
         if (gpu_lbvg_gpu_rt_done) {
+            gpu::shared_device_buffer_typed<BVHNodeGPU> lbvh_nodes_gpu(2 * nfaces - 1);
+            gpu::gpu_mem_32u leaf_faces_indices_gpu(nfaces);
+            std::vector<BVHNodeGPU> lbvh_nodes_cpu;
+            std::vector<uint32_t> leaf_faces_indices_cpu;
+
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO постройте LBVH на GPU
+                albuquerque::buildLBVH_GPU(scene.vertices, scene.faces, lbvh_nodes_cpu, leaf_faces_indices_cpu);
+                lbvh_nodes_gpu.writeN(lbvh_nodes_cpu.data(), lbvh_nodes_cpu.size());
+                leaf_faces_indices_gpu.writeN(leaf_faces_indices_cpu.data(), leaf_faces_indices_cpu.size());
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -313,7 +319,12 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                ocl_rt_with_lbvh.exec(
+                    gpu::WorkSize(16, 16, width, height),
+                    vertices_gpu, faces_gpu,
+                    lbvh_nodes_gpu.clmem(), leaf_faces_indices_gpu.clmem(),
+                    framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                    camera_gpu.clmem(), nfaces);
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }
