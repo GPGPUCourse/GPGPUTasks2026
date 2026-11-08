@@ -30,7 +30,7 @@ __global__ void sparse_csr_matrix_vector_multiplication(
         thread_acc += csr_values[i] * vector[col];
     }
     // __syncthreads здесь не нужен, так как мы в одном ворпе
-    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+    for (uint offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
         thread_acc += __shfl_down_sync(0xFFFFFFFF, thread_acc, offset);
     }
 
