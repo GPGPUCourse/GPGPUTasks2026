@@ -117,6 +117,45 @@ static inline int find_split(const std::vector<uint32_t>& codes,
     return split;
 }
 
+// Sorts (keys_a, vals_a) by key, ascending. Uses (keys_b, vals_b) as scratch.
+// Morton codes are 30 bits -> 30 passes (even), so the result ends up in the *_a buffers.
+inline void radixSortKV_GPU(
+    gpu::gpu_mem_32u& keys_a, gpu::gpu_mem_32u& vals_a,
+    gpu::gpu_mem_32u& keys_b, gpu::gpu_mem_32u& vals_b,
+    unsigned int n)
+{
+    static ocl::KernelSource ocl_scan(ocl::getRadixSort02GlobalPrefixesScanSumReduction());
+    static ocl::KernelSource ocl_scatter_kv(ocl::getRadixSort03Scatter());
+
+    const unsigned int ITEMS_PER_THREAD = 8; // must match the .cl
+    const unsigned int tile_size = GROUP_SIZE * ITEMS_PER_THREAD;
+    const unsigned int num_tiles = (n + tile_size - 1) / tile_size;
+
+    gpu::gpu_mem_32u scan(num_tiles * tile_size); // padded: the kernel does full vstore8
+    gpu::gpu_mem_32u spine(2u * num_tiles);
+    gpu::gpu_mem_32u tile_bump(1);
+    gpu::gpu_mem_32u total(1);
+
+    const gpu::WorkSize scan_ws(GROUP_SIZE, num_tiles * GROUP_SIZE);
+    const gpu::WorkSize scatter_ws(GROUP_SIZE, (n + GROUP_SIZE - 1) / GROUP_SIZE * GROUP_SIZE);
+
+    gpu::gpu_mem_32u* keys_src = &keys_a;
+    gpu::gpu_mem_32u* vals_src = &vals_a;
+    gpu::gpu_mem_32u* keys_dst = &keys_b;
+    gpu::gpu_mem_32u* vals_dst = &vals_b;
+
+    for (unsigned int bit = 0; bit < 30; ++bit) {
+        spine.fill(0u);
+        tile_bump.fill(0u);
+
+        ocl_scan.exec(scan_ws, *keys_src, scan, spine, tile_bump, total, n, bit);
+        ocl_scatter_kv.exec(scatter_ws, *keys_src, *vals_src, scan, total, *keys_dst, *vals_dst, n, bit);
+
+        std::swap(keys_src, keys_dst);
+        std::swap(vals_src, vals_dst);
+    }
+}
+
 // Build LBVH (Karras 2013) on CPU.
 // Output:
 //   outNodes           - BVH nodes array of size (2*N - 1). Root is node 0.
@@ -248,10 +287,22 @@ inline void buildLBVH_GPU(
     }
 
     // 3) Sort primitives by Morton code
-    std::sort(prims.begin(), prims.end(),
-        [](const Prim& a, const Prim& b) {
-            return a.morton < b.morton;
-        });
+    gpu::gpu_mem_32u morton_tmp_gpu(N);
+    gpu::gpu_mem_32u tri_tmp_gpu(N);
+    radixSortKV_GPU(morton_codes_gpu, tri_indices_gpu, morton_tmp_gpu, tri_tmp_gpu, N);
+
+    std::vector<uint32_t> sorted_morton(N), sorted_tri(N);
+    morton_codes_gpu.readN(sorted_morton.data(), N);
+    tri_indices_gpu.readN(sorted_tri.data(), N);
+
+    // replaces the CPU Morton loop and the std::sort
+    std::vector<Prim> sorted(N);
+    for (size_t i = 0; i < N; ++i) {
+        sorted[i].triIndex = sorted_tri[i];
+        sorted[i].morton = sorted_morton[i];
+        sorted[i].aabb = gpu_aabbs[sorted_tri[i]];
+    }
+    prims.swap(sorted);
 
     // 4) Prepare arrays
     const size_t numNodes = 2 * N - 1;

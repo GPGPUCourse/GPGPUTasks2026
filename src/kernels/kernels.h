@@ -32,6 +32,11 @@ const ProgramBinaries& getRTWithLBVH();
 const ProgramBinaries& getComputePrimitiveData();
 const ProgramBinaries& getReduceCentroidBounds();
 const ProgramBinaries& getGenerateMortonCodes();
+
+const ProgramBinaries& getFillBufferWithZeros();
+const ProgramBinaries& getRadixSort01LocalCounting();
+const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction();
+const ProgramBinaries& getRadixSort03Scatter();
 }
 
 namespace avk2 {

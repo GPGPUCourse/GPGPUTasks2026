@@ -6,6 +6,10 @@
 #include "cl/generated_kernels/compute_primitive_data.h"
 #include "cl/generated_kernels/reduce_centroid_bounds.h"
 #include "cl/generated_kernels/generate_morton_codes.h"
+#include "cl/generated_kernels/fill_buffer_with_zeros.h"
+#include "cl/generated_kernels/radix_sort_01_local_counting.h"
+#include "cl/generated_kernels/radix_sort_02_global_prefixes_scan_sum_reduction.h"
+#include "cl/generated_kernels/radix_sort_03_scatter_kv.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/ray_tracing_render_brute_force_comp.h"
@@ -72,6 +76,26 @@ const ProgramBinaries& getReduceCentroidBounds()
 const ProgramBinaries& getGenerateMortonCodes()
 {
     return opencl_binaries_generate_morton_codes;
+}
+
+const ProgramBinaries& getFillBufferWithZeros()
+{
+    return opencl_binaries_fill_buffer_with_zeros;
+}
+
+const ProgramBinaries& getRadixSort01LocalCounting()
+{
+    return opencl_binaries_radix_sort_01_local_counting;
+}
+
+const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction()
+{
+    return opencl_binaries_radix_sort_02_global_prefixes_scan_sum_reduction;
+}
+
+const ProgramBinaries& getRadixSort03Scatter()
+{
+    return opencl_binaries_radix_sort_03_scatter_kv;
 }
 } // namespace ocl
 
