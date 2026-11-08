@@ -5,14 +5,20 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-__attribute__((reqd_work_group_size(1, 1, 1)))
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void radix_sort_03_global_prefixes_scan_accumulation(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* buffer1,
-    __global       uint* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+    __global const uint* input_gpu,
+    __global uint* output_gpu, // pow2_sum[i] = sum[i*2^pow2; (i+1)*2^pow2)
+    __global const uint* block_sum,
+    uint n, uint inclusive)
 {
-    // TODO
+    size_t global_i = get_global_id(0);
+    if (global_i >= n) return;
+    size_t block_i = global_i / (GROUP_SIZE * 8);
+    if (block_i != 0)
+        output_gpu[global_i] += block_sum[block_i];
+    if (inclusive)
+        output_gpu[global_i] += input_gpu[global_i];
 }

@@ -6,13 +6,48 @@
 #include <libgpu/vulkan/engine.h>
 #include <libgpu/vulkan/tests/test_utils.h>
 
+#include "debug.h" // TODO очень советую использовать debug::prettyBits(...) для отладки
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
-
-#include "debug.h" // TODO очень советую использовать debug::prettyBits(...) для отладки
+#include <algorithm>
+#include <limits>
+#include <memory>
+#include <stdexcept>
+#include <utility>
+#include <vector>
 
 #include <fstream>
 
+struct BlockSumLevel {
+    std::unique_ptr<gpu::gpu_mem_32u> prefix;
+    std::unique_ptr<gpu::gpu_mem_32u> sums;
+    unsigned int blocks;
+};
+
+static size_t get_blocks(size_t n, size_t b)
+{
+    return n / b + (n % b != 0);
+}
+
+static void prefix_sum(ocl::KernelSource& reduction, ocl::KernelSource& accumulation,
+    gpu::gpu_mem_32u& histogram, gpu::gpu_mem_32u& starts,
+    std::vector<BlockSumLevel>& levels, unsigned int n)
+{
+    for (size_t i = 0; i < levels.size(); ++i) {
+        auto& input = i == 0 ? histogram : *levels[i - 1].sums;
+        auto& output = i == 0 ? starts : *levels[i].prefix;
+        const unsigned int length = i == 0 ? n : levels[i - 1].blocks;
+        reduction.exec({ GROUP_SIZE, size_t(levels[i].blocks) * GROUP_SIZE },
+            input, output, *levels[i].sums, length);
+    }
+    for (size_t i = levels.size() - 1; i > 0; --i) {
+        auto& input = i == 1 ? histogram : *levels[i - 2].sums;
+        auto& output = i == 1 ? starts : *levels[i - 1].prefix;
+        const unsigned int length = i == 1 ? n : levels[i - 2].blocks;
+        accumulation.exec({ GROUP_SIZE, get_blocks(length, GROUP_SIZE) * GROUP_SIZE },
+            input, output, *levels[i].prefix, length, 0u);
+    }
+}
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -36,17 +71,10 @@ void run(int argc, char** argv)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
-    ocl::KernelSource ocl_fillBufferWithZeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_radixSort01LocalCounting(ocl::getRadixSort01LocalCounting());
     ocl::KernelSource ocl_radixSort02GlobalPrefixesScanSumReduction(ocl::getRadixSort02GlobalPrefixesScanSumReduction());
     ocl::KernelSource ocl_radixSort03GlobalPrefixesScanAccumulation(ocl::getRadixSort03GlobalPrefixesScanAccumulation());
     ocl::KernelSource ocl_radixSort04Scatter(ocl::getRadixSort04Scatter());
-
-    avk2::KernelSource vk_fillBufferWithZeros(avk2::getFillBufferWithZeros());
-    avk2::KernelSource vk_radixSort01LocalCounting(avk2::getRadixSort01LocalCounting());
-    avk2::KernelSource vk_radixSort02GlobalPrefixesScanSumReduction(avk2::getRadixSort02GlobalPrefixesScanSumReduction());
-    avk2::KernelSource vk_radixSort03GlobalPrefixesScanAccumulation(avk2::getRadixSort03GlobalPrefixesScanAccumulation());
-    avk2::KernelSource vk_radixSort04Scatter(avk2::getRadixSort04Scatter());
 
     FastRandom r;
 
@@ -87,21 +115,30 @@ void run(int argc, char** argv)
     }
 
     // Аллоцируем буферы в VRAM
+    static_assert(GROUP_SIZE > 0 && (GROUP_SIZE & (GROUP_SIZE - 1)) == 0,
+        "GROUP_SIZE must be a power of two");
+    const size_t groups = get_blocks(n, GROUP_SIZE);
+    if (groups > std::numeric_limits<unsigned int>::max() / 256u)
+        throw std::overflow_error("Histogram exceeds uint indexing");
+    const unsigned int histogram_size = static_cast<unsigned int>(groups * 256u);
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
-    gpu::gpu_mem_32u buffer_output_gpu(n);
+    gpu::gpu_mem_32u histogram(histogram_size), starts(histogram_size); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u scratch_gpu(n), buffer_output_gpu(n);
+    std::vector<BlockSumLevel> levels;
+    for (unsigned int length = histogram_size;;) {
+        const unsigned int blocks = static_cast<unsigned int>(get_blocks(length, 8 * GROUP_SIZE));
+        levels.push_back({ levels.empty() ? nullptr : std::make_unique<gpu::gpu_mem_32u>(length),
+            std::make_unique<gpu::gpu_mem_32u>(blocks), blocks });
+        if (blocks == 1)
+            break;
+        length = blocks;
+    }
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
-    buffer_output_gpu.fill(255);
-
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
@@ -116,6 +153,17 @@ void run(int argc, char** argv)
             // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
             // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
             // ocl_radixSort04Scatter.exec();
+            gpu::WorkSize ws(GROUP_SIZE, groups * GROUP_SIZE);
+            for (unsigned int step = 0; step < 4; ++step) {
+                auto& input = step == 0 ? input_gpu : (step % 2 == 1 ? scratch_gpu : buffer_output_gpu);
+                auto& output = step % 2 == 0 ? scratch_gpu : buffer_output_gpu;
+                ocl_radixSort01LocalCounting.exec(ws, input, histogram, step, static_cast<unsigned int>(n));
+                prefix_sum(ocl_radixSort02GlobalPrefixesScanSumReduction,
+                    ocl_radixSort03GlobalPrefixesScanAccumulation,
+                    histogram, starts, levels, histogram_size);
+                ocl_radixSort04Scatter.exec(ws, input, output, starts, step, static_cast<unsigned int>(n));
+            }
+            levels.back().sums->readVector();
         }
         times.push_back(t.elapsed());
     }

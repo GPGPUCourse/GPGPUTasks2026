@@ -10,29 +10,22 @@ __kernel void radix_sort_01_local_counting(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
     __global const uint* input_gpu,
-    __global       uint* histogram, //гистограмма для всех обработанных элеемннтов
-    unsigned int step)
+    __global uint* histogram, //гистограмма для всех обработанных элеемннтов
+    uint step, uint n)
 {
-    // TODO
-    //загрузить в temp 256элем
-    //битоник сорт в темп
-    //мб перезаписать input сортированую хуню
-    //гистограмма в гистограм
-    // хачу битонно сортить плиточку потом по ней делать гистограмму
-    // след шагом будет куча гистограмм (как их хранить ?) и посорченные кусочки
     size_t local_i = get_local_id(0);
-    size_t group_i = get_group_id(0);
-    size_t group_start = get_group_id(0) * GROUP_SIZE;
-    __local uint thread_histogram[GROUP_SIZE];
-    uint num;
-    for (size_t i = 0; i < 256; i++) {
-        num = input_gpu[group_start + local_i];
-        num <<= (32 - step*8);
-        num >>= (32 + step*8 + 8*(step-1));
-        thread_histogram[num]++;
+    size_t id = get_global_id(0);
+    __local uint thread_histogram[256];
+    for (size_t digit = local_i; digit < 256; digit += GROUP_SIZE)
+        thread_histogram[digit] = 0;
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    if (id < n) {
+        uint digit = (input_gpu[id] >> (8u * step)) & 0xffu;
+        atomic_add(&thread_histogram[digit], 1u);
     }
     barrier(CLK_LOCAL_MEM_FENCE);
-    for (size_t i = 0; i < 256; i++) {
-        histogram[local_i][group_i] = thread_histogram[local_i];
-    }
+
+    for (size_t digit = local_i; digit < 256; digit += GROUP_SIZE)
+        histogram[digit * get_num_groups(0) + get_group_id(0)] = thread_histogram[digit];
 }
