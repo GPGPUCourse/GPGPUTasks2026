@@ -151,6 +151,7 @@ void run(int argc, char** argv)
             // ocl_fillBufferWithZeros.exec();
             // ocl_radixSort01LocalCounting.exec();
             // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
+            // 
             // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
             // ocl_radixSort04Scatter.exec();
             gpu::WorkSize ws(GROUP_SIZE, groups * GROUP_SIZE);
