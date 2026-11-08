@@ -11,7 +11,7 @@
 
 #include <fstream>
 
-std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<unsigned int>, std::vector<unsigned int>> generate_csr_matrix(
+std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<unsigned int>> generate_csr_matrix(
     unsigned int nrows, unsigned int ncols,
     unsigned int min_non_zero_values_per_row, unsigned int max_non_zero_values_per_row,
     unsigned int max_value)
@@ -24,7 +24,6 @@ std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<uns
     }
     const unsigned int number_of_non_zero_values = csr_row_offsets[nrows];
 
-    std::vector<unsigned int> csr_rows(number_of_non_zero_values, 0);
     std::vector<unsigned int> csr_columns(number_of_non_zero_values, 0);
     std::vector<unsigned int> csr_values(number_of_non_zero_values, 0);
 
@@ -36,13 +35,12 @@ std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<uns
 
         for (int i = 0; i < non_zero_row_values; ++i) {
             unsigned int value = r.next(0, max_value);
-            csr_rows[csr_row_offsets[row] + i] = row;
             csr_columns[csr_row_offsets[row] + i] = columns[i];
             csr_values[csr_row_offsets[row] + i] = value;
         }
     }
 
-    return {csr_row_offsets, csr_rows, csr_columns, csr_values};
+    return {csr_row_offsets, csr_columns, csr_values};
 }
 
 std::vector<unsigned int> generate_vector(
@@ -131,7 +129,7 @@ void run(int argc, char** argv)
     double cpu_throughput_sum = 0.0, gpu_throughput_sum = 0.0;
     for (auto [min_nnz_per_row, max_nnz_per_col]: evaluated_min_max_nnz_per_row) {
         std::cout << "____________________________________________________________________________________________" << std::endl;
-        const auto [csr_row_offsets, csr_rows, csr_columns, csr_values] = generate_csr_matrix(nrows, ncols, min_nnz_per_row, max_nnz_per_col, max_value);
+        const auto [csr_row_offsets, csr_columns, csr_values] = generate_csr_matrix(nrows, ncols, min_nnz_per_row, max_nnz_per_col, max_value);
         const std::vector<unsigned int> vector_values = generate_vector(ncols, max_value);
         const unsigned int number_of_non_zero_values = csr_row_offsets[nrows];
         const unsigned int nnz = number_of_non_zero_values;
@@ -153,11 +151,10 @@ void run(int argc, char** argv)
         std::cout << "CPU effective bandwidth: " << memory_size_gb / elapsed << " GB/s (" << nnz / 1e6 / elapsed << " uint millions/s)" << std::endl;
 
         // Аллоцируем буферы в VRAM
-        gpu::gpu_mem_32u csr_row_offsets_gpu(nrows + 1), csr_rows_gpu(nnz), csr_columns_gpu(nnz), csr_values_gpu(nnz), vector_values_gpu(ncols), output_vector_values_gpu(nrows);
+        gpu::gpu_mem_32u csr_row_offsets_gpu(nrows + 1), csr_columns_gpu(nnz), csr_values_gpu(nnz), vector_values_gpu(ncols), output_vector_values_gpu(nrows);
 
         // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
         csr_row_offsets_gpu.writeN(csr_row_offsets.data(), csr_row_offsets.size());
-        csr_rows_gpu.writeN(csr_rows.data(), csr_rows.size());
         csr_columns_gpu.writeN(csr_columns.data(), csr_columns.size());
         csr_values_gpu.writeN(csr_values.data(), csr_values.size());
         vector_values_gpu.writeN(vector_values.data(), vector_values.size());
