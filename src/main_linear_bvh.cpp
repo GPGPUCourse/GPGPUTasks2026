@@ -291,16 +291,12 @@ void run(int argc, char** argv)
         if (gpu_lbvg_gpu_rt_done) {
             gpu::shared_device_buffer_typed<BVHNodeGPU> lbvh_nodes_gpu(2 * nfaces - 1);
             gpu::gpu_mem_32u leaf_faces_indices_gpu(nfaces);
-            std::vector<BVHNodeGPU> lbvh_nodes_cpu;
-            std::vector<uint32_t> leaf_faces_indices_cpu;
 
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                albuquerque::buildLBVH_GPU(scene.vertices, scene.faces, lbvh_nodes_cpu, leaf_faces_indices_cpu);
-                lbvh_nodes_gpu.writeN(lbvh_nodes_cpu.data(), lbvh_nodes_cpu.size());
-                leaf_faces_indices_gpu.writeN(leaf_faces_indices_cpu.data(), leaf_faces_indices_cpu.size());
+                albuquerque::buildLBVH_GPU(vertices_gpu, faces_gpu, nfaces, lbvh_nodes_gpu, leaf_faces_indices_gpu);
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
