@@ -25,6 +25,7 @@ __kernel void build_lbvh_topology_and_leaves(
     __global const uint* sortedTriIdx, // original triangle index per sorted position
     __global const AABBGPU* primAabbs, // indexed by ORIGINAL triangle index
     __global BVHNodeGPU* nodes, // 2N-1
+    __global uint* parent,
     uint nfaces)
 {
     const uint id = get_global_id(0);
@@ -83,4 +84,7 @@ __kernel void build_lbvh_topology_and_leaves(
 
     nodes[id].leftChildIndex = leftIndex;
     nodes[id].rightChildIndex = rightIndex;
+
+    parent[leftIndex] = id;
+    parent[rightIndex] = id;
 }

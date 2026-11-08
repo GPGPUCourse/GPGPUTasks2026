@@ -39,6 +39,7 @@ const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction();
 const ProgramBinaries& getRadixSort03Scatter();
 
 const ProgramBinaries& getBuildLBVHTopologyAndLeaves();
+const ProgramBinaries& getRefitInternalAabbs();
 }
 
 namespace avk2 {

@@ -53,16 +53,6 @@ inline void radixSortKV_GPU(
     }
 }
 
-// Build LBVH (Karras 2013) on CPU.
-// Output:
-//   outNodes           - BVH nodes array of size (2*N - 1). Root is node 0.
-//   outLeafTriIndices  - size N, mapping leaf i -> original triangle index.
-//
-// Node indexing convention (matches LBVH style):
-//   N = number of triangles (faces.size()).
-//   Internal nodes: indices [0 .. N-2]
-//   Leaf nodes:     indices [N-1 .. 2*N-2]
-//   Leaf at index (N-1 + i) corresponds to outLeafTriIndices[i].
 inline void buildLBVH_GPU(
     const std::vector<point3f>& vertices,
     const std::vector<point3u>& faces,
@@ -73,6 +63,7 @@ inline void buildLBVH_GPU(
     static ocl::KernelSource ocl_reduce_centroid_bounds(ocl::getReduceCentroidBounds());
     static ocl::KernelSource ocl_generate_morton_codes(ocl::getGenerateMortonCodes());
     static ocl::KernelSource ocl_build_topology(ocl::getBuildLBVHTopologyAndLeaves());
+    static ocl::KernelSource ocl_refit(ocl::getRefitInternalAabbs());
 
     const size_t N = faces.size();
     outNodes.clear();
@@ -110,14 +101,6 @@ inline void buildLBVH_GPU(
         return;
     }
 
-    // Per-triangle info
-    struct Prim {
-        uint32_t triIndex;
-        uint32_t morton;
-        AABBGPU aabb;
-        point3f centroid;
-    };
-
     const unsigned int WG = GROUP_SIZE;
     const unsigned int numGroups = (N + WG - 1) / WG;
     const unsigned int globalSize = numGroups * WG;
@@ -133,8 +116,6 @@ inline void buildLBVH_GPU(
     vertices_gpu.writeN((const float*)vertices.data(), 3 * vertices.size());
     faces_gpu.writeN((const unsigned int*)faces.data(), 3 * faces.size());
 
-    // vertices_gpu / faces_gpu are the buffers you already uploaded
-    // (declare these kernels the same way as ocl_rt_brute_force)
     ocl_compute_primitive_data.exec(
         gpu::WorkSize(WG, globalSize),
         vertices_gpu, faces_gpu,
@@ -164,58 +145,29 @@ inline void buildLBVH_GPU(
     radixSortKV_GPU(morton_codes_gpu, tri_indices_gpu, morton_tmp_gpu, tri_tmp_gpu, N);
 
     // 4-6) Leaves + topology
+    // 7.1) Enumerating bottom-up traversal order for internal nodes to build AABB
+    // 7.2) AABB propagation for internal nodes in the bottom-up traversal order
     const size_t numNodes = 2 * N - 1;
     gpu::shared_device_buffer_typed<BVHNodeGPU> nodes_gpu(numNodes);
+    gpu::gpu_mem_32u parent_gpu(numNodes);
+    gpu::gpu_mem_32u arrival_gpu(N - 1);
+    arrival_gpu.fill(0u);
 
     ocl_build_topology.exec(
         gpu::WorkSize(WG, (numNodes + WG - 1) / WG * WG),
         morton_codes_gpu, tri_indices_gpu,
         prim_aabbs_gpu.clmem(), nodes_gpu.clmem(),
+        parent_gpu, // NEW
+        (unsigned int)N);
+
+    ocl_refit.exec(
+        gpu::WorkSize(WG, globalSize), // one work-item per leaf (N, rounded up)
+        nodes_gpu.clmem(), parent_gpu, arrival_gpu,
         (unsigned int)N);
 
     outNodes.resize(numNodes);
     outLeafTriIndices.resize(N);
     nodes_gpu.readN(outNodes.data(), numNodes);
     tri_indices_gpu.readN(outLeafTriIndices.data(), N);
-
-    const GPUC_UINT INVALID = std::numeric_limits<GPUC_UINT>::max();
-
-    // 7.1) Enumerating bottom-up traversal order for internal nodes to build AABB
-    std::vector<int> traversalOrder = { 0 }; // starting with root node
-    std::set<int> alreadyVisited;
-    size_t next = 0;
-    while (next < traversalOrder.size()) {
-        int i = traversalOrder[next++];
-        rassert(alreadyVisited.count(i) == 0, 452341233412, i, next);
-        alreadyVisited.insert(i);
-        BVHNodeGPU& node = outNodes[static_cast<size_t>(i)];
-        if (node.leftChildIndex != INVALID && node.leftChildIndex < N - 1) { // ensuring it is not a leaf
-            traversalOrder.push_back(node.leftChildIndex);
-        }
-        if (node.rightChildIndex != INVALID && node.rightChildIndex < N - 1) {
-            traversalOrder.push_back(node.rightChildIndex);
-        }
-    }
-    rassert(traversalOrder.size() == N - 1, 354623412341, traversalOrder.size(), N);
-
-    // 7.2) AABB propagation for internal nodes in the bottom-up traversal order
-    for (int j = traversalOrder.size() - 1; j >= 0; --j) {
-        int i = traversalOrder[j];
-        rassert(i < outNodes.size(), 45123413211);
-        BVHNodeGPU& node = outNodes[static_cast<size_t>(i)];
-        const BVHNodeGPU& left = outNodes[static_cast<size_t>(node.leftChildIndex)];
-        const BVHNodeGPU& right = outNodes[static_cast<size_t>(node.rightChildIndex)];
-
-        AABBGPU aabb;
-        aabb.min_x = std::min(left.aabb.min_x, right.aabb.min_x);
-        aabb.min_y = std::min(left.aabb.min_y, right.aabb.min_y);
-        aabb.min_z = std::min(left.aabb.min_z, right.aabb.min_z);
-        aabb.max_x = std::max(left.aabb.max_x, right.aabb.max_x);
-        aabb.max_y = std::max(left.aabb.max_y, right.aabb.max_y);
-        aabb.max_z = std::max(left.aabb.max_z, right.aabb.max_z);
-
-        node.aabb = aabb;
-    }
 }
-
 }
