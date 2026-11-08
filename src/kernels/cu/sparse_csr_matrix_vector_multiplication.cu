@@ -26,8 +26,9 @@ __global__ void sparse_csr_matrix_vector_multiplication(
 
     uint thread_acc = 0;
     for (auto i = row_offset + thread_offset; i < next_row_offset; i += WARP_SIZE) {
-        const auto col = csr_columns[i];
-        thread_acc += csr_values[i] * vector[col];
+        // Используем __ldcs, чтобы не засорять кэш данными, которые читаем всего один раз
+        const auto col = __ldcs(&csr_columns[i]);
+        thread_acc += __ldcs(&csr_values[i]) * vector[col];
     }
     // __syncthreads здесь не нужен, так как мы в одном ворпе
     for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
