@@ -14,7 +14,9 @@ void aplusb(const gpu::WorkSize& workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
-void sparse_csr_matrix_vector_multiplication(const gpu::WorkSize &workSize)
+void sparse_csr_matrix_vector_multiplication(const gpu::WorkSize &workSize,
+    const gpu::gpu_mem_32u &offsets, const gpu::gpu_mem_32u &columns, const gpu::gpu_mem_32u &values,
+    const gpu::gpu_mem_32u &input, gpu::gpu_mem_32u &output, unsigned int nrows)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
