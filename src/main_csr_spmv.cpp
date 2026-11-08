@@ -166,8 +166,17 @@ void run(int argc, char** argv)
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             if (context.type() == gpu::Context::TypeOpenCL) {
-                // TODO
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                const unsigned int rows_per_group = GROUP_SIZE / SMALL_GROUP_SIZE;
+                const unsigned int groups_count = (nrows + rows_per_group - 1) / rows_per_group;
+                const gpu::WorkSize work_size(GROUP_SIZE, groups_count * GROUP_SIZE);
+                ocl_spvm.exec(
+                    work_size,
+                    csr_row_offsets_gpu,
+                    csr_columns_gpu,
+                    csr_values_gpu,
+                    vector_values_gpu,
+                    output_vector_values_gpu,
+                    nrows);
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
