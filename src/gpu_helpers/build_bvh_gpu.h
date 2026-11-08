@@ -80,7 +80,7 @@ inline void buildLBVH_GPU(
     radixSortKV_GPU(morton_gpu, leaf_tri_indices_gpu, n);
 
     ocl_topology.exec(workSize1D(num_nodes), morton_gpu, leaf_tri_indices_gpu,
-        prim_aabbs_gpu.clmem(), nodes_gpu, parent_gpu, n);
+        prim_aabbs_gpu.clmem(), nodes_gpu.clmem(), parent_gpu, n);
 
     if (n > 1)
         ocl_refit.exec(workSize1D(n), nodes_gpu.clmem(), parent_gpu, arrival_gpu, n);
