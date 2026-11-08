@@ -10,7 +10,8 @@ void sparse_csr_matrix_vector_multiplication(const gpu::WorkSize &workSize); // 
 namespace ocl {
 const ProgramBinaries& getAplusB();
 
-const ProgramBinaries& getSparseCSRMatrixVectorMult();
+const ProgramBinaries& getSparseCSRMatrixVectorMultByRows();
+const ProgramBinaries& getSparseCSRMatrixVectorMultByRowsTryStoreInLocal();
 }
 
 namespace avk2 {

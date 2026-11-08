@@ -7,7 +7,7 @@
 
 // кернел запускается от каждой строки матрицы (их nrows)
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
-__kernel void sparse_csr_matrix_vector_multiplication(
+__kernel void sparse_csr_matrix_vector_multiplication_CSR_BY_ROWS_TRY_STORE_IN_LOCAL(
     __global const uint* row_offsets, // size=nrows+1
     __global const uint* col, // size=nnz
     __global const uint* val, // size=nnz
@@ -17,6 +17,9 @@ __kernel void sparse_csr_matrix_vector_multiplication(
 )
 {
     const uint i = get_global_id(0);
+    const uint local_i = get_local_id(0);
+    // __local uint val_buffer[GROUP_SIZE][32];
+    __local uint col_buffer[GROUP_SIZE][32];
 
     if (i >= nrows) {
         return;
@@ -26,9 +29,17 @@ __kernel void sparse_csr_matrix_vector_multiplication(
     const uint r = row_offsets[i + 1];
 
     uint result = 0;
-    for (uint val_index = l; val_index < r; ++val_index) {
-        // TODO в качестве оптимизации мб есть смысл создать локальный массив на размер кэш-линии например и прогружать в него по кэш-линиям, а когда закончился то снова прогружать? интересно получится ли так
-        result += val[val_index] * vector[col[val_index]];
+    for (uint block_begin = l; block_begin < r;) {
+        const uint count = min(32u, r - block_begin);
+        for (uint j = 0; j < count; ++j) {
+            // val_buffer[local_i][j] = val[block_begin + j];
+            col_buffer[local_i][j] = col[block_begin + j];
+        }
+
+        for (uint j = 0; j < count; ++j) {
+            result += val[block_begin + j] * vector[col_buffer[local_i][j]];
+        }
+        block_begin += count;
     }
 
     output[i] = result;
