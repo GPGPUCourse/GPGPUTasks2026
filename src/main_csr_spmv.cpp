@@ -107,6 +107,7 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_spmvByRowsTryStoreInLocal(ocl::getSparseCSRMatrixVectorMultByRowsTryStoreInLocal());
     ocl::KernelSource ocl_spmvByNnzValuesBinsearch(ocl::getSparseCSRMatrixVectorMultByNnzValuesBinsearch());
     ocl::KernelSource ocl_spmvByNnzValuesPrecalculated(ocl::getSparseCSRMatrixVectorMultByNnzValuesPrecalculated());
+    ocl::KernelSource ocl_spmvByNnzValuesPrecalculatedGroups(ocl::getSparseCSRMatrixVectorMultByNnzValuesPrecalculatedGroups());
 
     avk2::KernelSource vk_spvm(avk2::getSparseCSRMatrixVectorMult());
 
@@ -174,16 +175,15 @@ void run(int argc, char** argv)
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             if (context.type() == gpu::Context::TypeOpenCL) {
-                ocl_spmvByNnzValuesPrecalculated.exec(
-                    gpu::WorkSize(GROUP_SIZE, nnz),
+                ocl_spmvByNnzValuesPrecalculatedGroups.exec(
+                    gpu::WorkSize(GROUP_SIZE / SMALL_GROUP_SIZE, (nnz + SMALL_GROUP_SIZE - 1) / SMALL_GROUP_SIZE),
                     csr_row_offsets_gpu,
                     csr_rows_gpu,
                     csr_columns_gpu,
                     csr_values_gpu,
                     vector_values_gpu,
                     output_vector_values_gpu,
-                    nnz,
-                    nrows
+                    nnz
                 );
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 // TODO
