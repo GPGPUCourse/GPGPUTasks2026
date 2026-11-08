@@ -22,6 +22,7 @@ __kernel void sparse_csr_matrix_vector_multiplication_CSR_BY_ROWS_WITH_SMALL_GRO
 
     // Считаем часть output[row] каждым потоков small group
     __local uint results[GROUP_SIZE];
+    results[local_id] = 0;
     if (row < nrows) {
         const uint l = row_offsets[row];
         const uint r = row_offsets[row + 1];
@@ -32,14 +33,17 @@ __kernel void sparse_csr_matrix_vector_multiplication_CSR_BY_ROWS_WITH_SMALL_GRO
         }
         results[local_id] = sum;
     }
-    barrier(CLK_LOCAL_MEM_FENCE);
 
     // Суммируем все малые суммы в одну
-    if (row < nrows && index_in_small_group == 0) {
-        uint total = 0;
-        for (uint j = 0; j < SMALL_GROUP_SIZE; ++j) {
-            total += results[local_id + j];
+    for (uint sz = SMALL_GROUP_SIZE / 2; sz > 0; sz >>= 1) {
+        barrier(CLK_LOCAL_MEM_FENCE);
+
+        if (index_in_small_group < sz) {
+            results[local_id] += results[local_id + sz];
         }
-        output[row] = total;
+    }
+
+    if (row < nrows && index_in_small_group == 0) {
+        output[row] = results[local_id];
     }
 }
