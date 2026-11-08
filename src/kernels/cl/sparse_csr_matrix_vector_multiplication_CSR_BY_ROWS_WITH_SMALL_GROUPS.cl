@@ -59,9 +59,8 @@ __kernel void sparse_csr_matrix_vector_multiplication_CSR_BY_ROWS_WITH_SMALL_GRO
     sz = 1;
     if (index_in_small_group < sz) {
         results[local_id] += results[local_id + sz];
-    }
-
-    if (row < nrows && index_in_small_group == 0) {
-        output[row] = results[local_id];
+        if (row < nrows) {
+            output[row] = results[local_id];
+        }
     }
 }
