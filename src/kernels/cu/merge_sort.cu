@@ -11,10 +11,63 @@ __global__ void merge_sort(
     const unsigned int* input_data,
           unsigned int* output_data,
                    int  sorted_k,
-                   int  n)
-{
-    const int i = blockIdx.x * blockDim.x + threadIdx.x;
-    // TODO
+                   int  n) {
+    const int k2 = sorted_k << 1;
+    const int index = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (index >= n)
+    {
+        return;
+    }
+
+    int begin = (index / k2) * k2;
+    int mid = min(begin + sorted_k, n);
+    int end = min(begin + k2, n);
+
+    unsigned int val = input_data[index];
+
+    if(index < mid)
+    {
+        int l = mid - 1, r = end;
+
+        while(l + 1 < r)
+        {
+            int m = (l + r + 1) / 2;
+            if(input_data[m] < val)
+            {
+                l = m;
+            }
+            else
+            {
+                r = m;
+            }
+        }
+
+        output_data[index + (l - mid + 1)] = val;
+    }
+    else
+    {
+
+        int l = begin - 1, r = mid;
+
+        while(l + 1 < r)
+        {
+            int m = (l + r + 1) / 2;
+            if(input_data[m] <= val)
+            {
+                l = m;
+            }
+            else
+            {
+                r = m;
+            }
+        }
+
+        output_data[begin + (index - mid) + (l - begin + 1)] = val;
+    }
+
+
+
 }
 
 namespace cuda {
