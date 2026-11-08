@@ -8,11 +8,11 @@
 
 // Один ворп суммирует одну строку, в рамках одной рабочей группы несколько ворпов = несколько строк
 __global__ void sparse_csr_matrix_vector_multiplication(
-    const uint* __restrict__ row_offsets,
-    const uint* __restrict__ csr_columns,
-    const uint* __restrict__ csr_values,
-    const uint* __restrict__ vector,
-    uint* __restrict__ result,
+    const uint* row_offsets,
+    const uint* csr_columns,
+    const uint* csr_values,
+    const uint* vector,
+    uint* result,
     const unsigned int nrows)
 {
     const auto row = blockIdx.x * (blockDim.x / WARP_SIZE) + (threadIdx.x / WARP_SIZE);
