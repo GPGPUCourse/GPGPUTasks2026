@@ -166,13 +166,14 @@ void run(int argc, char** argv)
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             if (context.type() == gpu::Context::TypeOpenCL) {
-                // TODO
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                // Одна группа SMALL_GROUP_SIZE нитей на строку → всего nrows * SMALL_GROUP_SIZE work-items.
+                ocl_spvm.exec(
+                    gpu::WorkSize(SMALL_GROUP_SIZE, nrows * SMALL_GROUP_SIZE),
+                    csr_row_offsets_gpu, csr_columns_gpu, csr_values_gpu,
+                    vector_values_gpu, output_vector_values_gpu, nrows);
             } else if (context.type() == gpu::Context::TypeCUDA) {
-                // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
             } else if (context.type() == gpu::Context::TypeVulkan) {
-                // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
             } else {
                 rassert(false, 4531412341, context.type());
