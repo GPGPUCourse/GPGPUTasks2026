@@ -11,6 +11,7 @@ namespace ocl {
 const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getSparseCSRMatrixVectorMultByRows();
+const ProgramBinaries& getSparseCSRMatrixVectorMultByRowsWithSmallGroups();
 const ProgramBinaries& getSparseCSRMatrixVectorMultByRowsTryStoreInLocal();
 const ProgramBinaries& getSparseCSRMatrixVectorMultByNnzValuesBinsearch();
 const ProgramBinaries& getSparseCSRMatrixVectorMultByNnzValuesPrecalculated();

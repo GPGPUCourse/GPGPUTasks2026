@@ -104,6 +104,8 @@ void run(int argc, char** argv)
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
     ocl::KernelSource ocl_spmvByRows(ocl::getSparseCSRMatrixVectorMultByRows());
+    ocl::KernelSource ocl_spmvByRowsWithSmallGroups(
+        ocl::getSparseCSRMatrixVectorMultByRowsWithSmallGroups());
     ocl::KernelSource ocl_spmvByRowsTryStoreInLocal(ocl::getSparseCSRMatrixVectorMultByRowsTryStoreInLocal());
     ocl::KernelSource ocl_spmvByNnzValuesBinsearch(ocl::getSparseCSRMatrixVectorMultByNnzValuesBinsearch());
     ocl::KernelSource ocl_spmvByNnzValuesPrecalculated(ocl::getSparseCSRMatrixVectorMultByNnzValuesPrecalculated());
@@ -175,15 +177,14 @@ void run(int argc, char** argv)
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             if (context.type() == gpu::Context::TypeOpenCL) {
-                ocl_spmvByNnzValuesPrecalculatedGroups.exec(
-                    gpu::WorkSize(GROUP_SIZE / SMALL_GROUP_SIZE, (nnz + SMALL_GROUP_SIZE - 1) / SMALL_GROUP_SIZE),
+                ocl_spmvByRowsWithSmallGroups.exec(
+                    gpu::WorkSize(GROUP_SIZE, size_t(nrows) * SMALL_GROUP_SIZE),
                     csr_row_offsets_gpu,
-                    csr_rows_gpu,
                     csr_columns_gpu,
                     csr_values_gpu,
                     vector_values_gpu,
                     output_vector_values_gpu,
-                    nnz
+                    nrows
                 );
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 // TODO

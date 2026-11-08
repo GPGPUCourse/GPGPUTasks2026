@@ -63,7 +63,8 @@ set(OPENCL_SOURCES
         src/kernels/cl/sparse_csr_matrix_vector_multiplication_CSR_BY_ROWS_TRY_STORE_IN_LOCAL.cl
         src/kernels/cl/sparse_csr_matrix_vector_multiplication_CSR_BY_NNZ_VALUES_BINSEARCH.cl
         src/kernels/cl/sparse_csr_matrix_vector_multiplication_CSR_BY_NNZ_VALUES_PRECALCULATED.cl
-        src/kernels/cl/sparse_csr_matrix_vector_multiplication_CSR_BY_NNZ_VALUES_PRECALCULATED_GROUPS.cl)
+        src/kernels/cl/sparse_csr_matrix_vector_multiplication_CSR_BY_NNZ_VALUES_PRECALCULATED_GROUPS.cl
+        src/kernels/cl/sparse_csr_matrix_vector_multiplication_CSR_BY_ROWS_WITH_SMALL_GROUPS.cl)
 
 set(OPENCL_INCLUDES src/kernels/defines.h src/kernels/cl/helpers/rassert.cl)
 set(OPENCL_DEFINES)
