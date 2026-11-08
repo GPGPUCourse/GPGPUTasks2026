@@ -3,6 +3,7 @@
 #include "cl/generated_kernels/aplusb.h"
 #include "cl/generated_kernels/sparse_csr_matrix_vector_multiplication_CSR_BY_ROWS.h"
 #include "cl/generated_kernels/sparse_csr_matrix_vector_multiplication_CSR_BY_ROWS_TRY_STORE_IN_LOCAL.h"
+#include "cl/generated_kernels/sparse_csr_matrix_vector_multiplication_CSR_BY_NNZ_VALUES_BINSEARCH.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/sparse_csr_matrix_vector_multiplication_comp.h"
@@ -37,6 +38,11 @@ const ProgramBinaries& getSparseCSRMatrixVectorMultByRows()
 const ProgramBinaries& getSparseCSRMatrixVectorMultByRowsTryStoreInLocal()
 {
     return opencl_binaries_sparse_csr_matrix_vector_multiplication_CSR_BY_ROWS_TRY_STORE_IN_LOCAL;
+}
+
+const ProgramBinaries& getSparseCSRMatrixVectorMultByNnzValuesBinsearch()
+{
+    return opencl_binaries_sparse_csr_matrix_vector_multiplication_CSR_BY_NNZ_VALUES_BINSEARCH;
 }
 } // namespace ocl
 

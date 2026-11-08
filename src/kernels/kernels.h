@@ -12,6 +12,7 @@ const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getSparseCSRMatrixVectorMultByRows();
 const ProgramBinaries& getSparseCSRMatrixVectorMultByRowsTryStoreInLocal();
+const ProgramBinaries& getSparseCSRMatrixVectorMultByNnzValuesBinsearch();
 }
 
 namespace avk2 {
