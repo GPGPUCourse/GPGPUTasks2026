@@ -6,24 +6,27 @@
 #include "helpers/rassert.cl"
 
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
-__kernel void
-radix_sort_01_local_counting(
-    __global const uint* input,
-    __global uint* output,
-    uint length,
-    uint digit)
+__kernel void radix_sort_01_local_counting(
+    __global const uint* keys,
+    __global uint*       hist,        // [RADIX * num_tiles], digit-major
+    uint n, uint shift, uint num_tiles)
 {
-    const uint i = get_global_id(0);
-    const uint lid = get_local_id(0);
+    const uint lid  = get_local_id(0);
+    const uint tile = get_group_id(0);
 
-    __local uint stage[GROUP_SIZE];
-
-    bool is_bound = i < length;
-
-    stage[lid] = is_bound ? ((input[i] >> digit) & 1u) : 0u;
+    __local uint local_hist[RADIX];
+    if (lid < RADIX)
+        local_hist[lid] = 0u;
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if (is_bound) {
-        output[i] = stage[lid];
+    const uint base = tile * GROUP_SIZE * RADIX_ITEMS;
+    for (uint j = 0; j < RADIX_ITEMS; ++j) {
+        const uint i = base + j * GROUP_SIZE + lid;   // coalesced; order doesn't matter for counting
+        if (i < n)
+            atomic_inc(&local_hist[(keys[i] >> shift) & (RADIX - 1u)]);
     }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    if (lid < RADIX)
+        hist[lid * num_tiles + tile] = local_hist[lid];
 }

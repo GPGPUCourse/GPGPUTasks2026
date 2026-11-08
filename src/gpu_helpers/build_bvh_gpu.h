@@ -17,27 +17,25 @@ static inline gpu::WorkSize workSize1D(unsigned int n)
 
 inline void radixSortKV_GPU(gpu::gpu_mem_32u& keys, gpu::gpu_mem_32u& vals, unsigned int n)
 {
+    static ocl::KernelSource ocl_count(ocl::getRadixSort01LocalCounting());
     static ocl::KernelSource ocl_scan(ocl::getRadixSort02GlobalPrefixesScanSumReduction());
     static ocl::KernelSource ocl_scatter(ocl::getRadixSort03Scatter());
 
-    constexpr unsigned int ITEMS_PER_THREAD = 8; // must match the .cl
-    constexpr unsigned int BITS = 30;
-    const unsigned int tile_size = GROUP_SIZE * ITEMS_PER_THREAD;
+    constexpr unsigned int PASSES = (30 + RADIX_BITS - 1) / RADIX_BITS;
+
+    constexpr unsigned int tile_size = GROUP_SIZE * RADIX_ITEMS;
     const unsigned int num_tiles = (n + tile_size - 1) / tile_size;
 
-    gpu::gpu_mem_32u keys_tmp(n), vals_tmp(n);
-    gpu::gpu_mem_32u scan(num_tiles * tile_size);
-    gpu::gpu_mem_32u spine(2 * num_tiles), tile_bump(1), total(1);
-
-    const gpu::WorkSize scan_ws(GROUP_SIZE, num_tiles * GROUP_SIZE);
-    const gpu::WorkSize scatter_ws = workSize1D(n);
+    gpu::gpu_mem_32u keys_tmp(n), vals_tmp(n), hist(RADIX * num_tiles);
+    const gpu::WorkSize tiles_ws(GROUP_SIZE, num_tiles * GROUP_SIZE);
+    const gpu::WorkSize one_group(GROUP_SIZE, GROUP_SIZE);
 
     gpu::gpu_mem_32u *ks = &keys, *vs = &vals, *kd = &keys_tmp, *vd = &vals_tmp;
-    for (unsigned int bit = 0; bit < BITS; ++bit) {
-        spine.fill(0u);
-        tile_bump.fill(0u);
-        ocl_scan.exec(scan_ws, *ks, scan, spine, tile_bump, total, n, bit);
-        ocl_scatter.exec(scatter_ws, *ks, *vs, scan, total, *kd, *vd, n, bit);
+    for (unsigned int pass = 0; pass < PASSES; ++pass) {
+        const unsigned int shift = pass * RADIX_BITS;
+        ocl_count.exec(tiles_ws, *ks, hist, n, shift, num_tiles);
+        ocl_scan.exec(one_group, hist, RADIX * num_tiles);
+        ocl_scatter.exec(tiles_ws, *ks, *vs, hist, *kd, *vd, n, shift, num_tiles);
         std::swap(ks, kd);
         std::swap(vs, vd);
     }
