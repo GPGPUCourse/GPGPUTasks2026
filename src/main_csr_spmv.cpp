@@ -167,7 +167,8 @@ void run(int argc, char** argv)
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             if (context.type() == gpu::Context::TypeOpenCL) {
                 // TODO
-                ocl::sparse_csr_matrix_vector_multiplication.exec(csr_row_offsets_gpu, csr_values_gpu, output_vector_values_gpu, nnz, rows);
+                gpu::WorkSize ws(GROUP_SIZE, nrows);
+                ocl_spvm.exec(ws, csr_row_offsets_gpu, csr_values_gpu, output_vector_values_gpu, nnz, nrows);
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);

@@ -11,7 +11,7 @@ __kernel void sparse_csr_matrix_vector_multiplication(
     uint const __global csr_values,
     uint __global output,
     uint nnz,
-    uint rows
+    uint rows)
 {
     uint global_i = get_global_id(0);
     uint sum = 0;
