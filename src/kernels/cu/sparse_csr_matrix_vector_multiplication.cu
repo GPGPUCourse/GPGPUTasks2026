@@ -16,7 +16,9 @@ __global__ void sparse_csr_matrix_vector_multiplication(
     unsigned int* y,
     unsigned int nrows)
 {
-    unsigned int row = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int tid = blockIdx.x * blockDim.x + threadIdx.x;
+    unsigned int lane = tid % 32;
+    unsigned int row = tid / 32;
     if (row >= nrows)
         return;
 
@@ -24,10 +26,14 @@ __global__ void sparse_csr_matrix_vector_multiplication(
     unsigned int end = row_offsets[row + 1];
 
     unsigned int sum = 0;
-    for (unsigned int p = begin; p < end; ++p)
+    for (unsigned int p = begin + lane; p < end; p += 32)
         sum += values[p] * x[columns[p]];
+#pragma UNROLL
+    for (int offset = 16; offset > 0; offset /= 2)
+        sum += __shfl_down_sync(0xffffffffu, sum, offset);
 
-    y[row] = sum;
+    if (lane == 0)
+        y[row] = sum;
 }
 
 namespace cuda {

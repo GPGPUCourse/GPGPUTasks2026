@@ -170,7 +170,7 @@ void run(int argc, char** argv)
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 cuda::sparse_csr_matrix_vector_multiplication(
-                    gpu::WorkSize(256, nrows),
+                    gpu::WorkSize(256, size_t(nrows) * 32),
                     csr_row_offsets_gpu,
                     csr_columns_gpu,
                     csr_values_gpu,
