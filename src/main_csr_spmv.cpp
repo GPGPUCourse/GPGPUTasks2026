@@ -101,11 +101,7 @@ void run(int argc, char** argv)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
-    ocl::KernelSource ocl_spvm(ocl::getSparseCSRMatrixVectorMult());
-
-    avk2::KernelSource vk_spvm(avk2::getSparseCSRMatrixVectorMult());
-
-    FastRandom r;
+    ocl::KernelSource ocl_spmv(ocl::getSparseCSRMatrixVectorMult());
 
     const unsigned int nrows = 1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
     const unsigned int ncols = 1000*1000;
@@ -166,8 +162,9 @@ void run(int argc, char** argv)
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             if (context.type() == gpu::Context::TypeOpenCL) {
-                // TODO
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                ocl_spmv.exec(gpu::WorkSize(GROUP_SIZE, size_t(nrows) * SMALL_GROUP_SIZE),
+                              csr_row_offsets_gpu, csr_columns_gpu, csr_values_gpu,
+                              vector_values_gpu, output_vector_values_gpu, nrows);
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -212,6 +209,7 @@ void run(int argc, char** argv)
     std::cout << "GPU mean effective VRAM bandwidth (based on per-configuration median times): "
               << gpu_bandwidth_sum / count << " GB/s ("
               << gpu_throughput_sum / count << " uint millions/s)" << std::endl;
+    std::cout << "All " << count << " matrix configurations verified against CPU" << std::endl;
 }
 
 int main(int argc, char** argv)
@@ -223,9 +221,6 @@ int main(int argc, char** argv)
         std::cerr << "Error: " << e.what() << std::endl;
         if (e.what() == DEVICE_NOT_SUPPORT_API) {
             // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за выбора CUDA API (его нет на процессоре - т.е. в случае CI на GitHub Actions)
-            exit_code = 0;
-        } else if (e.what() == CODE_IS_NOT_IMPLEMENTED) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за того что задание еще не выполнено
             exit_code = 0;
         } else {
             // Выставляем ненулевой exit code, чтобы сообщить, что случилась ошибка
