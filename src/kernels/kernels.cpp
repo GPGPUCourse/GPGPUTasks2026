@@ -36,11 +36,6 @@ const ocl::ProgramBinaries& getAplusB()
     return opencl_binaries_aplusb;
 }
 
-const ProgramBinaries& getFillBufferWithZeros()
-{
-    return opencl_binaries_fill_buffer_with_zeros;
-}
-
 const ProgramBinaries& getSparseCSRMatrixVectorMult()
 {
     return opencl_binaries_sparse_csr_matrix_vector_multiplication;
@@ -51,11 +46,6 @@ namespace avk2 {
 const ProgramBinaries& getAplusB()
 {
     return vulkan_binaries_aplusb_comp;
-}
-
-const ProgramBinaries& getFillBufferWithZeros()
-{
-    return vulkan_binaries_fill_buffer_with_zeros_comp;
 }
 
 const ProgramBinaries& getSparseCSRMatrixVectorMult()
