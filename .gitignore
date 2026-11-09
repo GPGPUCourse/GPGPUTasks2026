@@ -1,8 +1,0 @@
-**/*_cl.h
-**/generated_kernels/*
-.idea
-/build*/
-/data/
-/results/
-cmake-build*
-.vs

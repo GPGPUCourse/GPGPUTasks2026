@@ -1,6 +1,0 @@
-add_subdirectory(base)
-add_subdirectory(images)
-add_subdirectory(utils)
-add_subdirectory(clew)
-add_subdirectory(gpu)
-add_subdirectory(json)

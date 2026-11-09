@@ -1,7 +1,0 @@
-// Simple fast RNG (stateful LCG)
-float random01(inout uint s)
-{
-    s = s * 1664525u + 1013904223u;
-    // top 24 bits -> [0,1)
-    return float(s >> 8u) * (1.0 / 16777216.0);
-}

@@ -1,8 +1,0 @@
-San Miguel model can be downloaded here:
-https://disk.yandex.ru/d/mIP8q6V9nJiBLw
-https://casual-effects.com/g3d/data10/research/model/San_Miguel/San_Miguel.zip
-
-After unzipping you should have file data/powerplant/san-miguel.obj
-
-List of all models:
-https://casual-effects.com/data/
