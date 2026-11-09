@@ -4,7 +4,8 @@
 #include "cl/generated_kernels/merge_sort.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
-#include "vk/generated_kernels/merge_sort_comp.h"
+#include "vk/generated_kernels/merge_sort_small_comp.h"
+#include "vk/generated_kernels/merge_sort_large_comp.h"
 
 #ifndef CUDA_SUPPORT
 namespace cuda {
@@ -41,8 +42,13 @@ const ProgramBinaries& getAplusB()
     return vulkan_binaries_aplusb_comp;
 }
 
-const ProgramBinaries& getMergeSort()
+const ProgramBinaries& getMergeSortSmall()
 {
-    return vulkan_binaries_merge_sort_comp;
+    return vulkan_binaries_merge_sort_small_comp;
+}
+
+const ProgramBinaries& getMergeSortLarge()
+{
+    return vulkan_binaries_merge_sort_large_comp;
 }
 } // namespace avk2

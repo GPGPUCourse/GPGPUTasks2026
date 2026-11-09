@@ -16,5 +16,7 @@ const ProgramBinaries& getMergeSort();
 namespace avk2 {
 const ProgramBinaries& getAplusB();
 
-const ProgramBinaries& getMergeSort();
+const ProgramBinaries& getMergeSortSmall();
+
+const ProgramBinaries& getMergeSortLarge();
 }
