@@ -28,7 +28,7 @@ __global__ void sparse_csr_matrix_vector_multiplication(
     unsigned int sum = 0;
     for (unsigned int p = begin + lane; p < end; p += 32)
         sum += values[p] * x[columns[p]];
-#pragma UNROLL
+#pragma unroll
     for (int offset = 16; offset > 0; offset /= 2)
         sum += __shfl_down_sync(0xffffffffu, sum, offset);
 
