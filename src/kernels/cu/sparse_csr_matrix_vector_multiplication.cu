@@ -17,9 +17,10 @@ __global__ void sparse_csr_matrix_vector_multiplication(
 {
     uint my_collumn = blockIdx.x * (blockDim.x / 32) + threadIdx.x / 32;
     uint my_offset = offsets[my_collumn];
+    uint nex_offset = offsets[my_collumn + 1];
     uint my_ans = 0;
     uint me = threadIdx.x % 32;
-    while(my_offset + me < offsets[my_collumn + 1]){
+    while(my_offset + me < nex_offset){
         uint my_value = values[my_offset + me];
         uint my_input = input[collumns[my_offset + me]];
         my_ans += my_value * my_input;
