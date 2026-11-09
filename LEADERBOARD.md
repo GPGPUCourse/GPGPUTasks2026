@@ -32,17 +32,24 @@ P.S. `Tesla V100-SXM2-16GB`: `125 TFLOPS` Tensor Core FP16.
 
 | Place | Year | Participant | Team | Result | API | Link |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 2025 | Роберт Смайт | СПбГУ | 3150.26 uint millions/s | CUDA | [PR #545](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/545/changes/cb7102356ba2f72dea488695401e3d7edb7f8872) |
-| 2 | 2025 | Andrew Ratkov | СПбГУ | 1525.03 uint millions/s | OpenCL | [PR #568](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/568/changes/8fc00235a51dc14ee75f1c379266cc8743797027) |
-| 3 | 2025 | Pribytkov Fedor | СПбГУ | 370.38 uint millions/s | OpenCL | [PR #569](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/569/changes/e6f2dd9969009f232c7a7aa1b21d477b0b7ba440) |
+| 1 | 2026 | Павел Мовчанюк | Военмех | 16685.6 uint millions/s | CUDA | [PR #495](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/495#issuecomment-6391185696) |
+| 2 | 2026 | cub::DeviceRadixSort | NVIDIA | 15997.1 uint millions/s | CUDA | [PR #550](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/550#issuecomment-6369934890) |
+| 3 | 2026 | Никита Богатырев | ИТМО | 11105.3 uint millions/s | CUDA | [PR #609](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/609#issuecomment-6426440143) |
+| 4 | 2026 | Санджар Сатлыков | ВШЭ / YADRO | 10436.1 uint millions/s | CUDA | [PR #593](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/593#issuecomment-6426414597) |
+| 5 | 2025 | Роберт Смайт | СПбГУ | 3150.26 uint millions/s | CUDA | [PR #545](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/545/changes/cb7102356ba2f72dea488695401e3d7edb7f8872) |
+| 6 | 2025 | Andrew Ratkov | СПбГУ | 1525.03 uint millions/s | OpenCL | [PR #568](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/568/changes/8fc00235a51dc14ee75f1c379266cc8743797027) |
+| 7 | 2025 | Pribytkov Fedor | СПбГУ | 370.38 uint millions/s | OpenCL | [PR #569](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/569/changes/e6f2dd9969009f232c7a7aa1b21d477b0b7ba440) |
 
 ## Task 06. Merge Sort
 
 | Place | Year | Participant | Team | Result | API | Link |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 2025 | Артём Батыгин | ВШЭ | 2074.01 uint millions/s | OpenCL | [PR #639](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/639/changes/e8af772fc73eb596841c7a39e3076d794768d9b2) |
-| 2 | 2025 | Mikhail Stulov | МФТИ / ТБанк | 2054.23 uint millions/s | OpenCL | [PR #645](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/645/changes/2013a028ee0f3baa4fc5838089fde4897be92bf5) |
-| 3 | 2025 | Роберт Смайт | СПбГУ | 1216.70 uint millions/s | CUDA | [PR #625](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/625/changes/393c73bb8e0a3824870f9e48af85c43f146a25fa) |
+| 1 | 2026 | Антон Тасаков | ИТМО | 4385.88 uint millions/s | OpenCL | [PR #658](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/658#issuecomment-6560908843) |
+| 2 | 2026 | Егор Коновалов | ИТМО | 3308.06 uint millions/s | OpenCL | [PR #669](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/669#issuecomment-6579983302) |
+| 3 | 2026 | Павел Мовчанюк | Военмех | 3288.23 uint millions/s | CUDA | [PR #688](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/688#issuecomment-6587824138) |
+| 4 | 2025 | Артём Батыгин | ВШЭ | 2074.01 uint millions/s | OpenCL | [PR #639](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/639/changes/e8af772fc73eb596841c7a39e3076d794768d9b2) |
+| 5 | 2025 | Mikhail Stulov | МФТИ / ТБанк | 2054.23 uint millions/s | OpenCL | [PR #645](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/645/changes/2013a028ee0f3baa4fc5838089fde4897be92bf5) |
+| 6 | 2025 | Роберт Смайт | СПбГУ | 1216.70 uint millions/s | CUDA | [PR #625](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/625/changes/393c73bb8e0a3824870f9e48af85c43f146a25fa) |
 
 ## Task 07. SpMV
 
