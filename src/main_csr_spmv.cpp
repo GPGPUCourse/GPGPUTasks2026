@@ -165,7 +165,8 @@ void run(int argc, char** argv)
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
             } else if (context.type() == gpu::Context::TypeVulkan) {
-                gpu::WorkSize ws(GROUP_SIZE, nrows);
+                const uint threads = (nrows + 4 - 1) / 4;
+                gpu::WorkSize ws(GROUP_SIZE, threads);
                 vk_spvm.exec(nrows, ws, csr_row_offsets_gpu, csr_columns_gpu, csr_values_gpu,
                              vector_values_gpu, output_vector_values_gpu);
             } else {

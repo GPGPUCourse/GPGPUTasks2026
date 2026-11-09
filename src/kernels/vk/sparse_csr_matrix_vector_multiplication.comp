@@ -17,16 +17,28 @@ layout (push_constant) uniform PushConstants {
 layout (local_size_x = GROUP_SIZE) in;
 void main()
 {
-    const uint row = gl_GlobalInvocationID.x;
-    if (row >= params.nrows) {
+    const uint thread = gl_GlobalInvocationID.x;
+    uint idx = thread*4;
+    if (idx >= params.nrows) {
         return;
     }
-    uint offset = offsets[row];
-    uint count = offsets[row+1] - offset;
-    uint res = 0;
-    for (uint i = 0; i < count; ++i) {
-        uint j = columns[offset + i];
-        res += values[offset + i] * vector[j];
+    for (int t = 0; t < 4; t++) {
+        uint p = offsets[idx];
+        uint end = offsets[idx+1];
+        uint col = columns[p];
+        uint val = values[p];
+        uint res = 0;
+
+        while (p + 1 < end) {
+            uint colN = columns[p+1];
+            uint valN = values[p+1];
+
+            res += val * vector[col];
+            col = colN;
+            val = valN;
+            p++;
+        }
+        res += val * vector[col];
+        result[idx++] = res;
     }
-    result[row] = res;
 }
