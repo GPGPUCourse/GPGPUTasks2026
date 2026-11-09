@@ -102,6 +102,7 @@ void run(int argc, char** argv)
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
     ocl::KernelSource ocl_spvm(ocl::getSparseCSRMatrixVectorMult());
+    ocl_spvm.precompile();
 
     avk2::KernelSource vk_spvm(avk2::getSparseCSRMatrixVectorMult());
 
@@ -166,8 +167,20 @@ void run(int argc, char** argv)
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             if (context.type() == gpu::Context::TypeOpenCL) {
-                // TODO
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                constexpr unsigned int THREADS_PER_ROW = 32;
+                constexpr unsigned int ROWS_PER_GROUP = GROUP_SIZE / THREADS_PER_ROW;
+                const unsigned int work_items =
+                    ((nrows + ROWS_PER_GROUP - 1) / ROWS_PER_GROUP) * GROUP_SIZE;
+
+                ocl_spvm.exec(
+                    gpu::WorkSize(GROUP_SIZE, work_items),
+                    csr_row_offsets_gpu,
+                    csr_columns_gpu,
+                    csr_values_gpu,
+                    vector_values_gpu,
+                    output_vector_values_gpu,
+                    nrows
+                );
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
