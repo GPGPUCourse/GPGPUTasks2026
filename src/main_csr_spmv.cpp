@@ -4,7 +4,6 @@
 #include <libbase/fast_random.h>
 #include <libbase/timer.h>
 #include <libgpu/vulkan/engine.h>
-#include <libgpu/vulkan/tests/test_utils.h>
 
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
@@ -104,9 +103,6 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_fillBufferWithZeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_spvm(ocl::getSparseCSRMatrixVectorMult());
 
-    avk2::KernelSource vk_fillBufferWithZeros(avk2::getFillBufferWithZeros());
-    avk2::KernelSource vk_spvm(avk2::getSparseCSRMatrixVectorMult());
-
     FastRandom r;
 
     const unsigned int nrows = 1000 * 1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
@@ -171,21 +167,10 @@ void run(int argc, char** argv)
             t.restart();
 
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-            // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-            if (context.type() == gpu::Context::TypeOpenCL) {
-                ocl_fillBufferWithZeros.exec(gpu::WorkSize(GROUP_SIZE, nrows), output_vector_values_gpu, nrows);
-                ocl_spvm.exec(gpu::WorkSize(GROUP_SIZE, nnz),
-                    csr_rows_gpu, csr_columns_gpu, csr_values_gpu,
-                    vector_values_gpu, output_vector_values_gpu, nnz);
-            } else if (context.type() == gpu::Context::TypeCUDA) {
-                // TODO
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            } else if (context.type() == gpu::Context::TypeVulkan) {
-                // TODO
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            } else {
-                rassert(false, 4531412341, context.type());
-            }
+            ocl_fillBufferWithZeros.exec(gpu::WorkSize(GROUP_SIZE, nrows), output_vector_values_gpu, nrows);
+            ocl_spvm.exec(gpu::WorkSize(GROUP_SIZE, nnz),
+                csr_rows_gpu, csr_columns_gpu, csr_values_gpu,
+                vector_values_gpu, output_vector_values_gpu, nnz);
 
             times.push_back(t.elapsed());
         }
