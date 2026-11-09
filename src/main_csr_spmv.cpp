@@ -101,7 +101,7 @@ void run(int argc, char** argv)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
-    ocl::KernelSource ocl_fillWithZeros(ocl::getSparseCSRMatrixVectorMult(), "fill_with_zeros");
+    ocl::KernelSource ocl_fillBufferWithZeros(ocl::getSparseCSRMatrixVectorMult(), "fill_buffer_with_zeros");
     ocl::KernelSource ocl_spvm(ocl::getSparseCSRMatrixVectorMult(), "sparse_csr_matrix_vector_multiplication");
 
     avk2::KernelSource vk_spvm(avk2::getSparseCSRMatrixVectorMult());
@@ -167,13 +167,13 @@ void run(int argc, char** argv)
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             if (context.type() == gpu::Context::TypeOpenCL) {
-                ocl_fillWithZeros.exec(
+                ocl_fillBufferWithZeros.exec(
                     gpu::WorkSize(GROUP_SIZE, nrows),
                     output_vector_values_gpu,
                     nrows
                 );
                 ocl_spvm.exec(
-                    gpu::WorkSize(GROUP_SIZE, (nnz + SPMV_VALUES_PER_ITEM - 1) / SPMV_VALUES_PER_ITEM),
+                    gpu::WorkSize(GROUP_SIZE, (nnz + SPMV_VALUES_PER_THREAD - 1) / SPMV_VALUES_PER_THREAD),
                     csr_row_offsets_gpu,
                     csr_columns_gpu,
                     csr_values_gpu,

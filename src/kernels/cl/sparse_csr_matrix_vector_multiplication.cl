@@ -5,8 +5,15 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
+#define VT    SPMV_VALUES_PER_THREAD
+#define BLOCK SPMV_BLOCK_SIZE
+
+#define LOG_NUM_BANKS 5
+#define CONFLICT_FREE_OFFSET(i) ((i) >> LOG_NUM_BANKS)
+#define PADDED(i) ((i) + CONFLICT_FREE_OFFSET(i))
+
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
-__kernel void fill_with_zeros(
+__kernel void fill_buffer_with_zeros(
     __global uint* output,
     unsigned int n)
 {
@@ -25,10 +32,22 @@ __kernel void sparse_csr_matrix_vector_multiplication(
     unsigned int nrows,
     unsigned int nnz)
 {
-    const unsigned int from = get_global_id(0) * SPMV_VALUES_PER_ITEM;
+    __local uint block_products[PADDED(BLOCK - 1) + 1];
+
+    const unsigned int local_id = get_local_id(0);
+    const unsigned int block_start = get_group_id(0) * BLOCK;
+
+    for (unsigned int k = 0; k < VT; ++k) {
+        const unsigned int j = k * GROUP_SIZE + local_id;
+        const unsigned int i = block_start + j;
+        block_products[PADDED(j)] = (i < nnz) ? values[i] * vector_values[columns[i]] : 0;
+    }
+    barrier(CLK_LOCAL_MEM_FENCE);
+
+    const unsigned int from = block_start + local_id * VT;
     if (from >= nnz)
         return;
-    const unsigned int to = min(from + SPMV_VALUES_PER_ITEM, nnz);
+    const unsigned int to = min(from + VT, nnz);
 
     unsigned int lo = 0, hi = nrows;
     while (hi - lo > 1) {
@@ -44,7 +63,7 @@ __kernel void sparse_csr_matrix_vector_multiplication(
         const unsigned int row_to = min(row_offsets[row + 1], to);
         uint sum = 0;
         for (; i < row_to; ++i)
-            sum += values[i] * vector_values[columns[i]];
+            sum += block_products[PADDED(i - block_start)];
         atomic_add(&output[row], sum);
     }
 }
