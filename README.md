@@ -15,7 +15,7 @@
 - [Задание 6](https://github.com/GPGPUCourse/GPGPUTasks2026/tree/task06): ```[до 02.11, 10 баллов]``` Merge sort (сортировка слиянием). ```Престиж```: 5/3/2/1 баллов за 1500/1200/900/600+ KK/s соответственно.
 - [Задание 7](https://github.com/GPGPUCourse/GPGPUTasks2026/tree/task07): ```[до 09.11, 5 баллов]``` SpMV (умножение разреженной CSR-матрицы на вектор).
 - [Задание 8](https://github.com/GPGPUCourse/GPGPUTasks2026/tree/task08): ```[до 16.11+23.11, 5+10 баллов]``` Ray Tracing: обход BVH ```5 баллов``` + построение LBVH на GPU ```10 баллов```. ```Престиж```: 5 баллов за denoising, 10 баллов за RT cores hardware acceleration.
-- Задание 9: ```[до 30.11, 7 баллов]``` Чистое математическое SDF искусство.
+- [Задание 9](https://github.com/GPGPUCourse/GPGPUTasks2026/tree/task09): ```[до 30.11, 7 баллов]``` Чистое математическое SDF искусство.
 
 Другое:
 
