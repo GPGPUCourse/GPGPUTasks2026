@@ -163,7 +163,7 @@ void run(int argc, char** argv)
         for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
             t.restart();
 
-            gpu::WorkSize workSize(GROUP_SIZE, nrows);
+            gpu::WorkSize workSize(GROUP_SIZE_X, GROUP_SIZE_Y, GROUP_SIZE_X, nrows);
             ocl_spvm.exec(workSize, csr_row_offsets_gpu, csr_columns_gpu, csr_values_gpu,
                           vector_values_gpu, output_vector_values_gpu, nrows);
 
