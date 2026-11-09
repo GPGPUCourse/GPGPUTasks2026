@@ -1,8 +1,8 @@
 #include <libbase/stats.h>
 #include <libutils/misc.h>
 
-#include <libbase/timer.h>
 #include <libbase/fast_random.h>
+#include <libbase/timer.h>
 #include <libgpu/vulkan/engine.h>
 #include <libgpu/vulkan/tests/test_utils.h>
 
@@ -27,7 +27,7 @@ std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<uns
     std::vector<unsigned int> csr_columns(number_of_non_zero_values, 0);
     std::vector<unsigned int> csr_values(number_of_non_zero_values, 0);
 
-    #pragma omp parallel for
+#pragma omp parallel for
     for (int row = 0; row < nrows; ++row) {
         FastRandom r(239 * row);
         unsigned int non_zero_row_values = csr_row_offsets[row + 1] - csr_row_offsets[row];
@@ -40,11 +40,11 @@ std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<uns
         }
     }
 
-    return {csr_row_offsets, csr_columns, csr_values};
+    return { csr_row_offsets, csr_columns, csr_values };
 }
 
 std::vector<unsigned int> generate_vector(
-    unsigned int n, unsigned int max_value=10000)
+    unsigned int n, unsigned int max_value = 10000)
 {
     FastRandom r(2391);
 
@@ -57,13 +57,13 @@ std::vector<unsigned int> generate_vector(
 }
 
 std::vector<unsigned int> sparse_csr_matrix_vector_multiplication(
-    const std::vector<unsigned int> &csr_row_offsets, const std::vector<unsigned int> &csr_columns, const std::vector<unsigned int> &csr_values,
-    const std::vector<unsigned int> &vector_values,
+    const std::vector<unsigned int>& csr_row_offsets, const std::vector<unsigned int>& csr_columns, const std::vector<unsigned int>& csr_values,
+    const std::vector<unsigned int>& vector_values,
     unsigned int nrows, unsigned int ncols)
 {
     std::vector<unsigned int> result_vector_values(nrows, 0);
 
-    #pragma omp parallel for schedule(dynamic, 128)
+#pragma omp parallel for schedule(dynamic, 128)
     for (int row = 0; row < nrows; ++row) {
         size_t accumulator = 0;
         unsigned int row_from = csr_row_offsets[row];
@@ -101,27 +101,29 @@ void run(int argc, char** argv)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
+    ocl::KernelSource ocl_fillBufferWithZeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_spvm(ocl::getSparseCSRMatrixVectorMult());
 
+    avk2::KernelSource vk_fillBufferWithZeros(avk2::getFillBufferWithZeros());
     avk2::KernelSource vk_spvm(avk2::getSparseCSRMatrixVectorMult());
 
     FastRandom r;
 
-    const unsigned int nrows = 1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
-    const unsigned int ncols = 1000*1000;
+    const unsigned int nrows = 1000 * 1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+    const unsigned int ncols = 1000 * 1000;
     const unsigned int max_value = 1000;
     std::cout << "Evaluating CSR matrix nrows x ncols=" << nrows << "x" << ncols << " with values in range [0; " << max_value << "]" << std::endl;
 
     std::vector<std::pair<unsigned int, unsigned int>> evaluated_min_max_nnz_per_row = {
-        {32, 32},
-        {128, 128},
-        {1, 32},
-        {1, 128},
-        {32, 128},
+        { 32, 32 },
+        { 128, 128 },
+        { 1, 32 },
+        { 1, 128 },
+        { 32, 128 },
     };
     double cpu_bandwidth_sum = 0.0, gpu_bandwidth_sum = 0.0;
     double cpu_throughput_sum = 0.0, gpu_throughput_sum = 0.0;
-    for (auto [min_nnz_per_row, max_nnz_per_col]: evaluated_min_max_nnz_per_row) {
+    for (auto [min_nnz_per_row, max_nnz_per_col] : evaluated_min_max_nnz_per_row) {
         std::cout << "____________________________________________________________________________________________" << std::endl;
         const auto [csr_row_offsets, csr_columns, csr_values] = generate_csr_matrix(nrows, ncols, min_nnz_per_row, max_nnz_per_col, max_value);
         const std::vector<unsigned int> vector_values = generate_vector(ncols, max_value);
@@ -144,19 +146,24 @@ void run(int argc, char** argv)
         std::cout << "CPU (multi-threaded via OpenMP) finished in " << elapsed << " sec" << std::endl;
         std::cout << "CPU effective bandwidth: " << memory_size_gb / elapsed << " GB/s (" << nnz / 1e6 / elapsed << " uint millions/s)" << std::endl;
 
+        // Разворачиваем CSR → COO-like: для каждого nnz явно храним номер строки
+        // (cols и vals уже есть; rows[i] = строка элемента i)
+        std::vector<unsigned int> csr_rows(nnz);
+        for (unsigned int row = 0; row < nrows; ++row) {
+            for (unsigned int i = csr_row_offsets[row]; i < csr_row_offsets[row + 1]; ++i) {
+                csr_rows[i] = row;
+            }
+        }
+
         // Аллоцируем буферы в VRAM
-        gpu::gpu_mem_32u csr_row_offsets_gpu(nrows + 1), csr_columns_gpu(nnz), csr_values_gpu(nnz), vector_values_gpu(ncols), output_vector_values_gpu(nrows);
+        gpu::gpu_mem_32u csr_rows_gpu(nnz), csr_columns_gpu(nnz), csr_values_gpu(nnz);
+        gpu::gpu_mem_32u vector_values_gpu(ncols), output_vector_values_gpu(nrows);
 
         // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
-        csr_row_offsets_gpu.writeN(csr_row_offsets.data(), csr_row_offsets.size());
+        csr_rows_gpu.writeN(csr_rows.data(), csr_rows.size());
         csr_columns_gpu.writeN(csr_columns.data(), csr_columns.size());
         csr_values_gpu.writeN(csr_values.data(), csr_values.size());
         vector_values_gpu.writeN(vector_values.data(), vector_values.size());
-
-        // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
-        // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
-        // Если вам нужно занулять буферы в процессе вычислений - создайте кернел который это сделает
-        output_vector_values_gpu.fill(255);
 
         // Запускаем кернел (несколько раз и с замером времени выполнения)
         std::vector<double> times;
@@ -166,8 +173,10 @@ void run(int argc, char** argv)
             // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
             // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             if (context.type() == gpu::Context::TypeOpenCL) {
-                // TODO
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                ocl_fillBufferWithZeros.exec(gpu::WorkSize(GROUP_SIZE, nrows), output_vector_values_gpu, nrows);
+                ocl_spvm.exec(gpu::WorkSize(GROUP_SIZE, nnz),
+                    csr_rows_gpu, csr_columns_gpu, csr_values_gpu,
+                    vector_values_gpu, output_vector_values_gpu, nnz);
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
