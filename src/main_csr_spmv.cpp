@@ -107,8 +107,8 @@ void run(int argc, char** argv)
 
     FastRandom r;
 
-    const unsigned int nrows = 1000 * 1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
-    const unsigned int ncols = 1000 * 1000;
+    const unsigned int nrows = 100 * 100; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+    const unsigned int ncols = 100 * 100;
     const unsigned int max_value = 1000;
     std::cout << "Evaluating CSR matrix nrows x ncols=" << nrows << "x" << ncols << " with values in range [0; " << max_value << "]" << std::endl;
 
@@ -168,7 +168,7 @@ void run(int argc, char** argv)
             if (context.type() == gpu::Context::TypeOpenCL) {
                 // TODO
                 gpu::WorkSize ws(GROUP_SIZE, nrows);
-                ocl_spvm.exec(ws, csr_row_offsets_gpu, csr_values_gpu, output_vector_values_gpu, nnz, nrows);
+                ocl_spvm.exec(ws, csr_row_offsets_gpu, csr_columns_gpu, csr_values_gpu, vector_values_gpu, output_vector_values_gpu, nnz, nrows);
             } else if (context.type() == gpu::Context::TypeCUDA) {
                 // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
