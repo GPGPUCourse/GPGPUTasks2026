@@ -1,0 +1,405 @@
+~$ compute-sanitizer --help
+NVIDIA (R) Compute Sanitizer
+Copyright (c) 2020-2025 NVIDIA Corporation
+Version 2025.2.1.0 (build 35969825) (public-release)
+Usage: compute-sanitizer [options] [your-program] [your-program-options]
+
+General options:
+  -h [ --help ]                         Produce this help message.
+  -v [ --version ]                      Print the version number.
+  --check-bulk-copy arg (=yes)          Enables checks related to the PTX cp.async.bulk instructions on Hopper+
+  --check-device-heap arg (=yes)        Check allocation on the device heap.
+  --check-exit-code arg (=yes)          Check application exit code and print an error if it is different than 0
+  --check-optix-leaks                   Makes the compute-sanitizer track OptiX resources in order to find leaking resources at OptixDeviceContextDestroy time.
+  --check-warpgroup-mma arg (=yes)      Enables checks related to the PTX wgmma instructions for sm_90a architecture.
+  --coredump-behavior arg (=full)       Controls the behavior of the target application after generating a CUDA coredump.
+                                        full      : Abort the target application and generate a CPU coredump
+                                        exit      : Exit the target application without generating a CPU coredump
+                                        
+  --coredump-name arg                   Name to use for the generated coredump file
+  --demangle arg (=full)                Demangle function names.
+                                        full   : Show demangled function name, including parameters, templates, etc
+                                        simple : Show demangled function name, without parameters, templates, etc
+                                        no     : Show mangled function name
+  --destroy-on-device-error arg (=context)
+                                        Behavior of compute-sanitizer on a precise device error.
+                                        NOTE: Imprecise errors will always destroy the context.
+                                        context : CUDA context is terminated with an error.
+                                        kernel  : Kernel is terminated. Subsequent kernel launches are still allowed.
+  --error-exitcode arg                  When this is set, compute-sanitizer will return the given exitcode when any errors are detected.
+  --force-blocking-launches             Force launches to be blocking.
+  --force-synchronization-limit arg (=0)
+                                        Set the maximum number of launches occurring on a given stream without forcing a synchronization.
+                                        A lower value can help reducing tools usage of device memory at the cost of performances.
+                                        A zero value sets no limit. A one value is equivalent to --force-blocking-launches.
+  --generate-coredump                   When this is set, a coredump will be generated for the first error encountered and program execution will be stopped.
+                                        Thread state is built only for threads that encountered the error.
+                                        The coredump is saved in the directory from which compute-sanitizer was ran.
+  --ignore-getprocaddress-notfound      Ignore CUDA_ERROR_NOT_FOUND API errors for cuGetProcAddress.
+  --injection-path arg                  Set the path to injection libraries.
+  --injection-path32 arg                Set the path to 32-bit injection libraries. If set, must be absolute.
+  --kernel-name arg                     key1=val1,key2=val2,...
+                                        The filter option can be used to control the kernels that will be checked by the tool
+                                        Multiple filter options can be defined. Each option is additive, so kernels matching
+                                        any specified filter will be checked
+                                        Filters are specified as key value pairs, with each pair separated by a ',', except when using the regex key
+                                        where other pairs need to be specified by reusing the option.
+                                        Keys have both a long form, and a shorter form for convenience.
+                                        Valid values for keys are:
+                                            kernel_name, kne      : The value is the full mangled name of the kernel
+                                            kernel_substring, kns : The value is a substring in the mangled name of the kernel
+                                            regex                 : The value is a regular expression found in the mangled name of the kernel
+  --kernel-name-exclude arg             key1=val1,key2=val2,...
+                                        The exclude option can be used to control the kernels that will not be checked by the tool
+                                        Multiple exclude options can be defined. Each option is additive, so kernels matching
+                                        any specified pattern will be excluded
+                                        If this option is specified with filter option(s), only kernels matching at least one
+                                        filter pattern and not matching any exclude patterns will be checked.
+                                        Exclusions are specified as key value pairs, with each pair separated by a ',', except when using the regex key
+                                        where other pairs need to be specified by reusing the option.
+                                        Keys have both a long form, and a shorter form for convenience.
+                                        Valid values for keys are:
+                                            kernel_name, kne      : The value is the full mangled name of the kernel
+                                            kernel_substring, kns : The value is a substring in the mangled name of the kernel
+                                            regex                 : The value is a regular expression found in the mangled name of the kernel
+  --language arg (=c)                   <c|fortran> This option can be used to enable language specific behavior. When set to fortran, the thread and block indices
+                                        of messages printed by compute-sanitizer will start with 1-based offset to match Fortran semantics.
+  -c [ --launch-count ] arg (=0)        Limit the number of kernel launches to check. The count is only incremented for launches that match the kernel filters. Use 0 for unlimited.
+  -s [ --launch-skip ] arg (=0)         Set the number of kernel launches to skip before starting to check. The count is only incremented for launches that match the kernel filters.
+  --launch-timeout arg                  Timeout in seconds to wait to connect to the target process. A value of zero forces compute-sanitizer to wait infinitely.
+                                        Default timeout is 10 seconds for single process tracking and 60 seconds for multi-process.
+  --log-file arg                        File where compute-sanitizer will write all of its text output. If not specified, compute-sanitizer output is written to stdout.
+                                        The sequence %p in the string name will be replaced by the pid of the compute-sanitizer application.
+                                        The sequence %q{FOO} will be replaced by the value of the environment variable FOO. If the environment variable
+                                        is not defined, it will be replaced by an empty string
+                                        The sequence %% is replaced with a literal % in the file name.
+                                        Any other character following % will cause an error.
+  --max-connections arg (=10)           Maximum number of ports for connecting to target application
+  --kill                                Makes the compute-sanitizer kill the target application when having a communication error.
+  --mode arg (=launch-and-attach)       Select the mode of interaction with the target application:
+                                          launch-and-attach
+                                          (launch and attach for sanitizing)
+                                          launch
+                                          (launch and suspend for later attach)
+                                          attach
+                                          (attach to launched application)
+  --num-callers-device arg (=0)         Set the number of callers to print in device stack traces. Use 0 for unlimited.
+  --num-callers-host arg (=0)           Set the number of callers to print in host stack traces. Use 0 for unlimited.
+  --num-cuda-barriers arg (=0)          Set the number of cuda::barriers that the target application will use per block. Use 0 for automatic detection.
+  --nvtx arg (=yes)                     Enable NVTX support.
+  --port arg (=49152)                   Base port for connecting to target application
+  --preload-library arg                 lib1,lib2,...
+                                        Prepend a shared library to be loaded by the application before the injection libraries.
+  --prefix arg (==========)             Changes the prefix string displayed by compute-sanitizer.
+  --print-level arg (=warn)             <info|warn|error|fatal> Set the minimum level of errors to print.
+  --print-limit arg (=100)              When this is set, compute-sanitizer will stop printing errors after reaching the given number of errors.
+                                        Use 0 for unlimited printing.
+  --print-session-details               Print session details.
+  -q [ --quiet ]                        Controls whether to run silently and only print error messages.
+  --read arg                            Reads error records from a given file, previously generated with --save.
+  --require-cuda-init arg (=yes)        Control if the tool should return an error code when the target application does not use CUDA
+  --save arg                            Saves the error record to file.
+                                        If --xml is enabled, then the file will be in an XML format. Otherwise, it will be in a binary format.
+                                        The sequence %p in the string name will be replaced by the pid of the compute-sanitizer application.
+                                        The sequence %q{FOO} will be replaced by the value of the environment variable FOO. If the environment variable
+                                        is not defined, it will be replaced by an empty string.
+                                        The sequence %% is replaced by a literal % in the file name.
+                                        Any other character following % will cause an error.
+  --save-session-details                Save session details in record file specified by --save option.
+  --strip-paths arg (=yes)              Print only filenames instead of full paths.
+  --support-32bit                       Enable support for 32-bit applications on Linux x86_64.
+                                        Note: Only 64bits processes are supported for actual checks
+  --suppressions arg                    Suppressions file.
+  --target-processes arg (=all)         Select which processes are to be tracked by compute-sanitizer:
+                                        application-only : Track only the root application process
+                                        all              : Track the root application and all its child processes
+  --target-processes-filter arg         Set the comma separated expressions to filter which processes are tracked.
+                                          <process name> Set the process name to filter by. Only exactly matched processes are tracked.
+                                          regex:<expression> Set the regex to filter only matching process names.
+                                        The executable name will be considered as process name to match.
+  --tool arg (=memcheck)                Set the tool to use.
+                                        memcheck  : Memory access checking
+                                        racecheck : Shared memory hazard checking
+                                        synccheck : Synchronization checking
+                                        initcheck : Global memory initialization checking
+  --xml                                 Emit error output to file in XML format.
+                                        When enabled, --save must be set to specify the file to save to.
+
+Backtrace options:
+  --backtrace-short arg (=yes)          Show shorter version of backtrace. Hide cudart frames and frames below main.
+  --show-backtrace arg (=yes)           Display a backtrace on error.
+                                        no     : No backtrace shown
+                                        host   : Only host backtrace shown
+                                        device : Only device backtrace shown for precise errors
+                                        yes    : Host and device backtraces shown
+                                        See the manual for more information
+
+Memcheck-specific options:
+  --check-cache-control                 Check cache control memory accesses.
+  --detect-missing-module-unload        Detect leaks caused by missing module unload calls. This option should not be used if the application uses the CUDA runtime.
+  --leak-check arg (=no)                <full|no> Print leak information for CUDA allocations.
+  --padding arg (=0)                    Size in bytes for padding buffer to add after each allocation.
+  --report-api-errors arg (=explicit)   Print errors if any API call fails.
+                                        all      : Report all CUDA API errors, including APIs invoked implicitly
+                                        explicit : Report errors in explicit CUDA API calls only
+                                        no       : Disable reporting of CUDA API errors
+  --track-stream-ordered-races arg (=no)
+                                        Track CUDA stream-ordered allocations races.
+                                        all              : Track and report all CUDA stream-ordered allocations races
+                                        use-before-alloc : Track and report use-before-alloc CUDA stream-ordered allocations races
+                                        use-after-free   : Track and report use-after-free CUDA stream-ordered allocations races
+                                        no               : Disable tracking and reporting for CUDA stream-ordered allocations races
+
+Racecheck-specific options:
+  --racecheck-detect-level arg (=warn)  <info|warn|error> Set the minimum level of race conditions to detect.
+  --racecheck-memcpy-async arg (=yes)   Enables checks relating to asynchronous memory copy operations
+  --racecheck-trace-sync arg (=no)      Enables tracing of synchronization operations (implies print level info).
+  --racecheck-deadlock-timeout arg (=0) Set the timeout in milliseconds for synchronization instruction hang to be considered a deadlock. Use 0 for no deadlock detection.
+  --racecheck-continue-on-deadlock arg (=yes)
+                                        Enables to contiue past a detected deadlock.
+  --racecheck-num-workers arg (=0)      Number of CPU worker threads used by the tool. Use 0 for automatic
+  --racecheck-report arg (=analysis)    The reporting mode that applies to racecheck.
+                                        all      : Report all hazards and race analysis reports.
+                                        hazard   : Report only hazards.
+                                        analysis : Report only race analysis reports.
+
+Initcheck-specific options:
+  --check-api-memory-access arg (=yes)  Check cudaMemcpy/cudaMemset for accesses to device memory
+  --check-optix                         Track OptiX kernel launches.
+  --track-unused-memory                 Check for unused memory allocations.
+  --unused-memory-threshold arg (=0)    Threshold for unused memory reporting. This is the minimum percentage value under which partially unused allocations are not reported.
+
+Synccheck-specific options:
+  --missing-barrier-init-is-fatal arg (=yes)
+                                        Controls whether a missing cuda::barrier initialization will exit the warp.
+
+Please see the compute-sanitizer manual for more information.
+
+polarnick@PolarServer01:~$ compute-sanitizer --help | grep race
+  --num-callers-device arg (=0)         Set the number of callers to print in device stack traces. Use 0 for unlimited.
+  --num-callers-host arg (=0)           Set the number of callers to print in host stack traces. Use 0 for unlimited.
+                                        racecheck : Shared memory hazard checking
+Backtrace options:
+  --backtrace-short arg (=yes)          Show shorter version of backtrace. Hide cudart frames and frames below main.
+  --show-backtrace arg (=yes)           Display a backtrace on error.
+                                        no     : No backtrace shown
+                                        host   : Only host backtrace shown
+                                        device : Only device backtrace shown for precise errors
+                                        yes    : Host and device backtraces shown
+  --track-stream-ordered-races arg (=no)
+                                        Track CUDA stream-ordered allocations races.
+                                        all              : Track and report all CUDA stream-ordered allocations races
+                                        use-before-alloc : Track and report use-before-alloc CUDA stream-ordered allocations races
+                                        use-after-free   : Track and report use-after-free CUDA stream-ordered allocations races
+                                        no               : Disable tracking and reporting for CUDA stream-ordered allocations races
+  --racecheck-detect-level arg (=warn)  <info|warn|error> Set the minimum level of race conditions to detect.
+  --racecheck-memcpy-async arg (=yes)   Enables checks relating to asynchronous memory copy operations
+  --racecheck-trace-sync arg (=no)      Enables tracing of synchronization operations (implies print level info).
+  --racecheck-deadlock-timeout arg (=0) Set the timeout in milliseconds for synchronization instruction hang to be considered a deadlock. Use 0 for no deadlock detection.
+  --racecheck-continue-on-deadlock arg (=yes)
+  --racecheck-num-workers arg (=0)      Number of CPU worker threads used by the tool. Use 0 for automatic
+  --racecheck-report arg (=analysis)    The reporting mode that applies to racecheck.
+                                        all      : Report all hazards and race analysis reports.
+                                        analysis : Report only race analysis reports.$ compute-sanitizer --help
+NVIDIA (R) Compute Sanitizer
+Copyright (c) 2020-2025 NVIDIA Corporation
+Version 2025.2.1.0 (build 35969825) (public-release)
+Usage: compute-sanitizer [options] [your-program] [your-program-options]
+
+General options:
+  -h [ --help ]                         Produce this help message.
+  -v [ --version ]                      Print the version number.
+  --check-bulk-copy arg (=yes)          Enables checks related to the PTX cp.async.bulk instructions on Hopper+
+  --check-device-heap arg (=yes)        Check allocation on the device heap.
+  --check-exit-code arg (=yes)          Check application exit code and print an error if it is different than 0
+  --check-optix-leaks                   Makes the compute-sanitizer track OptiX resources in order to find leaking resources at OptixDeviceContextDestroy time.
+  --check-warpgroup-mma arg (=yes)      Enables checks related to the PTX wgmma instructions for sm_90a architecture.
+  --coredump-behavior arg (=full)       Controls the behavior of the target application after generating a CUDA coredump.
+                                        full      : Abort the target application and generate a CPU coredump
+                                        exit      : Exit the target application without generating a CPU coredump
+                                        
+  --coredump-name arg                   Name to use for the generated coredump file
+  --demangle arg (=full)                Demangle function names.
+                                        full   : Show demangled function name, including parameters, templates, etc
+                                        simple : Show demangled function name, without parameters, templates, etc
+                                        no     : Show mangled function name
+  --destroy-on-device-error arg (=context)
+                                        Behavior of compute-sanitizer on a precise device error.
+                                        NOTE: Imprecise errors will always destroy the context.
+                                        context : CUDA context is terminated with an error.
+                                        kernel  : Kernel is terminated. Subsequent kernel launches are still allowed.
+  --error-exitcode arg                  When this is set, compute-sanitizer will return the given exitcode when any errors are detected.
+  --force-blocking-launches             Force launches to be blocking.
+  --force-synchronization-limit arg (=0)
+                                        Set the maximum number of launches occurring on a given stream without forcing a synchronization.
+                                        A lower value can help reducing tools usage of device memory at the cost of performances.
+                                        A zero value sets no limit. A one value is equivalent to --force-blocking-launches.
+  --generate-coredump                   When this is set, a coredump will be generated for the first error encountered and program execution will be stopped.
+                                        Thread state is built only for threads that encountered the error.
+                                        The coredump is saved in the directory from which compute-sanitizer was ran.
+  --ignore-getprocaddress-notfound      Ignore CUDA_ERROR_NOT_FOUND API errors for cuGetProcAddress.
+  --injection-path arg                  Set the path to injection libraries.
+  --injection-path32 arg                Set the path to 32-bit injection libraries. If set, must be absolute.
+  --kernel-name arg                     key1=val1,key2=val2,...
+                                        The filter option can be used to control the kernels that will be checked by the tool
+                                        Multiple filter options can be defined. Each option is additive, so kernels matching
+                                        any specified filter will be checked
+                                        Filters are specified as key value pairs, with each pair separated by a ',', except when using the regex key
+                                        where other pairs need to be specified by reusing the option.
+                                        Keys have both a long form, and a shorter form for convenience.
+                                        Valid values for keys are:
+                                            kernel_name, kne      : The value is the full mangled name of the kernel
+                                            kernel_substring, kns : The value is a substring in the mangled name of the kernel
+                                            regex                 : The value is a regular expression found in the mangled name of the kernel
+  --kernel-name-exclude arg             key1=val1,key2=val2,...
+                                        The exclude option can be used to control the kernels that will not be checked by the tool
+                                        Multiple exclude options can be defined. Each option is additive, so kernels matching
+                                        any specified pattern will be excluded
+                                        If this option is specified with filter option(s), only kernels matching at least one
+                                        filter pattern and not matching any exclude patterns will be checked.
+                                        Exclusions are specified as key value pairs, with each pair separated by a ',', except when using the regex key
+                                        where other pairs need to be specified by reusing the option.
+                                        Keys have both a long form, and a shorter form for convenience.
+                                        Valid values for keys are:
+                                            kernel_name, kne      : The value is the full mangled name of the kernel
+                                            kernel_substring, kns : The value is a substring in the mangled name of the kernel
+                                            regex                 : The value is a regular expression found in the mangled name of the kernel
+  --language arg (=c)                   <c|fortran> This option can be used to enable language specific behavior. When set to fortran, the thread and block indices
+                                        of messages printed by compute-sanitizer will start with 1-based offset to match Fortran semantics.
+  -c [ --launch-count ] arg (=0)        Limit the number of kernel launches to check. The count is only incremented for launches that match the kernel filters. Use 0 for unlimited.
+  -s [ --launch-skip ] arg (=0)         Set the number of kernel launches to skip before starting to check. The count is only incremented for launches that match the kernel filters.
+  --launch-timeout arg                  Timeout in seconds to wait to connect to the target process. A value of zero forces compute-sanitizer to wait infinitely.
+                                        Default timeout is 10 seconds for single process tracking and 60 seconds for multi-process.
+  --log-file arg                        File where compute-sanitizer will write all of its text output. If not specified, compute-sanitizer output is written to stdout.
+                                        The sequence %p in the string name will be replaced by the pid of the compute-sanitizer application.
+                                        The sequence %q{FOO} will be replaced by the value of the environment variable FOO. If the environment variable
+                                        is not defined, it will be replaced by an empty string
+                                        The sequence %% is replaced with a literal % in the file name.
+                                        Any other character following % will cause an error.
+  --max-connections arg (=10)           Maximum number of ports for connecting to target application
+  --kill                                Makes the compute-sanitizer kill the target application when having a communication error.
+  --mode arg (=launch-and-attach)       Select the mode of interaction with the target application:
+                                          launch-and-attach
+                                          (launch and attach for sanitizing)
+                                          launch
+                                          (launch and suspend for later attach)
+                                          attach
+                                          (attach to launched application)
+  --num-callers-device arg (=0)         Set the number of callers to print in device stack traces. Use 0 for unlimited.
+  --num-callers-host arg (=0)           Set the number of callers to print in host stack traces. Use 0 for unlimited.
+  --num-cuda-barriers arg (=0)          Set the number of cuda::barriers that the target application will use per block. Use 0 for automatic detection.
+  --nvtx arg (=yes)                     Enable NVTX support.
+  --port arg (=49152)                   Base port for connecting to target application
+  --preload-library arg                 lib1,lib2,...
+                                        Prepend a shared library to be loaded by the application before the injection libraries.
+  --prefix arg (==========)             Changes the prefix string displayed by compute-sanitizer.
+  --print-level arg (=warn)             <info|warn|error|fatal> Set the minimum level of errors to print.
+  --print-limit arg (=100)              When this is set, compute-sanitizer will stop printing errors after reaching the given number of errors.
+                                        Use 0 for unlimited printing.
+  --print-session-details               Print session details.
+  -q [ --quiet ]                        Controls whether to run silently and only print error messages.
+  --read arg                            Reads error records from a given file, previously generated with --save.
+  --require-cuda-init arg (=yes)        Control if the tool should return an error code when the target application does not use CUDA
+  --save arg                            Saves the error record to file.
+                                        If --xml is enabled, then the file will be in an XML format. Otherwise, it will be in a binary format.
+                                        The sequence %p in the string name will be replaced by the pid of the compute-sanitizer application.
+                                        The sequence %q{FOO} will be replaced by the value of the environment variable FOO. If the environment variable
+                                        is not defined, it will be replaced by an empty string.
+                                        The sequence %% is replaced by a literal % in the file name.
+                                        Any other character following % will cause an error.
+  --save-session-details                Save session details in record file specified by --save option.
+  --strip-paths arg (=yes)              Print only filenames instead of full paths.
+  --support-32bit                       Enable support for 32-bit applications on Linux x86_64.
+                                        Note: Only 64bits processes are supported for actual checks
+  --suppressions arg                    Suppressions file.
+  --target-processes arg (=all)         Select which processes are to be tracked by compute-sanitizer:
+                                        application-only : Track only the root application process
+                                        all              : Track the root application and all its child processes
+  --target-processes-filter arg         Set the comma separated expressions to filter which processes are tracked.
+                                          <process name> Set the process name to filter by. Only exactly matched processes are tracked.
+                                          regex:<expression> Set the regex to filter only matching process names.
+                                        The executable name will be considered as process name to match.
+  --tool arg (=memcheck)                Set the tool to use.
+                                        memcheck  : Memory access checking
+                                        racecheck : Shared memory hazard checking
+                                        synccheck : Synchronization checking
+                                        initcheck : Global memory initialization checking
+  --xml                                 Emit error output to file in XML format.
+                                        When enabled, --save must be set to specify the file to save to.
+
+Backtrace options:
+  --backtrace-short arg (=yes)          Show shorter version of backtrace. Hide cudart frames and frames below main.
+  --show-backtrace arg (=yes)           Display a backtrace on error.
+                                        no     : No backtrace shown
+                                        host   : Only host backtrace shown
+                                        device : Only device backtrace shown for precise errors
+                                        yes    : Host and device backtraces shown
+                                        See the manual for more information
+
+Memcheck-specific options:
+  --check-cache-control                 Check cache control memory accesses.
+  --detect-missing-module-unload        Detect leaks caused by missing module unload calls. This option should not be used if the application uses the CUDA runtime.
+  --leak-check arg (=no)                <full|no> Print leak information for CUDA allocations.
+  --padding arg (=0)                    Size in bytes for padding buffer to add after each allocation.
+  --report-api-errors arg (=explicit)   Print errors if any API call fails.
+                                        all      : Report all CUDA API errors, including APIs invoked implicitly
+                                        explicit : Report errors in explicit CUDA API calls only
+                                        no       : Disable reporting of CUDA API errors
+  --track-stream-ordered-races arg (=no)
+                                        Track CUDA stream-ordered allocations races.
+                                        all              : Track and report all CUDA stream-ordered allocations races
+                                        use-before-alloc : Track and report use-before-alloc CUDA stream-ordered allocations races
+                                        use-after-free   : Track and report use-after-free CUDA stream-ordered allocations races
+                                        no               : Disable tracking and reporting for CUDA stream-ordered allocations races
+
+Racecheck-specific options:
+  --racecheck-detect-level arg (=warn)  <info|warn|error> Set the minimum level of race conditions to detect.
+  --racecheck-memcpy-async arg (=yes)   Enables checks relating to asynchronous memory copy operations
+  --racecheck-trace-sync arg (=no)      Enables tracing of synchronization operations (implies print level info).
+  --racecheck-deadlock-timeout arg (=0) Set the timeout in milliseconds for synchronization instruction hang to be considered a deadlock. Use 0 for no deadlock detection.
+  --racecheck-continue-on-deadlock arg (=yes)
+                                        Enables to contiue past a detected deadlock.
+  --racecheck-num-workers arg (=0)      Number of CPU worker threads used by the tool. Use 0 for automatic
+  --racecheck-report arg (=analysis)    The reporting mode that applies to racecheck.
+                                        all      : Report all hazards and race analysis reports.
+                                        hazard   : Report only hazards.
+                                        analysis : Report only race analysis reports.
+
+Initcheck-specific options:
+  --check-api-memory-access arg (=yes)  Check cudaMemcpy/cudaMemset for accesses to device memory
+  --check-optix                         Track OptiX kernel launches.
+  --track-unused-memory                 Check for unused memory allocations.
+  --unused-memory-threshold arg (=0)    Threshold for unused memory reporting. This is the minimum percentage value under which partially unused allocations are not reported.
+
+Synccheck-specific options:
+  --missing-barrier-init-is-fatal arg (=yes)
+                                        Controls whether a missing cuda::barrier initialization will exit the warp.
+
+Please see the compute-sanitizer manual for more information.
+
+polarnick@PolarServer01:~$ compute-sanitizer --help | grep race
+  --num-callers-device arg (=0)         Set the number of callers to print in device stack traces. Use 0 for unlimited.
+  --num-callers-host arg (=0)           Set the number of callers to print in host stack traces. Use 0 for unlimited.
+                                        racecheck : Shared memory hazard checking
+Backtrace options:
+  --backtrace-short arg (=yes)          Show shorter version of backtrace. Hide cudart frames and frames below main.
+  --show-backtrace arg (=yes)           Display a backtrace on error.
+                                        no     : No backtrace shown
+                                        host   : Only host backtrace shown
+                                        device : Only device backtrace shown for precise errors
+                                        yes    : Host and device backtraces shown
+  --track-stream-ordered-races arg (=no)
+                                        Track CUDA stream-ordered allocations races.
+                                        all              : Track and report all CUDA stream-ordered allocations races
+                                        use-before-alloc : Track and report use-before-alloc CUDA stream-ordered allocations races
+                                        use-after-free   : Track and report use-after-free CUDA stream-ordered allocations races
+                                        no               : Disable tracking and reporting for CUDA stream-ordered allocations races
+  --racecheck-detect-level arg (=warn)  <info|warn|error> Set the minimum level of race conditions to detect.
+  --racecheck-memcpy-async arg (=yes)   Enables checks relating to asynchronous memory copy operations
+  --racecheck-trace-sync arg (=no)      Enables tracing of synchronization operations (implies print level info).
+  --racecheck-deadlock-timeout arg (=0) Set the timeout in milliseconds for synchronization instruction hang to be considered a deadlock. Use 0 for no deadlock detection.
+  --racecheck-continue-on-deadlock arg (=yes)
+  --racecheck-num-workers arg (=0)      Number of CPU worker threads used by the tool. Use 0 for automatic
+  --racecheck-report arg (=analysis)    The reporting mode that applies to racecheck.
+                                        all      : Report all hazards and race analysis reports.
+                                        analysis : Report only race analysis reports.
