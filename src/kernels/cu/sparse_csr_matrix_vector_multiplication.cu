@@ -55,6 +55,6 @@ void sparse_csr_matrix_vector_multiplication(
         y.cuptr(),
         nrows);
 
-    CUDA_CHECK_KERNEL_ASYNC(stream);
+    CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda
