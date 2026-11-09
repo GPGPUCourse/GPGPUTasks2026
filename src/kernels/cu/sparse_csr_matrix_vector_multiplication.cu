@@ -12,10 +12,12 @@ __global__ void sparse_csr_matrix_vector_multiplication(
     const uint* values,
     const uint* collumns,
     const uint* offsets,
-    const uint* input
+    const uint* input,
+    const uint nrows
 ) // TODO input/output buffers
 {
     uint my_collumn = blockIdx.x * (blockDim.x / 32) + threadIdx.x / 32;
+    if (my_collumn >= nrows) return;
     uint my_offset = offsets[my_collumn];
     uint nex_offset = offsets[my_collumn + 1];
     uint my_ans = 0;
@@ -41,7 +43,8 @@ void sparse_csr_matrix_vector_multiplication(
     const gpu::gpu_mem_32u &values,
     const gpu::gpu_mem_32u &collumns,
     const gpu::gpu_mem_32u &offsets,
-    const gpu::gpu_mem_32u &input
+    const gpu::gpu_mem_32u &input,
+    const uint nrows
 ) // TODO input/output buffers
 {
     gpu::Context context;
@@ -52,7 +55,8 @@ void sparse_csr_matrix_vector_multiplication(
     values.cuptr(),
     collumns.cuptr(),
     offsets.cuptr(),
-    input.cuptr()
+    input.cuptr(),
+    nrows
         );
     CUDA_CHECK_KERNEL(stream);
 }

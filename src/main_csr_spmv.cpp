@@ -173,7 +173,8 @@ void run(int argc, char** argv)
                     csr_values_gpu,
                     csr_columns_gpu,
                     csr_row_offsets_gpu,
-                    vector_values_gpu
+                    vector_values_gpu,
+                    nrows
                 );
             }
             else {

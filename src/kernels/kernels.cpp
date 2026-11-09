@@ -20,7 +20,8 @@ void sparse_csr_matrix_vector_multiplication(
     const gpu::gpu_mem_32u &values,
     const gpu::gpu_mem_32u &collumns,
     const gpu::gpu_mem_32u &offsets,
-    const gpu::gpu_mem_32u &input
+    const gpu::gpu_mem_32u &input,
+    unsigned int nrows
 )
 {
     // dummy implementation if CUDA_SUPPORT is disabled
