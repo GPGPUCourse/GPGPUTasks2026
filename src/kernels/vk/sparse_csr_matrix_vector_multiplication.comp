@@ -4,14 +4,29 @@
 
 #include "../defines.h"
 
-// TODO input/output buffers
+layout (std430, binding = 0) readonly   buffer OsIn  { uint offsets[]; };
+layout (std430, binding = 1) readonly   buffer CsIn  { uint columns[]; };
+layout (std430, binding = 2) readonly   buffer MsIn  { uint values[]; };
+layout (std430, binding = 3) readonly   buffer VsIn  { uint vector[]; };
+layout (std430, binding = 4) writeonly  buffer RsOut { uint result[]; };
 
 layout (push_constant) uniform PushConstants {
-    int nrows; // TODO params
+    uint nrows;
 } params;
 
-layout (local_size_x = 1) in;
+layout (local_size_x = GROUP_SIZE) in;
 void main()
 {
-    // TODO
+    const uint row = gl_GlobalInvocationID.x;
+    if (row >= params.nrows) {
+        return;
+    }
+    uint offset = offsets[row];
+    uint count = offsets[row+1] - offset;
+    uint res = 0;
+    for (uint i = 0; i < count; ++i) {
+        uint j = columns[offset + i];
+        res += values[offset + i] * vector[j];
+    }
+    result[row] = res;
 }
