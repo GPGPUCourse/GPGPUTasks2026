@@ -10,6 +10,7 @@
 #include "kernels/kernels.h"
 
 #include <fstream>
+#include <cstdlib>
 
 std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<unsigned int>> generate_csr_matrix(
     unsigned int nrows, unsigned int ncols,
@@ -93,7 +94,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -105,7 +106,10 @@ void run(int argc, char** argv)
 
     avk2::KernelSource vk_spvm(avk2::getSparseCSRMatrixVectorMult());
 
-    FastRandom r;
+    const char* group_env = std::getenv("SPMV_GROUP_SIZE");
+    const unsigned int group_size = group_env ? std::strtoul(group_env, nullptr, 10) : 32;
+    rassert(group_size == 4 || group_size == 8 || group_size == 16 || group_size == 32, 4531412343, group_size);
+    std::cout << "Threads per row: " << group_size << std::endl;
 
     const unsigned int nrows = 1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
     const unsigned int ncols = 1000*1000;
@@ -169,8 +173,10 @@ void run(int argc, char** argv)
                 // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
             } else if (context.type() == gpu::Context::TypeCUDA) {
-                // TODO
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                cuda::sparse_csr_matrix_vector_multiplication(
+                    gpu::WorkSize(256, size_t(nrows) * group_size),
+                    csr_row_offsets_gpu, csr_columns_gpu, csr_values_gpu,
+                    vector_values_gpu, output_vector_values_gpu, nrows, group_size);
             } else if (context.type() == gpu::Context::TypeVulkan) {
                 // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
