@@ -7,33 +7,34 @@
 
 __attribute__((reqd_work_group_size(GROUP_SIZE_X, GROUP_SIZE_Y, 1)))
 __kernel void sparse_csr_matrix_vector_multiplication(
-    __global const uint* csr_row_offsets,
-    __global const uint* csr_columns,
-    __global const uint* csr_values,
-    __global const uint* vector_values,
-    __global       uint* output_vector_values,
+    __global const uint* row_offsets,
+    __global const uint* columns,
+    __global const uint* values,
+    __global const uint* x,
+    __global       uint* y,
     uint nrows)
 {
     const uint row = get_global_id(1);
     const uint lane = get_local_id(0);
-    const uint local_row = get_local_id(1);
+
+    __local uint sums[GROUP_SIZE_Y][GROUP_SIZE_X];
+    __local uint* partial = sums[get_local_id(1)];
 
     uint sum = 0;
     if (row < nrows) {
-        for (uint i = csr_row_offsets[row] + lane; i < csr_row_offsets[row + 1]; i += GROUP_SIZE_X) {
-            sum += csr_values[i] * vector_values[csr_columns[i]];
+        const uint end = row_offsets[row + 1];
+        for (uint i = row_offsets[row] + lane; i < end; i += GROUP_SIZE_X) {
+            sum += values[i] * x[columns[i]];
         }
     }
 
-    __local uint partial[GROUP_SIZE_Y][GROUP_SIZE_X];
-
-    partial[local_row][lane] = sum;
+    partial[lane] = sum;
     for (uint stride = GROUP_SIZE_X / 2; stride > 0; stride /= 2) {
         barrier(CLK_LOCAL_MEM_FENCE);
         if (lane < stride)
-            partial[local_row][lane] += partial[local_row][lane + stride];
+            partial[lane] += partial[lane + stride];
     }
 
     if (lane == 0 && row < nrows)
-        output_vector_values[row] = partial[local_row][0];
+        y[row] = partial[0];
 }
