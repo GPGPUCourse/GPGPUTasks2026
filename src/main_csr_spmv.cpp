@@ -9,6 +9,7 @@
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
 
+#include <algorithm>
 #include <fstream>
 
 std::tuple<std::vector<unsigned int>, std::vector<unsigned int>, std::vector<unsigned int>> generate_csr_matrix(
@@ -78,28 +79,91 @@ std::vector<unsigned int> sparse_csr_matrix_vector_multiplication(
     return result_vector_values;
 }
 
+#ifdef CUDA_SUPPORT
+cuda::SpmvConfig select_spmv_config(
+    const std::vector<unsigned int>& row_offsets,
+    const std::vector<unsigned int>& nnz_per_row,
+    const gpu::gpu_mem_32u& row_offsets_gpu,
+    const gpu::gpu_mem_32u& columns_gpu,
+    const gpu::gpu_mem_32u& values_gpu,
+    const gpu::gpu_mem_32u& x_gpu,
+    gpu::gpu_mem_32u& y_gpu,
+    unsigned int nrows)
+{
+    timer tuning_timer;
+    unsigned int fixed_nnz = 0;
+    if (nrows != 0 && row_offsets.front() == 0) {
+        const unsigned int first = nnz_per_row.front();
+        if ((first == 32 || first == 128)
+            && std::all_of(nnz_per_row.begin(), nnz_per_row.end(),
+                [first](unsigned int n) { return n == first; })) {
+            fixed_nnz = first;
+        }
+    }
+
+    std::vector<cuda::SpmvConfig> candidates = {{32, 256, 0, false, true}};
+    for (unsigned int width : {8u, 16u, 32u}) {
+        for (unsigned int block : {128u, 256u, 512u}) {
+            for (bool streaming : {false, true}) {
+                candidates.push_back({width, block, 0, streaming, false});
+                if (fixed_nnz != 0) {
+                    candidates.push_back({width, block, fixed_nnz, streaming, false});
+                }
+            }
+        }
+    }
+
+    const auto launch = [&](const cuda::SpmvConfig& config) {
+        cuda::sparse_csr_matrix_vector_multiplication(
+            config, row_offsets_gpu, columns_gpu, values_gpu, x_gpu, y_gpu, nrows);
+    };
+
+    std::vector<std::vector<double>> samples(candidates.size());
+    for (auto& values : samples) {
+        values.reserve(5);
+    }
+
+    for (int round = 0; round < 5; ++round) {
+        for (size_t step = 0; step < candidates.size(); ++step) {
+            const size_t i = (round % 2 == 0) ? step : candidates.size() - 1 - step;
+            launch(candidates[i]);
+            timer measurement;
+            launch(candidates[i]);
+            samples[i].push_back(measurement.elapsed());
+        }
+    }
+
+    size_t best = 0;
+    double best_time = stats::median(samples[0]);
+    for (size_t i = 1; i < candidates.size(); ++i) {
+        const double elapsed = stats::median(samples[i]);
+        if (elapsed < best_time) {
+            best = i;
+            best_time = elapsed;
+        }
+    }
+
+    const auto config = candidates[best];
+    std::cout << "SpMV selected: " << (config.baseline ? "baseline" : "optimized")
+              << ", threads/row=" << config.threads_per_row
+              << ", block=" << config.block_size
+              << ", fixed_nnz=" << config.fixed_nnz_per_row
+              << ", matrix_loads=" << (config.baseline ? "default"
+                  : (config.streaming_loads ? "streaming" : "read-only"))
+              << std::endl;
+    std::cout << "SpMV tuning: " << tuning_timer.elapsed() << " sec, "
+              << candidates.size() << " candidates, baseline="
+              << stats::median(samples[0]) * 1000.0 << " ms, selected="
+              << best_time * 1000.0 << " ms" << std::endl;
+    return config;
+}
+#endif
+
 void run(int argc, char** argv)
 {
-    // chooseGPUVkDevices:
-    // - Если не доступо ни одного устройства - кинет ошибку
-    // - Если доступно ровно одно устройство - вернет это устройство
-    // - Если доступно N>1 устройства:
-    //   - Если аргументов запуска нет или переданное число не находится в диапазоне от 0 до N-1 - кинет ошибку
-    //   - Если аргумент запуска есть и он от 0 до N-1 - вернет устройство под указанным номером
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
-    // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
-    // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
-    // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
-    // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
     gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
-    // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
-    // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
-    // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
-    //          если же вас это не останавливает - профилировщик (nsight-systems) при запуске на NVIDIA тоже работает (хоть и менее мощный чем nsight-compute)
-    //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
-    //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
     ocl::KernelSource ocl_spvm(ocl::getSparseCSRMatrixVectorMult());
 
@@ -107,7 +171,7 @@ void run(int argc, char** argv)
 
     FastRandom r;
 
-    const unsigned int nrows = 1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+    const unsigned int nrows = 1000*1000;
     const unsigned int ncols = 1000*1000;
     const unsigned int max_value = 1000;
     std::cout << "Evaluating CSR matrix nrows x ncols=" << nrows << "x" << ncols << " with values in range [0; " << max_value << "]" << std::endl;
@@ -138,51 +202,45 @@ void run(int argc, char** argv)
         timer t;
         const std::vector<unsigned int> cpu_results = sparse_csr_matrix_vector_multiplication(csr_row_offsets, csr_columns, csr_values, vector_values, nrows, ncols);
         double elapsed = t.elapsed();
-        // Вычисляем достигнутую эффективную пропускную способность видеопамяти
-        // (из соображений что мы отработали идеально - считали один раз каждое ненулевое число из матрицы + из вектора + записали результаты)
         double memory_size_gb = sizeof(unsigned int) * (nnz + vector_values.size() + cpu_results.size()) / 1024.0 / 1024.0 / 1024.0;
         std::cout << "CPU (multi-threaded via OpenMP) finished in " << elapsed << " sec" << std::endl;
         std::cout << "CPU effective bandwidth: " << memory_size_gb / elapsed << " GB/s (" << nnz / 1e6 / elapsed << " uint millions/s)" << std::endl;
 
-        // Аллоцируем буферы в VRAM
         gpu::gpu_mem_32u csr_row_offsets_gpu(nrows + 1), csr_columns_gpu(nnz), csr_values_gpu(nnz), vector_values_gpu(ncols), output_vector_values_gpu(nrows);
 
-        // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
         csr_row_offsets_gpu.writeN(csr_row_offsets.data(), csr_row_offsets.size());
         csr_columns_gpu.writeN(csr_columns.data(), csr_columns.size());
         csr_values_gpu.writeN(csr_values.data(), csr_values.size());
         vector_values_gpu.writeN(vector_values.data(), vector_values.size());
 
-        // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
-        // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
-        // Если вам нужно занулять буферы в процессе вычислений - создайте кернел который это сделает
+#ifdef CUDA_SUPPORT
+        const cuda::SpmvConfig spmv_config = select_spmv_config(
+            csr_row_offsets, nnz_per_row, csr_row_offsets_gpu, csr_columns_gpu,
+            csr_values_gpu, vector_values_gpu, output_vector_values_gpu, nrows);
+#endif
+
         output_vector_values_gpu.fill(255);
 
-        // Запускаем кернел (несколько раз и с замером времени выполнения)
         std::vector<double> times;
-        for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
+        for (int iter = 0; iter < 10; ++iter) {
             t.restart();
 
-            // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
-            // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
             if (context.type() == gpu::Context::TypeOpenCL) {
-                // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
             } else if (context.type() == gpu::Context::TypeCUDA) {
-                // TODO
-                // throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-                gpu::WorkSize workSize(256, nrows * 32);
-
+#ifdef CUDA_SUPPORT
                 cuda::sparse_csr_matrix_vector_multiplication(
-                    workSize,
+                    spmv_config,
                     csr_row_offsets_gpu,
                     csr_columns_gpu,
                     csr_values_gpu,
                     vector_values_gpu,
                     output_vector_values_gpu,
                     nrows);
+#else
+                throw std::runtime_error(DEVICE_NOT_SUPPORT_API);
+#endif
             } else if (context.type() == gpu::Context::TypeVulkan) {
-                // TODO
                 throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
             } else {
                 rassert(false, 4531412341, context.type());
@@ -193,16 +251,13 @@ void run(int argc, char** argv)
 
         std::cout << "GPU SpMV (sparse matrix-vector multiplication) times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 
-        // Вычисляем достигнутую эффективную пропускную способность видеопамяти (из соображений что мы отработали в один проход - считали массив и сохранили его переупорядоченным)
         double gpu_elapsed = stats::median(times);
         std::cout << "GPU SpMV median effective VRAM bandwidth: " << memory_size_gb / gpu_elapsed << " GB/s (" << nnz / 1e6 / gpu_elapsed << " uint millions/s)" << std::endl;
 
-        // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
         std::vector<unsigned int> gpu_results = output_vector_values_gpu.readVector();
 
         rassert(cpu_results.size() == gpu_results.size(), 43572348952, cpu_results.size(), gpu_results.size());
 
-        // Сверяем результат
         for (size_t i = 0; i < cpu_results.size(); ++i) {
             rassert(cpu_results[i] == gpu_results[i], 566324523452323, cpu_results[i], gpu_results[i], i);
         }
@@ -213,7 +268,6 @@ void run(int argc, char** argv)
         gpu_throughput_sum += nnz / 1e6 / gpu_elapsed;
     }
 
-    // Среднее арифметическое производительностей по наборам матриц с одинаковым весом каждого набора.
     const size_t count = evaluated_min_max_nnz_per_row.size();
     std::cout << "____________________________________________________________________________________________" << std::endl;
     std::cout << "Average SpMV performance across " << count << " matrix configurations:" << std::endl;
@@ -232,18 +286,14 @@ int main(int argc, char** argv)
     } catch (std::exception& e) {
         std::cerr << "Error: " << e.what() << std::endl;
         if (e.what() == DEVICE_NOT_SUPPORT_API) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за выбора CUDA API (его нет на процессоре - т.е. в случае CI на GitHub Actions)
             exit_code = 0;
         } else if (e.what() == CODE_IS_NOT_IMPLEMENTED) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за того что задание еще не выполнено
             exit_code = 0;
         } else {
-            // Выставляем ненулевой exit code, чтобы сообщить, что случилась ошибка
             exit_code = 1;
         }
     }
 
-    // we need to gracefully clear Vulkan context before it is too late (otherwise we encounter segfault on some systems)
     avk2::InstanceContext::clearGlobalInstanceContext();
 
     return exit_code;
