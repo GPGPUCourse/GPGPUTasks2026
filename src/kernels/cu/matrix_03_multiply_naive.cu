@@ -1,3 +1,4 @@
+#include <curand_mtgp32_kernel.h>
 #include <libgpu/context.h>
 #include <libgpu/work_size.h>
 #include <libgpu/shared_device_buffer.h>
@@ -15,7 +16,20 @@ __global__ void matrix_multiply_naive(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO
+    int i = blockDim.y * blockIdx.y + threadIdx.y;
+    int j = blockDim.x * blockIdx.x + threadIdx.x;
+
+    if (i >= h || j >= w) {
+        return;
+    }
+
+    float acc = 0;
+
+    for (int base = 0; base < k; ++base) {
+        acc += a[i * k + base] * b[base * w + j];
+    }
+
+    c[i * w + j] = acc;
 }
 
 namespace cuda {
