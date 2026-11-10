@@ -28,7 +28,7 @@ __global__ void matrix_transpose_coalesced_via_local_memory(
     int out_j = blockIdx.y * blockDim.y + threadIdx.x;
 
     if (out_i < w && out_j < h) {
-        transposed_matrix[out_i * h + out_i] = tmp[threadIdx.y][threadIdx.x];
+        transposed_matrix[out_i * h + out_j] = tmp[threadIdx.y][threadIdx.x];
     }
 }
 
