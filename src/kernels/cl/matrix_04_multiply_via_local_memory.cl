@@ -4,7 +4,7 @@
 
 #include "../defines.h"
 
-__attribute__((reqd_work_group_size(32, 32, 1)))
+__attribute__((reqd_work_group_size(16, 16, 1)))
 __kernel void matrix_04_multiply_via_local_memory(
                        __global const float* a, // rows=h x cols=k
                        __global const float* b, // rows=k x cols=w
@@ -19,18 +19,18 @@ __kernel void matrix_04_multiply_via_local_memory(
     int i = get_global_id(1);
     int j = get_global_id(0);
 
-    __local float tmp_a[32][32];
-    __local float tmp_b[32][32];
+    __local float tmp_a[16][16];
+    __local float tmp_b[16][16];
 
     float acc = 0;
 
-    for (int base = 0; base < k; base += 32) {
+    for (int base = 0; base < k; base += 16) {
         tmp_a[loc_i][loc_j] = i < h && base + loc_j < k ? a[i * k + base + loc_j] : 0;
         tmp_b[loc_i][loc_j] = j < w && base + loc_i < k ? b[(base + loc_i) * w + j] : 0;
 
         barrier(CLK_LOCAL_MEM_FENCE);
 
-        for (int t = 0; t < 32; ++t) {
+        for (int t = 0; t < 16; ++t) {
             acc += tmp_a[loc_i][t] * tmp_b[t][loc_j];
         }
 
