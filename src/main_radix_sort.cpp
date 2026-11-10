@@ -36,7 +36,6 @@ void run(int argc, char** argv)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
 
-    ocl::KernelSource ocl_fillBufferWithZeros(ocl::getFillBufferWithZeros());
     ocl::KernelSource ocl_radixSort01LocalCounting(ocl::getRadixSort01LocalCounting());
     ocl::KernelSource ocl_radixSort02GlobalPrefixesScanSumReduction(ocl::getRadixSort02GlobalPrefixesScanSumReduction());
     ocl::KernelSource ocl_radixSort03GlobalPrefixesScanAccumulation(ocl::getRadixSort03GlobalPrefixesScanAccumulation());
@@ -88,19 +87,18 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), total_gpu(1);
     gpu::gpu_mem_32u buffer_output_gpu(n);
+    std::vector<gpu::gpu_mem_32u> counts;
+    for (unsigned int count = (n + GROUP_SIZE - 1) / GROUP_SIZE; ; count = (count + GROUP_SIZE - 1) / GROUP_SIZE) {
+        counts.emplace_back(count);
+        if (count == 1) {
+            break;
+        }
+    }
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
-    // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
-    // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
-    // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
-    buffer_output_gpu.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
@@ -110,13 +108,29 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
+            gpu::WorkSize work_size(GROUP_SIZE, n);
+            const gpu::gpu_mem_32u* current = &input_gpu;
+            gpu::gpu_mem_32u* next = &buffer1_gpu;
+
+            for (unsigned int bit = 0; bit < 32; ++bit) {
+                ocl_radixSort01LocalCounting.exec(work_size, *current, buffer2_gpu, counts[0], n, bit);
+
+                for (unsigned int level = 0; level < counts.size(); ++level) {
+                    unsigned int count = counts[level].number();
+                    gpu::gpu_mem_32u& sums = level + 1 < counts.size() ? counts[level + 1] : total_gpu;
+                    ocl_radixSort02GlobalPrefixesScanSumReduction.exec(
+                        gpu::WorkSize(GROUP_SIZE, count), counts[level], sums, count);
+                }
+                for (unsigned int level = counts.size() - 1; level > 0; --level) {
+                    unsigned int count = counts[level - 1].number();
+                    ocl_radixSort03GlobalPrefixesScanAccumulation.exec(
+                        gpu::WorkSize(GROUP_SIZE, count), counts[level], counts[level - 1], count);
+                }
+
+                ocl_radixSort04Scatter.exec(work_size, *current, buffer2_gpu, counts[0], total_gpu, *next, n, bit);
+                current = next;
+                next = next == &buffer1_gpu ? &buffer_output_gpu : &buffer1_gpu;
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
