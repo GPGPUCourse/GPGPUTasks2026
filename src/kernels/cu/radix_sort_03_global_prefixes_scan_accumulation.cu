@@ -10,23 +10,27 @@
 __global__ void radix_sort_03_global_prefixes_scan_accumulation(
     // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
     // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    // TODO try char
-    const unsigned int* buffer1,
-          unsigned int* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+    const unsigned int* incr,
+          unsigned int* prefix_sum_accum,
+    unsigned int n)
 {
-    // TODO
+    const uint idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx < n) {
+        prefix_sum_accum[idx] += incr[blockIdx.x];
+    }
 }
 
 namespace cuda {
 void radix_sort_03_global_prefixes_scan_accumulation(const gpu::WorkSize &workSize,
-            const gpu::gpu_mem_32u &buffer1, gpu::gpu_mem_32u &buffer2, unsigned int a1, unsigned int a2)
+    const gpu::gpu_mem_32u &incr, gpu::gpu_mem_32u &prefix_sum_accum, unsigned int n)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::radix_sort_03_global_prefixes_scan_accumulation<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(buffer1.cuptr(), buffer2.cuptr(), a1, a2);
+    const size_t shared_mem_bytes = 0;
+    ::radix_sort_03_global_prefixes_scan_accumulation<<<workSize.cuGridSize(), workSize.cuBlockSize(), shared_mem_bytes, stream>>>(
+        incr.cuptr(), prefix_sum_accum.cuptr(), n);
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda
