@@ -284,9 +284,11 @@ __global__ void blurAOSeparable(CameraViewGPU *camera, float *AO1, float *AO2, P
     const int height = (int)camera->K.height;
     if (i >= width || j >= height) return;
 
-    __shared__ float weights[MAX_KERNEL_SIZE + 1];
-    for (int w = threadIdx.x; w <= kernel_size; w += blockDim.x) {
-      weights[w] = gaussian_weight(w, kernel_size);
+    const int half_kernel = kernel_size / 2;
+
+    __shared__ float weights[MAX_KERNEL_SIZE];
+    if (threadIdx.x < kernel_size) {
+      weights[threadIdx.x] = gaussian_weight(threadIdx.x, kernel_size);
     }
     __syncthreads();
 
@@ -296,7 +298,7 @@ __global__ void blurAOSeparable(CameraViewGPU *camera, float *AO1, float *AO2, P
 
     float sum_weights = 0.0f;
     float sum_ao = 0.0f;
-    for (int k = -kernel_size; k <= kernel_size; ++k) {
+    for (int k = -half_kernel; k <= half_kernel; ++k) {
       const int ni = (axis == 0) ? (i + k * stride) : i;
       const int nj = (axis == 1) ? (j + k * stride) : j;
       if (ni < 0 || ni >= width || nj < 0 || nj >= height) continue;

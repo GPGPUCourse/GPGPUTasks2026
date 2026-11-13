@@ -7,7 +7,7 @@
 
 #define AO_SAMPLES   8
 #define MAX_KERNEL_SIZE 8
-#define DEPTH_EPS 0.01f
+#define DEPTH_EPS 0.03f
 #define NORMAL_EPS 0.9f
 
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
