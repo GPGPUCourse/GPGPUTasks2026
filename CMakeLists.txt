@@ -100,11 +100,16 @@ if (GPU_CUDA_SUPPORT)
     # Вероятно вам стоит выставить в CMake options: -DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
     set(CUDA_SOURCES
             src/kernels/cu/aplusb.cu
+            src/kernels/cu/matrix_prepare.cu
             src/kernels/cu/matrix_01_transpose_naive.cu
             src/kernels/cu/matrix_02_transpose_coalesced_via_local_memory.cu
             src/kernels/cu/matrix_03_multiply_naive.cu
             src/kernels/cu/matrix_04_multiply_via_local_memory.cu
-            src/kernels/cu/matrix_05_multiply_wmma.cu)
+            src/kernels/cu/matrix_05_multiply_wmma.cu
+            src/kernels/cu/matrix_06_multiply_mma.cu
+            src/kernels/cu/matrix_07_multiply_mma_col.cu
+            src/kernels/cu/matrix_08_multiply_wmma_col.cu
+            src/kernels/cu/matrix_09_multiply_nvlink.cu)
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
