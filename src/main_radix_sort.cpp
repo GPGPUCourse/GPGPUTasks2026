@@ -13,6 +13,37 @@
 
 #include <fstream>
 
+void scan(gpu::gpu_mem_32u& input_gpu, gpu::gpu_mem_32u& buffer1_gpu, gpu::gpu_mem_32u& prefix_sum_accum_gpu, gpu::gpu_mem_32u& prefix_sum_block_accum_gpu, uint32_t n, uint32_t j) {
+    cuda::copy_to_accum(gpu::WorkSize(GROUP_SIZE, n), prefix_sum_accum_gpu, input_gpu, buffer1_gpu, n, j);
+    uint sft = 0;
+
+    int sz = n;
+    for (int i = 0; i < 8; ++i) {
+        sz = NEXT_SZ(sz);
+    }
+    int base_sz = sz;
+    int base_sft = 0;
+    for (int sz = base_sz; sz > 1; sz = NEXT_SZ(sz)) { 
+        //sz -- размер предыдущей свертки
+        //sft -- сумма по размерам предыдущих сверток
+        cuda::prefix_sum_01_reduction(gpu::WorkSize(GROUP_SIZE, NEXT_SZ(sz)), buffer1_gpu, buffer1_gpu, sz, sft);
+        sft += sz;
+    }
+    
+    cuda::prefix_sum_02_prefix_accumulation(gpu::WorkSize(GROUP_SIZE, (n + 255) / 256), buffer1_gpu, prefix_sum_block_accum_gpu, (n + 255) / 256, base_sz, base_sft, 0);
+    cuda::add_accumulated(gpu::WorkSize(GROUP_SIZE, n), prefix_sum_block_accum_gpu, prefix_sum_accum_gpu, 8, n);
+}
+
+void print_gpu_mem(gpu::gpu_mem_32u& mem) {
+    auto data = mem.readVector();
+    for (auto v: data) {
+        std::cout << v<<" ";
+    }
+    std::cout << std::endl;
+}
+
+// void radix_step(gpu::gpu_mem_32u& input_gpu, gpu::gpu_mem_32u& bit_mask_gpu, )
+
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -51,6 +82,7 @@ void run(int argc, char** argv)
     FastRandom r;
 
     int n = 100*1000*1000; // TODO при отладке используйте минимальное n (например n=5 или n=10) при котором воспроизводится бага
+    //n = 100*1000;
     int max_value = std::numeric_limits<int>::max(); // TODO при отладке используйте минимальное max_value (например max_value=8) при котором воспроизводится бага
     std::vector<unsigned int> as(n, 0);
     std::vector<unsigned int> sorted(n, 0);
@@ -88,33 +120,45 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u current_sort_gpu1(n), bit_mask_gpu(n), current_sort_gpu2(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
     gpu::gpu_mem_32u buffer_output_gpu(n);
+    gpu::gpu_mem_32u pow2_sum_gpu(2 * n), prefix_sum_accum_gpu(n), prefix_sum_block_accum_gpu((n + 255) / 256);
+
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
+    current_sort_gpu1.fill(255);
+    bit_mask_gpu.fill(255);
+    current_sort_gpu2.fill(255);
     buffer4_gpu.fill(255);
     buffer_output_gpu.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
+    for (int iter = 0; iter < 1; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeCUDA) {
-            // cuda::fill_buffer_with_zeros();
-            // cuda::radix_sort_01_local_counting();
-            // cuda::radix_sort_02_global_prefixes_scan_sum_reduction();
-            // cuda::radix_sort_03_global_prefixes_scan_accumulation();
-            // cuda::radix_sort_04_scatter();
+            auto workSize = gpu::WorkSize(GROUP_SIZE, n);
+
+            scan(input_gpu, pow2_sum_gpu, prefix_sum_accum_gpu, prefix_sum_block_accum_gpu, n, 0);
+            cuda::radix_sort_04_scatter(workSize, input_gpu, prefix_sum_accum_gpu, current_sort_gpu1, n, 0);
+
+            gpu::gpu_mem_32u* buffs[] = {&current_sort_gpu1, &current_sort_gpu2}; 
+            for (int i = 1; i < 31; ++i) {
+                uint from = 1 - i % 2;
+                uint to = !from;
+                scan(*buffs[from], pow2_sum_gpu, prefix_sum_accum_gpu, prefix_sum_block_accum_gpu, n, i);
+                cuda::radix_sort_04_scatter(workSize, *buffs[from], prefix_sum_accum_gpu, *buffs[to], n, i);
+            }
+            
+            scan(current_sort_gpu1, pow2_sum_gpu, prefix_sum_accum_gpu, prefix_sum_block_accum_gpu, n, 31);
+            cuda::radix_sort_04_scatter(workSize, current_sort_gpu1, prefix_sum_accum_gpu, buffer_output_gpu, n, 31);
         } else {
             rassert(false, 4531412341, context.type());
         }
