@@ -209,6 +209,12 @@ __global__ void ray_tracing_render_using_lbvh(
     framebuffer_face_id[idx] = faceIdBest;
 
     float ao = 1.0f; // background stays white
+    if (writePixelInfo && faceIdBest < 0) {
+        PixelInfoGPU backgroundInfo;
+        backgroundInfo.t = 0.f;
+        backgroundInfo.normalCompressed = 0u;
+        framebuffer_pixel_info[idx] = backgroundInfo;
+    }
     if (faceIdBest >= 0) {
         uint3 f = loadFace(faces, faceIdBest);
         float3 a = loadVertex(vertices, f.x);
@@ -287,6 +293,13 @@ __device__ float gaussian_weight(int x, int kernel_size) {
     return coeff * expf(exponent);
 }
 
+__device__ float pixelWorldSize(const CameraViewGPU& camera, int x, int y, float rayDistance) {
+    const float cameraX = (x + 0.5f - camera.K.cx) / camera.K.fx;
+    const float cameraY = (y + 0.5f - camera.K.cy) / camera.K.fy;
+    const float viewDepth = rayDistance * rsqrtf(cameraX * cameraX + cameraY * cameraY + 1.f);
+    return viewDepth * fmaxf(1.f / camera.K.fx, 1.f / camera.K.fy);
+}
+
 __global__ void blurAOSeparable(CameraViewGPU *camera, float *AO1, float *AO2, PixelInfoGPU *framebuffer_pixel_info, int kernel_size, int axis, int stride) {
     const int i = blockIdx.x * blockDim.x + threadIdx.x;
     const int j = blockIdx.y * blockDim.y + threadIdx.y;
@@ -305,7 +318,15 @@ __global__ void blurAOSeparable(CameraViewGPU *camera, float *AO1, float *AO2, P
 
     const int center = j * width + i;
     PixelInfoGPU pixelInfo = framebuffer_pixel_info[center];
+    if (pixelInfo.t <= 0.f) {
+      AO2[center] = AO1[center];
+      return;
+    }
     float3 pixelNormal = decompressNormal(pixelInfo.normalCompressed);
+    float3 rayOrigin, pixelRay;
+    make_primary_ray(*camera, i + 0.5f, j + 0.5f, rayOrigin, pixelRay);
+    const float centerPixelSize = pixelWorldSize(*camera, i, j, pixelInfo.t);
+    constexpr float planeTolerancePixels = 0.5f;
 
     float sum_weights = 0.0f;
     float sum_ao = 0.0f;
@@ -316,10 +337,24 @@ __global__ void blurAOSeparable(CameraViewGPU *camera, float *AO1, float *AO2, P
 
       const int nidx = nj * width + ni;
       PixelInfoGPU neighborPixelInfo = framebuffer_pixel_info[nidx];
+      if (neighborPixelInfo.t <= 0.f) continue;
       float3 neighborNormal = decompressNormal(neighborPixelInfo.normalCompressed);
 
       if (dot3(pixelNormal, neighborNormal) < NORMAL_EPS) continue;
-      if (fabsf(pixelInfo.t - neighborPixelInfo.t) > DEPTH_EPS * pixelInfo.t) continue;
+
+      float3 neighborOrigin, neighborRay;
+      make_primary_ray(*camera, ni + 0.5f, nj + 0.5f, neighborOrigin, neighborRay);
+      const float3 delta = make_float3(
+          neighborPixelInfo.t * neighborRay.x - pixelInfo.t * pixelRay.x,
+          neighborPixelInfo.t * neighborRay.y - pixelInfo.t * pixelRay.y,
+          neighborPixelInfo.t * neighborRay.z - pixelInfo.t * pixelRay.z);
+      const float planeDistance = fmaxf(fabsf(dot3(pixelNormal, delta)),
+                                        fabsf(dot3(neighborNormal, delta)));
+      const float neighborPixelSize = pixelWorldSize(*camera, ni, nj, neighborPixelInfo.t);
+      const float roundingTolerance = 8.f * FLT_EPSILON * fmaxf(pixelInfo.t, neighborPixelInfo.t);
+      const float planeTolerance = planeTolerancePixels * fminf(centerPixelSize, neighborPixelSize)
+                                 + roundingTolerance;
+      if (planeDistance > planeTolerance) continue;
 
       const float w = weights[abs(k)];
       sum_weights += w;
@@ -357,30 +392,38 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
         enableDenoising);
 
     if (enableDenoising) {
-      ::blurAOSeparable<<<workSize.cuGridSize(),
-                                      workSize.cuBlockSize(), 0, stream>>>(
-          camera.cuptr(), framebuffer_ambient_occlusion.cuptr(),
-          ao_temp_ptr, pixel_info_ptr, 5, 0, 1);
-      ::blurAOSeparable<<<workSize.cuGridSize(),
-                                      workSize.cuBlockSize(), 0, stream>>>(
-          camera.cuptr(), ao_temp_ptr, framebuffer_ambient_occlusion.cuptr(),
-          pixel_info_ptr, 5, 1, 1);
-      ::blurAOSeparable<<<workSize.cuGridSize(),
-                                      workSize.cuBlockSize(), 0, stream>>>(
-          camera.cuptr(), framebuffer_ambient_occlusion.cuptr(),
-          ao_temp_ptr, pixel_info_ptr, 5, 0, 2);
-      ::blurAOSeparable<<<workSize.cuGridSize(),
-                                      workSize.cuBlockSize(), 0, stream>>>(
-          camera.cuptr(), ao_temp_ptr, framebuffer_ambient_occlusion.cuptr(),
-          pixel_info_ptr, 5, 1, 2);
-      ::blurAOSeparable<<<workSize.cuGridSize(),
-                                      workSize.cuBlockSize(), 0, stream>>>(
-          camera.cuptr(), framebuffer_ambient_occlusion.cuptr(),
-          ao_temp_ptr, pixel_info_ptr, 5, 0, 4);
-      ::blurAOSeparable<<<workSize.cuGridSize(),
-                                      workSize.cuBlockSize(), 0, stream>>>(
-          camera.cuptr(), ao_temp_ptr, framebuffer_ambient_occlusion.cuptr(),
-          pixel_info_ptr, 5, 1, 4);
+      ::blurAOSeparable<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0,
+                          stream>>>(camera.cuptr(),
+                                    framebuffer_ambient_occlusion.cuptr(),
+                                    ao_temp_ptr, pixel_info_ptr, 5, 0, 1);
+      ::blurAOSeparable<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0,
+                          stream>>>(camera.cuptr(), ao_temp_ptr,
+                                    framebuffer_ambient_occlusion.cuptr(),
+                                    pixel_info_ptr, 5, 1, 1);
+      ::blurAOSeparable<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0,
+                          stream>>>(camera.cuptr(),
+                                    framebuffer_ambient_occlusion.cuptr(),
+                                    ao_temp_ptr, pixel_info_ptr, 5, 0, 2);
+      ::blurAOSeparable<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0,
+                          stream>>>(camera.cuptr(), ao_temp_ptr,
+                                    framebuffer_ambient_occlusion.cuptr(),
+                                    pixel_info_ptr, 5, 1, 2);
+      ::blurAOSeparable<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0,
+                          stream>>>(camera.cuptr(),
+                                    framebuffer_ambient_occlusion.cuptr(),
+                                    ao_temp_ptr, pixel_info_ptr, 5, 0, 4);
+      ::blurAOSeparable<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0,
+                          stream>>>(camera.cuptr(), ao_temp_ptr,
+                                    framebuffer_ambient_occlusion.cuptr(),
+                                    pixel_info_ptr, 5, 1, 4);
+      ::blurAOSeparable<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0,
+                          stream>>>(camera.cuptr(),
+                                    framebuffer_ambient_occlusion.cuptr(),
+                                    ao_temp_ptr, pixel_info_ptr, 5, 0, 8);
+      ::blurAOSeparable<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0,
+                          stream>>>(camera.cuptr(), ao_temp_ptr,
+                                    framebuffer_ambient_occlusion.cuptr(),
+                                    pixel_info_ptr, 5, 1, 8);
     }
     CUDA_CHECK_KERNEL(stream);
 }
