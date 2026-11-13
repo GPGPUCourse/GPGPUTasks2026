@@ -551,21 +551,14 @@ void matrix_multiply_mma_col_nvlink(const gpu::WorkSize& workSize,
     (void)workSize;
     int root = 0;
     check_cuda(cudaGetDevice(&root), 88102);
+    // The FP16 snapshot belongs to the libgpu context. Switching devices before it
+    // is built makes that context's stream an invalid handle.
     int ndev = 1;
     const int tiles_m = (h % 128u == 0) ? (int)(h / 128u) : 0;
     if (root == 0 && tiles_m > 0 && w % 128u == 0 && k % 32u == 0)
         ndev = cuda_device_count();
     if (ndev > tiles_m)
         ndev = tiles_m;
-    if (ndev > 1) {
-        for (int dev = 1; dev < ndev; ++dev) {
-            if (!peer_both_ways(0, dev)) {
-                ndev = 1;
-                break;
-            }
-        }
-        cudaSetDevice(root);
-    }
     if (ndev <= 1) {
         matrix_multiply_mma_col(workSize, a, b, c, w, h, k);
         return;
@@ -574,8 +567,17 @@ void matrix_multiply_mma_col_nvlink(const gpu::WorkSize& workSize,
     ShardCache& cache = shard_cache();
     const bool same = cache.inputs && cache.a == a.cuptr() && cache.b == b.cuptr()
         && cache.w == w && cache.h == h && cache.k == k && cache.ndev == ndev;
-    if (!same) {
+    if (!same)
         cache.inputs = new MatrixInputs(a, b, w, h, k, MatrixALayout::Panels);
+    for (int dev = 1; dev < ndev; ++dev) {
+        if (!peer_both_ways(0, dev)) {
+            cudaSetDevice(root);
+            matrix_multiply_mma_col(workSize, a, b, c, w, h, k);
+            return;
+        }
+    }
+    cudaSetDevice(root);
+    if (!same) {
         cache.a = a.cuptr();
         cache.b = b.cuptr();
         cache.w = w;
