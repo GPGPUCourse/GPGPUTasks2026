@@ -9,6 +9,7 @@
 #include "helpers/mma_col_layout.cuh"
 #include "../defines.h"
 
+#include <cuda.h>
 #include <cuda_fp16.h>
 #include <climits>
 #include <cmath>
@@ -549,6 +550,12 @@ void matrix_multiply_mma_col_nvlink(const gpu::WorkSize& workSize,
     unsigned int w, unsigned int h, unsigned int k)
 {
     (void)workSize;
+    CUcontext saved = nullptr;
+    cuCtxGetCurrent(&saved);
+    struct Restore {
+        CUcontext ctx;
+        ~Restore() { if (ctx) cuCtxSetCurrent(ctx); }
+    } restore{saved};
     int root = 0;
     check_cuda(cudaGetDevice(&root), 88102);
     // The FP16 snapshot belongs to the libgpu context. Switching devices before it
