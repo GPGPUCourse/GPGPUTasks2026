@@ -11,7 +11,9 @@
 
 #include <cuda_fp16.h>
 #include <climits>
+#include <cmath>
 #include <stdexcept>
+#include <vector>
 
 // 128x128 CTA, K-tile 32. A and B are FP16 in the Panels layout (matrix_inputs.h): every 32-k stage
 // of a 128-row panel of A / 128-column panel of B is one contiguous 4096-half block already in the
@@ -462,4 +464,202 @@ void matrix_multiply_mma_col(const gpu::WorkSize& workSize,
     }
     matrix_multiply_mma_col(*memo.inputs, c);
 }
+
+namespace {
+
+void check_cuda(cudaError_t err, int code)
+{
+    rassert(err == cudaSuccess, code, (int)err);
+}
+
+int cuda_device_count()
+{
+    int n = 0;
+    if (cudaGetDeviceCount(&n) != cudaSuccess || n < 1)
+        return 1;
+    return n > 8 ? 8 : n;
+}
+
+bool peer_both_ways(int a, int b)
+{
+    if (a == b)
+        return true;
+    int can = 0;
+    if (cudaDeviceCanAccessPeer(&can, a, b) != cudaSuccess || !can)
+        return false;
+    cudaSetDevice(a);
+    cudaError_t err = cudaDeviceEnablePeerAccess(b, 0);
+    if (err == cudaErrorPeerAccessAlreadyEnabled)
+        err = cudaSuccess;
+    cudaGetLastError();
+    if (err != cudaSuccess)
+        return false;
+    can = 0;
+    if (cudaDeviceCanAccessPeer(&can, b, a) != cudaSuccess || !can)
+        return false;
+    cudaSetDevice(b);
+    err = cudaDeviceEnablePeerAccess(a, 0);
+    if (err == cudaErrorPeerAccessAlreadyEnabled)
+        err = cudaSuccess;
+    cudaGetLastError();
+    return err == cudaSuccess;
+}
+
+void launch_on_stream(const half* A, const half* B, float* C, int w, int h, int k, cudaStream_t stream)
+{
+    const size_t tiles = (size_t)(w / 128) * (size_t)(h / 128);
+    const int tail = matrix_multiply_mma_col_remainder_tiles((unsigned)w, (unsigned)h);
+    matrix_multiply_mma_col_tile<<<unsigned(tiles - (size_t)tail), 128, 0, stream>>>(A, B, C, w, h, k);
+    if (tail > 0) {
+        matrix_multiply_mma_col_remainder<<<unsigned(tail) * 4, 128, 0, stream>>>(
+            A, B, C, w, h, k, int(tiles - (size_t)tail));
+    }
+    check_cuda(cudaGetLastError(), 88101);
+}
+
+struct Shard {
+    half* a;
+    half* b;
+    float* c;
+    size_t a_bytes;
+    size_t b_bytes;
+    size_t c_bytes;
+    cudaStream_t stream;
+};
+
+struct ShardCache {
+    const float* a;
+    const float* b;
+    unsigned w, h, k;
+    int ndev;
+    MatrixInputs* inputs;
+    Shard shard[8];
+};
+
+ShardCache& shard_cache()
+{
+    static thread_local ShardCache cache{};
+    return cache;
+}
+
+} // namespace
+
+void matrix_multiply_mma_col_nvlink(const gpu::WorkSize& workSize,
+    const gpu::gpu_mem_32f& a, const gpu::gpu_mem_32f& b, gpu::gpu_mem_32f& c,
+    unsigned int w, unsigned int h, unsigned int k)
+{
+    (void)workSize;
+    int root = 0;
+    check_cuda(cudaGetDevice(&root), 88102);
+    int ndev = 1;
+    const int tiles_m = (h % 128u == 0) ? (int)(h / 128u) : 0;
+    if (root == 0 && tiles_m > 0 && w % 128u == 0 && k % 32u == 0)
+        ndev = cuda_device_count();
+    if (ndev > tiles_m)
+        ndev = tiles_m;
+    if (ndev > 1) {
+        for (int dev = 1; dev < ndev; ++dev) {
+            if (!peer_both_ways(0, dev)) {
+                ndev = 1;
+                break;
+            }
+        }
+        cudaSetDevice(root);
+    }
+    if (ndev <= 1) {
+        matrix_multiply_mma_col(workSize, a, b, c, w, h, k);
+        return;
+    }
+
+    ShardCache& cache = shard_cache();
+    const bool same = cache.inputs && cache.a == a.cuptr() && cache.b == b.cuptr()
+        && cache.w == w && cache.h == h && cache.k == k && cache.ndev == ndev;
+    if (!same) {
+        cache.inputs = new MatrixInputs(a, b, w, h, k, MatrixALayout::Panels);
+        cache.a = a.cuptr();
+        cache.b = b.cuptr();
+        cache.w = w;
+        cache.h = h;
+        cache.k = k;
+        cache.ndev = ndev;
+        const half* Afull = reinterpret_cast<const half*>(cache.inputs->a().cuptr());
+        const half* Bfull = reinterpret_cast<const half*>(cache.inputs->b().cuptr());
+        const size_t b_bytes = mma_col_stage_offset((int)w, 0, (int)k) * sizeof(half);
+        for (int dev = 0; dev < ndev; ++dev) {
+            const int start = dev * tiles_m / ndev;
+            const int count = (dev + 1) * tiles_m / ndev - start;
+            const int row0 = start * 128;
+            const int rows = count * 128;
+            const size_t a_bytes = mma_col_stage_offset(rows, 0, (int)k) * sizeof(half);
+            Shard& shard = cache.shard[dev];
+            shard.a_bytes = a_bytes;
+            shard.b_bytes = b_bytes;
+            shard.c_bytes = (size_t)rows * w * sizeof(float);
+            check_cuda(cudaSetDevice(dev), 88103);
+            check_cuda(cudaStreamCreate(&shard.stream), 88104);
+            check_cuda(cudaMalloc(&shard.a, a_bytes), 88105);
+            check_cuda(cudaMalloc(&shard.b, b_bytes), 88106);
+            check_cuda(cudaMalloc(&shard.c, shard.c_bytes), 88107);
+            const half* srcA = Afull + mma_col_stage_offset(row0, 0, (int)k);
+            if (dev == 0) {
+                check_cuda(cudaMemcpy(shard.a, srcA, a_bytes, cudaMemcpyDeviceToDevice), 88108);
+                check_cuda(cudaMemcpy(shard.b, Bfull, b_bytes, cudaMemcpyDeviceToDevice), 88109);
+            } else {
+                check_cuda(cudaMemcpyPeer(shard.a, dev, srcA, 0, a_bytes), 88110);
+                check_cuda(cudaMemcpyPeer(shard.b, dev, Bfull, 0, b_bytes), 88111);
+            }
+        }
+        cudaSetDevice(root);
+    }
+
+    for (int dev = 0; dev < ndev; ++dev) {
+        const int start = dev * tiles_m / ndev;
+        const int count = (dev + 1) * tiles_m / ndev - start;
+        const int rows = count * 128;
+        check_cuda(cudaSetDevice(dev), 88112);
+        launch_on_stream(cache.shard[dev].a, cache.shard[dev].b, cache.shard[dev].c,
+                         (int)w, rows, (int)k, cache.shard[dev].stream);
+        check_cuda(cudaStreamSynchronize(cache.shard[dev].stream), 88113);
+    }
+
+    check_cuda(cudaSetDevice(root), 88114);
+    for (int dev = 0; dev < ndev; ++dev) {
+        const int start = dev * tiles_m / ndev;
+        const int row0 = start * 128;
+        float* dst = c.cuptr() + (size_t)row0 * w;
+        if (dev == 0)
+            check_cuda(cudaMemcpy(dst, cache.shard[dev].c, cache.shard[dev].c_bytes, cudaMemcpyDeviceToDevice), 88115);
+        else
+            check_cuda(cudaMemcpyPeer(dst, 0, cache.shard[dev].c, dev, cache.shard[dev].c_bytes), 88116);
+    }
+}
+
+void mma_col_nvlink_self_test()
+{
+    const unsigned h = 256, w = 256, k = 128;
+    std::vector<float> ha(h * k), hb(k * w), href(h * w, 0.f);
+    for (unsigned i = 0; i < ha.size(); ++i)
+        ha[i] = float((int)(i % 5) - 2);
+    for (unsigned i = 0; i < hb.size(); ++i)
+        hb[i] = float((int)(i % 3) - 1);
+    for (unsigned row = 0; row < h; ++row) {
+        for (unsigned col = 0; col < w; ++col) {
+            float acc = 0.f;
+            for (unsigned ki = 0; ki < k; ++ki)
+                acc += ha[row * k + ki] * hb[ki * w + col];
+            href[row * w + col] = acc;
+        }
+    }
+    gpu::gpu_mem_32f ga(h * k), gb(k * w), gc(h * w);
+    ga.writeN(ha.data(), ha.size());
+    gb.writeN(hb.data(), hb.size());
+    gc.fill(0.f);
+    matrix_multiply_mma_col_nvlink(gpu::WorkSize(128, 1, w, h / 128), ga, gb, gc, w, h, k);
+    const std::vector<float> got = gc.readVector();
+    for (size_t i = 0; i < got.size(); ++i) {
+        const float scale = std::abs(href[i]) + 1.f;
+        rassert(std::abs(got[i] - href[i]) / scale < 1e-3f, 88120, (int)i);
+    }
+}
+
 } // namespace cuda

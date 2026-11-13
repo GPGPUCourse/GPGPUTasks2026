@@ -78,6 +78,15 @@ void nvlink_self_test()
 {
     rassert(false, 546237686412419);
 }
+void matrix_multiply_mma_col_nvlink(const gpu::WorkSize &workSize,
+            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k)
+{
+    rassert(false, 546237686412420);
+}
+void mma_col_nvlink_self_test()
+{
+    rassert(false, 546237686412421);
+}
 } // namespace cuda
 #endif
 
