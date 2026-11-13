@@ -37,6 +37,17 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
+void build_lbvh(
+    const gpu::gpu_mem_32f& vertices, const gpu::gpu_mem_32u& faces,
+    gpu::shared_device_buffer_typed<BVHNodeGPU>& nodes, gpu::gpu_mem_32u& leafTriIndices,
+    gpu::gpu_mem_32u& morton, gpu::gpu_mem_32u& order,
+    gpu::gpu_mem_32u& parent, gpu::gpu_mem_32u& visits,
+    gpu::shared_device_buffer_typed<AABBGPU>& triangleAabb,
+    gpu::gpu_mem_32f& centroids, gpu::gpu_mem_32f& partial, gpu::gpu_mem_32f& bounds,
+    unsigned int nvertices, unsigned int nfaces)
+{
+    rassert(false, 54623523412414);
+}
 } // namespace cuda
 #endif
 
