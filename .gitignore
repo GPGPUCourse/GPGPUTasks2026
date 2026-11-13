@@ -4,3 +4,15 @@
 /build*/
 cmake-build*
 .vs
+
+# Локальные зависимости и установщики
+/googletest-release-*/
+/scripts/linux/googletest-release-*/
+/scripts/linux/Vulkan-Headers-*/
+/scripts/linux/Vulkan-*.zip
+/scripts/linux/cuda_*.run
+/scripts/linux/vk_mem_alloc.h
+/vk_mem_alloc.h
+
+# Изображения, сгенерированные примерами
+/mandelbrot*.bmp
