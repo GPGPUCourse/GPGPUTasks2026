@@ -526,7 +526,6 @@ struct Shard {
     size_t b_bytes;
     size_t c_bytes;
     cudaStream_t stream;
-    cudaStream_t copy;
 };
 
 struct ShardCache {
@@ -610,7 +609,6 @@ void matrix_multiply_mma_col_nvlink(const gpu::WorkSize& workSize,
             shard.c_bytes = (size_t)rows * w * sizeof(float);
             check_cuda(cudaSetDevice(dev), 88103);
             check_cuda(cudaStreamCreate(&shard.stream), 88104);
-            check_cuda(cudaStreamCreate(&shard.copy), 88119);
             check_cuda(cudaMalloc(&shard.a, a_bytes), 88105);
             check_cuda(cudaMalloc(&shard.b, b_bytes), 88106);
             check_cuda(cudaMalloc(&shard.c, shard.c_bytes), 88107);
@@ -626,51 +624,22 @@ void matrix_multiply_mma_col_nvlink(const gpu::WorkSize& workSize,
         cudaSetDevice(root);
     }
 
-    // Local stores, then a copy engine moves each stripe. Two waves: the second
-    // multiply overlaps the first stripe's NVLink copy.
-    int waves = 2;
+    // All devices launch together. Each writes its rows straight into C on device 0
+    // (peer access is already on), so there is no second copy after the multiply.
     for (int dev = 0; dev < ndev; ++dev) {
-        const int count = (dev + 1) * tiles_m / ndev - dev * tiles_m / ndev;
-        if (count < 2)
-            waves = 1;
-    }
-    for (int wave = 0; wave < waves; ++wave) {
-        for (int dev = 0; dev < ndev; ++dev) {
-            const int start = dev * tiles_m / ndev;
-            const int count = (dev + 1) * tiles_m / ndev - start;
-            const int first = (waves == 1 || wave == 0) ? 0 : count / 2;
-            const int ntiles = (waves == 1) ? count : (wave == 0 ? count / 2 : count - count / 2);
-            const int local_row0 = first * 128;
-            const int rows = ntiles * 128;
-            const half* a_wave = cache.shard[dev].a + mma_col_stage_offset(local_row0, 0, (int)k);
-            float* c_wave = cache.shard[dev].c + (size_t)local_row0 * w;
-            check_cuda(cudaSetDevice(dev), 88112);
-            launch_on_stream(a_wave, cache.shard[dev].b, c_wave, (int)w, rows, (int)k, cache.shard[dev].stream);
-        }
-        for (int dev = 0; dev < ndev; ++dev) {
-            check_cuda(cudaSetDevice(dev), 88113);
-            check_cuda(cudaStreamSynchronize(cache.shard[dev].stream), 88114);
-        }
-        for (int dev = 0; dev < ndev; ++dev) {
-            const int start = dev * tiles_m / ndev;
-            const int count = (dev + 1) * tiles_m / ndev - start;
-            const int first = (waves == 1 || wave == 0) ? 0 : count / 2;
-            const int ntiles = (waves == 1) ? count : (wave == 0 ? count / 2 : count - count / 2);
-            const int local_row0 = first * 128;
-            const int row0 = start * 128 + local_row0;
-            const size_t bytes = (size_t)ntiles * 128 * w * sizeof(float);
-            float* src = cache.shard[dev].c + (size_t)local_row0 * w;
-            float* dst = cache.out + (size_t)row0 * w;
-            check_cuda(cudaSetDevice(dev), 88120);
-            if (dev == 0)
-                check_cuda(cudaMemcpyAsync(dst, src, bytes, cudaMemcpyDeviceToDevice, cache.shard[dev].copy), 88121);
-            else
-                check_cuda(cudaMemcpyPeerAsync(dst, 0, src, dev, bytes, cache.shard[dev].copy), 88122);
-        }
+        const int start = dev * tiles_m / ndev;
+        const int count = (dev + 1) * tiles_m / ndev - start;
+        const int row0 = start * 128;
+        const int rows = count * 128;
+        // cudaMalloc on device 0, not the libgpu buffer: other devices can store into it.
+        float* dst = cache.out + (size_t)row0 * w;
+        check_cuda(cudaSetDevice(dev), 88112);
+        launch_on_stream(cache.shard[dev].a, cache.shard[dev].b, dst,
+                         (int)w, rows, (int)k, cache.shard[dev].stream);
     }
     for (int dev = 0; dev < ndev; ++dev) {
-        check_cuda(cudaSetDevice(dev), 88123);
-        check_cuda(cudaStreamSynchronize(cache.shard[dev].copy), 88124);
+        check_cuda(cudaSetDevice(dev), 88113);
+        check_cuda(cudaStreamSynchronize(cache.shard[dev].stream), 88114);
     }
     check_cuda(cudaSetDevice(root), 88115);
     check_cuda(cudaMemcpy(c.cuptr(), cache.out, (size_t)h * w * sizeof(float), cudaMemcpyDeviceToDevice), 88116);
