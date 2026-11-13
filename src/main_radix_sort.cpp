@@ -138,7 +138,7 @@ void run(int argc, char** argv)
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
-    for (int iter = 0; iter < 1; ++iter) { // TODO при отладке запускайте одну итерацию
+    for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
@@ -149,14 +149,12 @@ void run(int argc, char** argv)
             scan(input_gpu, pow2_sum_gpu, prefix_sum_accum_gpu, prefix_sum_block_accum_gpu, n, 0);
             cuda::radix_sort_04_scatter(workSize, input_gpu, prefix_sum_accum_gpu, current_sort_gpu1, n, 0);
 
-            gpu::gpu_mem_32u* buffs[] = {&current_sort_gpu1, &current_sort_gpu2}; 
             for (int i = 1; i < 31; ++i) {
-                uint from = 1 - i % 2;
-                uint to = !from;
-                scan(*buffs[from], pow2_sum_gpu, prefix_sum_accum_gpu, prefix_sum_block_accum_gpu, n, i);
-                cuda::radix_sort_04_scatter(workSize, *buffs[from], prefix_sum_accum_gpu, *buffs[to], n, i);
+                scan(current_sort_gpu1, pow2_sum_gpu, prefix_sum_accum_gpu, prefix_sum_block_accum_gpu, n, i);
+                cuda::radix_sort_04_scatter(workSize, current_sort_gpu1, prefix_sum_accum_gpu, current_sort_gpu2, n, i);
+                std::swap(current_sort_gpu1, current_sort_gpu2);
             }
-            
+
             scan(current_sort_gpu1, pow2_sum_gpu, prefix_sum_accum_gpu, prefix_sum_block_accum_gpu, n, 31);
             cuda::radix_sort_04_scatter(workSize, current_sort_gpu1, prefix_sum_accum_gpu, buffer_output_gpu, n, 31);
         } else {
