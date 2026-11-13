@@ -621,26 +621,23 @@ void matrix_multiply_mma_col_nvlink(const gpu::WorkSize& workSize,
         cudaSetDevice(root);
     }
 
+    // All devices launch together. Each writes its rows straight into C on device 0
+    // (peer access is already on), so there is no second copy after the multiply.
     for (int dev = 0; dev < ndev; ++dev) {
         const int start = dev * tiles_m / ndev;
         const int count = (dev + 1) * tiles_m / ndev - start;
-        const int rows = count * 128;
-        check_cuda(cudaSetDevice(dev), 88112);
-        launch_on_stream(cache.shard[dev].a, cache.shard[dev].b, cache.shard[dev].c,
-                         (int)w, rows, (int)k, cache.shard[dev].stream);
-        check_cuda(cudaStreamSynchronize(cache.shard[dev].stream), 88113);
-    }
-
-    check_cuda(cudaSetDevice(root), 88114);
-    for (int dev = 0; dev < ndev; ++dev) {
-        const int start = dev * tiles_m / ndev;
         const int row0 = start * 128;
+        const int rows = count * 128;
         float* dst = c.cuptr() + (size_t)row0 * w;
-        if (dev == 0)
-            check_cuda(cudaMemcpy(dst, cache.shard[dev].c, cache.shard[dev].c_bytes, cudaMemcpyDeviceToDevice), 88115);
-        else
-            check_cuda(cudaMemcpyPeer(dst, 0, cache.shard[dev].c, dev, cache.shard[dev].c_bytes), 88116);
+        check_cuda(cudaSetDevice(dev), 88112);
+        launch_on_stream(cache.shard[dev].a, cache.shard[dev].b, dst,
+                         (int)w, rows, (int)k, cache.shard[dev].stream);
     }
+    for (int dev = 0; dev < ndev; ++dev) {
+        check_cuda(cudaSetDevice(dev), 88113);
+        check_cuda(cudaStreamSynchronize(cache.shard[dev].stream), 88114);
+    }
+    cudaSetDevice(root);
 }
 
 void mma_col_nvlink_self_test()
