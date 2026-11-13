@@ -69,6 +69,15 @@ void matrix_multiply_wmma_col(const gpu::WorkSize &workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 546237686412417);
 }
+void matrix_multiply_nvlink(const gpu::WorkSize &workSize,
+            const gpu::gpu_mem_32f &a, const gpu::gpu_mem_32f &b, gpu::gpu_mem_32f &c, unsigned int w, unsigned int h, unsigned int k)
+{
+    rassert(false, 546237686412418);
+}
+void nvlink_self_test()
+{
+    rassert(false, 546237686412419);
+}
 } // namespace cuda
 #endif
 
