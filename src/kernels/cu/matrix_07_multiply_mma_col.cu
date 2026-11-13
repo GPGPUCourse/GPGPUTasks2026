@@ -534,6 +534,7 @@ struct ShardCache {
     unsigned w, h, k;
     int ndev;
     MatrixInputs* inputs;
+    float* out;
     Shard shard[8];
 };
 
@@ -591,6 +592,8 @@ void matrix_multiply_mma_col_nvlink(const gpu::WorkSize& workSize,
         cache.h = h;
         cache.k = k;
         cache.ndev = ndev;
+        check_cuda(cudaSetDevice(0), 88117);
+        check_cuda(cudaMalloc(&cache.out, (size_t)h * w * sizeof(float)), 88118);
         const half* Afull = reinterpret_cast<const half*>(cache.inputs->a().cuptr());
         const half* Bfull = reinterpret_cast<const half*>(cache.inputs->b().cuptr());
         const size_t b_bytes = mma_col_stage_offset((int)w, 0, (int)k) * sizeof(half);
@@ -628,7 +631,8 @@ void matrix_multiply_mma_col_nvlink(const gpu::WorkSize& workSize,
         const int count = (dev + 1) * tiles_m / ndev - start;
         const int row0 = start * 128;
         const int rows = count * 128;
-        float* dst = c.cuptr() + (size_t)row0 * w;
+        // cudaMalloc on device 0, not the libgpu buffer: other devices can store into it.
+        float* dst = cache.out + (size_t)row0 * w;
         check_cuda(cudaSetDevice(dev), 88112);
         launch_on_stream(cache.shard[dev].a, cache.shard[dev].b, dst,
                          (int)w, rows, (int)k, cache.shard[dev].stream);
@@ -637,7 +641,8 @@ void matrix_multiply_mma_col_nvlink(const gpu::WorkSize& workSize,
         check_cuda(cudaSetDevice(dev), 88113);
         check_cuda(cudaStreamSynchronize(cache.shard[dev].stream), 88114);
     }
-    cudaSetDevice(root);
+    check_cuda(cudaSetDevice(root), 88115);
+    check_cuda(cudaMemcpy(c.cuptr(), cache.out, (size_t)h * w * sizeof(float), cudaMemcpyDeviceToDevice), 88116);
 }
 
 void mma_col_nvlink_self_test()
