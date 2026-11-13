@@ -526,6 +526,7 @@ struct Shard {
     size_t b_bytes;
     size_t c_bytes;
     cudaStream_t stream;
+    cudaStream_t copy;
 };
 
 struct ShardCache {
@@ -609,6 +610,7 @@ void matrix_multiply_mma_col_nvlink(const gpu::WorkSize& workSize,
             shard.c_bytes = (size_t)rows * w * sizeof(float);
             check_cuda(cudaSetDevice(dev), 88103);
             check_cuda(cudaStreamCreate(&shard.stream), 88104);
+            check_cuda(cudaStreamCreate(&shard.copy), 88119);
             check_cuda(cudaMalloc(&shard.a, a_bytes), 88105);
             check_cuda(cudaMalloc(&shard.b, b_bytes), 88106);
             check_cuda(cudaMalloc(&shard.c, shard.c_bytes), 88107);
@@ -624,25 +626,35 @@ void matrix_multiply_mma_col_nvlink(const gpu::WorkSize& workSize,
         cudaSetDevice(root);
     }
 
-    // All devices launch together. Each writes its rows straight into C on device 0
-    // (peer access is already on), so there is no second copy after the multiply.
+    // Multiply into local memory. The copy engines then move every stripe at once.
+    // Kernel stores over NVLink were the slow part; the copy engine saturates the link.
     for (int dev = 0; dev < ndev; ++dev) {
         const int start = dev * tiles_m / ndev;
         const int count = (dev + 1) * tiles_m / ndev - start;
-        const int row0 = start * 128;
         const int rows = count * 128;
-        // cudaMalloc on device 0, not the libgpu buffer: other devices can store into it.
-        float* dst = cache.out + (size_t)row0 * w;
         check_cuda(cudaSetDevice(dev), 88112);
-        launch_on_stream(cache.shard[dev].a, cache.shard[dev].b, dst,
+        launch_on_stream(cache.shard[dev].a, cache.shard[dev].b, cache.shard[dev].c,
                          (int)w, rows, (int)k, cache.shard[dev].stream);
     }
     for (int dev = 0; dev < ndev; ++dev) {
         check_cuda(cudaSetDevice(dev), 88113);
         check_cuda(cudaStreamSynchronize(cache.shard[dev].stream), 88114);
     }
-    check_cuda(cudaSetDevice(root), 88115);
-    check_cuda(cudaMemcpy(c.cuptr(), cache.out, (size_t)h * w * sizeof(float), cudaMemcpyDeviceToDevice), 88116);
+    for (int dev = 0; dev < ndev; ++dev) {
+        const int start = dev * tiles_m / ndev;
+        const int row0 = start * 128;
+        float* dst = c.cuptr() + (size_t)row0 * w;
+        check_cuda(cudaSetDevice(dev), 88120);
+        if (dev == 0)
+            check_cuda(cudaMemcpyAsync(dst, cache.shard[dev].c, cache.shard[dev].c_bytes, cudaMemcpyDeviceToDevice, cache.shard[dev].copy), 88121);
+        else
+            check_cuda(cudaMemcpyPeerAsync(dst, 0, cache.shard[dev].c, dev, cache.shard[dev].c_bytes, cache.shard[dev].copy), 88122);
+    }
+    for (int dev = 0; dev < ndev; ++dev) {
+        check_cuda(cudaSetDevice(dev), 88123);
+        check_cuda(cudaStreamSynchronize(cache.shard[dev].copy), 88124);
+    }
+    cudaSetDevice(root);
 }
 
 void mma_col_nvlink_self_test()
