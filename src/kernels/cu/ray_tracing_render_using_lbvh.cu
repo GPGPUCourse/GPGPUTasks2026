@@ -306,7 +306,7 @@ __global__ void blurAOSeparable(CameraViewGPU *camera, float *AO1, float *AO2, P
       float3 neighborNormal = decompressNormal(neighborPixelInfo.normalCompressed);
 
       if (dot3(pixelNormal, neighborNormal) < NORMAL_EPS) continue;
-      if (fabsf(pixelInfo.t - neighborPixelInfo.t) > DEPTH_EPS) continue;
+      if (fabsf(pixelInfo.t - neighborPixelInfo.t) > DEPTH_EPS * pixelInfo.t) continue;
 
       const float w = weights[abs(k)];
       sum_weights += w;
