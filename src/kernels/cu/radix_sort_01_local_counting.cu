@@ -8,14 +8,14 @@
 #include "../defines.h"
 
 __global__ void radix_sort_01_local_counting(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
     const unsigned int* buffer1,
           unsigned int* buffer2,
-    unsigned int a1,
-    unsigned int a2)
+    unsigned int j,
+    unsigned int n)
 {
-    // TODO
+    uint idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= n) return;
+    buffer2[idx] = 1 - ((buffer1[idx] >> j) & 1);
 }
 
 namespace cuda {
