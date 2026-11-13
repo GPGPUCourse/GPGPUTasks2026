@@ -137,17 +137,28 @@ __device__ inline void make_basis(const float3& n, float3& t, float3& b) {
 }
 
 __device__ uint32_t compressNormal(const float3& n) {
-  uint8_t nx = static_cast<uint8_t>(fminf(fmaxf((n.x * 0.5f + 0.5f) * 255.f, 0.f), 255.f));
-  uint8_t ny = static_cast<uint8_t>(fminf(fmaxf((n.y * 0.5f + 0.5f) * 255.f, 0.f), 255.f));
-  uint8_t nz = static_cast<uint8_t>(fminf(fmaxf((n.z * 0.5f + 0.5f) * 255.f, 0.f), 255.f));
-  return (static_cast<uint32_t>(nx) << 16) | (static_cast<uint32_t>(ny) << 8) | static_cast<uint32_t>(nz);
+  const float inverseL1Norm = 1.f / (fabsf(n.x) + fabsf(n.y) + fabsf(n.z));
+  float x = n.x * inverseL1Norm;
+  float y = n.y * inverseL1Norm;
+  if (n.z < 0.f) {
+    const float unfoldedX = x;
+    x = (1.f - fabsf(y)) * (unfoldedX >= 0.f ? 1.f : -1.f);
+    y = (1.f - fabsf(unfoldedX)) * (y >= 0.f ? 1.f : -1.f);
+  }
+
+  const uint32_t packedX = static_cast<uint32_t>(fminf(fmaxf((x * 0.5f + 0.5f) * 65535.f + 0.5f, 0.f), 65535.f));
+  const uint32_t packedY = static_cast<uint32_t>(fminf(fmaxf((y * 0.5f + 0.5f) * 65535.f + 0.5f, 0.f), 65535.f));
+  return packedX | (packedY << 16);
 }
 
 __device__ float3 decompressNormal(uint32_t compressed) {
-  float nx = ((compressed >> 16) & 0xFF) / 255.f * 2.f - 1.f;
-  float ny = ((compressed >> 8) & 0xFF) / 255.f * 2.f - 1.f;
-  float nz = (compressed & 0xFF) / 255.f * 2.f - 1.f;
-  return make_float3(nx, ny, nz);
+  float x = (compressed & 0xFFFFu) / 65535.f * 2.f - 1.f;
+  float y = (compressed >> 16) / 65535.f * 2.f - 1.f;
+  const float z = 1.f - fabsf(x) - fabsf(y);
+  const float fold = fmaxf(-z, 0.f);
+  x += x >= 0.f ? -fold : fold;
+  y += y >= 0.f ? -fold : fold;
+  return normalize_f3(make_float3(x, y, z));
 }
 
 __global__ void ray_tracing_render_using_lbvh(
