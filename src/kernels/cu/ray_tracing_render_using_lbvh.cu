@@ -136,15 +136,31 @@ __device__ inline void make_basis(const float3& n, float3& t, float3& b) {
     b = cross_f3(n, t);
 }
 
+__device__ uint32_t compressNormal(const float3& n) {
+  uint8_t nx = static_cast<uint8_t>(fminf(fmaxf((n.x * 0.5f + 0.5f) * 255.f, 0.f), 255.f));
+  uint8_t ny = static_cast<uint8_t>(fminf(fmaxf((n.y * 0.5f + 0.5f) * 255.f, 0.f), 255.f));
+  uint8_t nz = static_cast<uint8_t>(fminf(fmaxf((n.z * 0.5f + 0.5f) * 255.f, 0.f), 255.f));
+  return (static_cast<uint32_t>(nx) << 16) | (static_cast<uint32_t>(ny) << 8) | static_cast<uint32_t>(nz);
+}
+
+__device__ float3 decompressNormal(uint32_t compressed) {
+  float nx = ((compressed >> 16) & 0xFF) / 255.f * 2.f - 1.f;
+  float ny = ((compressed >> 8) & 0xFF) / 255.f * 2.f - 1.f;
+  float nz = (compressed & 0xFF) / 255.f * 2.f - 1.f;
+  return make_float3(nx, ny, nz);
+}
+
 __global__ void ray_tracing_render_using_lbvh(
     const float* vertices,
     const unsigned int* faces,
     const BVHNodeGPU* bvhNodes,
     const unsigned int* leafTriIndices,
     int* framebuffer_face_id,
+    PixelInfoGPU *framebuffer_pixel_info,
     float* framebuffer_ambient_occlusion,
     CameraViewGPU *camera,
-    unsigned int nfaces
+    unsigned int nfaces,
+    bool writePixelInfo
 )
 {
     const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -191,6 +207,13 @@ __global__ void ray_tracing_render_using_lbvh(
         float3 e1 = {b.x - a.x, b.y - a.y, b.z - a.z};
         float3 e2 = {c.x - a.x, c.y - a.y, c.z - a.z};
         float3 n  = normalize_f3(cross_f3(e1, e2));
+
+        if (writePixelInfo) {
+            PixelInfoGPU pixelInfo;
+            pixelInfo.t = tBest;
+            pixelInfo.normalCompressed = compressNormal(n);
+            framebuffer_pixel_info[idx] = pixelInfo;
+        }
 
         // ensure hemisphere is "outside" relative to the camera ray
         if (n.x*ray_direction.x + n.y*ray_direction.y + n.z*ray_direction.z > 0.0f)
@@ -245,6 +268,55 @@ __global__ void ray_tracing_render_using_lbvh(
 }
 
 
+
+__device__ float gaussian_weight(int x, int kernel_size) {
+    float sigma = kernel_size / 2.0f;
+    float coeff = 1.0f / (sqrtf(2.0f * 3.14159265359f) * sigma);
+    float exponent = -(x * x) / (2.0f * sigma * sigma);
+    return coeff * expf(exponent);
+}
+
+__global__ void blurAOSeparable(CameraViewGPU *camera, float *AO1, float *AO2, PixelInfoGPU *framebuffer_pixel_info, int kernel_size, int axis, int stride) {
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    const int j = blockIdx.y * blockDim.y + threadIdx.y;
+
+    const int width  = (int)camera->K.width;
+    const int height = (int)camera->K.height;
+    if (i >= width || j >= height) return;
+
+    __shared__ float weights[MAX_KERNEL_SIZE + 1];
+    for (int w = threadIdx.x; w <= kernel_size; w += blockDim.x) {
+      weights[w] = gaussian_weight(w, kernel_size);
+    }
+    __syncthreads();
+
+    const int center = j * width + i;
+    PixelInfoGPU pixelInfo = framebuffer_pixel_info[center];
+    float3 pixelNormal = decompressNormal(pixelInfo.normalCompressed);
+
+    float sum_weights = 0.0f;
+    float sum_ao = 0.0f;
+    for (int k = -kernel_size; k <= kernel_size; ++k) {
+      const int ni = (axis == 0) ? (i + k * stride) : i;
+      const int nj = (axis == 1) ? (j + k * stride) : j;
+      if (ni < 0 || ni >= width || nj < 0 || nj >= height) continue;
+
+      const int nidx = nj * width + ni;
+      PixelInfoGPU neighborPixelInfo = framebuffer_pixel_info[nidx];
+      float3 neighborNormal = decompressNormal(neighborPixelInfo.normalCompressed);
+
+      if (dot3(pixelNormal, neighborNormal) < NORMAL_EPS) continue;
+      if (fabsf(pixelInfo.t - neighborPixelInfo.t) > DEPTH_EPS) continue;
+
+      const float w = weights[abs(k)];
+      sum_weights += w;
+      sum_ao      += AO1[nidx] * w;
+    }
+
+    AO2[center] = (sum_weights > 0.0f) ? (sum_ao / sum_weights) : AO1[center];
+}
+
+
 namespace cuda {
 void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
@@ -252,18 +324,51 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     gpu::gpu_mem_32i &framebuffer_face_id,
     gpu::gpu_mem_32f &framebuffer_ambient_occlusion,
     gpu::shared_device_buffer_typed<CameraViewGPU> camera,
-    unsigned int nfaces)
+    unsigned int nfaces,
+    bool enableDenoising,
+    gpu::shared_device_buffer_typed<PixelInfoGPU> *framebuffer_pixel_info, 
+    gpu::shared_device_buffer_typed<float> *framebuffer_ambient_occlusion_temp)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::ray_tracing_render_using_lbvh<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-        vertices.cuptr(), faces.cuptr(),
-        bvhNodes.cuptr(), leafTriIndices.cuptr(),
-        framebuffer_face_id.cuptr(), framebuffer_ambient_occlusion.cuptr(),
-        camera.cuptr(),
-        nfaces
-        );
+
+    PixelInfoGPU *pixel_info_ptr = framebuffer_pixel_info ? framebuffer_pixel_info->cuptr() : nullptr;
+    float *ao_temp_ptr = framebuffer_ambient_occlusion_temp ? framebuffer_ambient_occlusion_temp->cuptr() : nullptr;
+
+    ::ray_tracing_render_using_lbvh<<<workSize.cuGridSize(),
+                                      workSize.cuBlockSize(), 0, stream>>>(
+        vertices.cuptr(), faces.cuptr(), bvhNodes.cuptr(),
+        leafTriIndices.cuptr(), framebuffer_face_id.cuptr(), pixel_info_ptr,
+        framebuffer_ambient_occlusion.cuptr(), camera.cuptr(), nfaces,
+        enableDenoising);
+
+    if (enableDenoising) {
+      ::blurAOSeparable<<<workSize.cuGridSize(),
+                                      workSize.cuBlockSize(), 0, stream>>>(
+          camera.cuptr(), framebuffer_ambient_occlusion.cuptr(),
+          ao_temp_ptr, pixel_info_ptr, 5, 0, 1);
+      ::blurAOSeparable<<<workSize.cuGridSize(),
+                                      workSize.cuBlockSize(), 0, stream>>>(
+          camera.cuptr(), ao_temp_ptr, framebuffer_ambient_occlusion.cuptr(),
+          pixel_info_ptr, 5, 1, 1);
+      ::blurAOSeparable<<<workSize.cuGridSize(),
+                                      workSize.cuBlockSize(), 0, stream>>>(
+          camera.cuptr(), framebuffer_ambient_occlusion.cuptr(),
+          ao_temp_ptr, pixel_info_ptr, 5, 0, 2);
+      ::blurAOSeparable<<<workSize.cuGridSize(),
+                                      workSize.cuBlockSize(), 0, stream>>>(
+          camera.cuptr(), ao_temp_ptr, framebuffer_ambient_occlusion.cuptr(),
+          pixel_info_ptr, 5, 1, 2);
+      ::blurAOSeparable<<<workSize.cuGridSize(),
+                                      workSize.cuBlockSize(), 0, stream>>>(
+          camera.cuptr(), framebuffer_ambient_occlusion.cuptr(),
+          ao_temp_ptr, pixel_info_ptr, 5, 0, 4);
+      ::blurAOSeparable<<<workSize.cuGridSize(),
+                                      workSize.cuBlockSize(), 0, stream>>>(
+          camera.cuptr(), ao_temp_ptr, framebuffer_ambient_occlusion.cuptr(),
+          pixel_info_ptr, 5, 1, 4);
+    }
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda

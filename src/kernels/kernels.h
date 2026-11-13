@@ -4,7 +4,6 @@
 
 #include "shared_structs/camera_gpu_shared.h"
 #include "shared_structs/bvh_node_gpu_shared.h"
-
 namespace cuda {
 void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n);
 
@@ -20,7 +19,10 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     gpu::gpu_mem_32i &framebuffer_face_id,
     gpu::gpu_mem_32f &framebuffer_ambient_occlusion,
     gpu::shared_device_buffer_typed<CameraViewGPU> camera,
-    unsigned int nfaces);
+    unsigned int nfaces, 
+    bool enableDenoising,
+    gpu::shared_device_buffer_typed<PixelInfoGPU> *framebuffer_pixel_info, 
+    gpu::shared_device_buffer_typed<float> *framebuffer_ambient_occlusion_temp);
 }
 
 namespace ocl {
