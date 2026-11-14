@@ -405,6 +405,40 @@ public:
                     pNextFeature = &subgroup_size_control_features;
                 }
 
+		vk::PhysicalDeviceBufferDeviceAddressFeatures address_features;
+		vk::PhysicalDeviceAccelerationStructureFeaturesKHR acceleration_features;
+		vk::PhysicalDeviceRayTracingPipelineFeaturesKHR ray_tracing_features;
+		if (device_info_.supportsExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
+			device_info_.supportsExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME) &&
+			device_info_.supportsExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)) {
+			auto supported_features = physical_device_->getFeatures2<
+				vk::PhysicalDeviceFeatures2,
+				vk::PhysicalDeviceBufferDeviceAddressFeatures,
+				vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
+				vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>();
+			ray_tracing_enabled_ =
+				supported_features.get<vk::PhysicalDeviceBufferDeviceAddressFeatures>().bufferDeviceAddress &&
+				supported_features.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure &&
+				supported_features.get<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline;
+		}
+		if (ray_tracing_enabled_) {
+			device_enabled_extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+			device_enabled_extensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+			device_enabled_extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+
+			address_features.setBufferDeviceAddress(true);
+			address_features.setPNext(pNextFeature);
+			pNextFeature = &address_features;
+
+			acceleration_features.setAccelerationStructure(true);
+			acceleration_features.setPNext(pNextFeature);
+			pNextFeature = &acceleration_features;
+
+			ray_tracing_features.setRayTracingPipeline(true);
+			ray_tracing_features.setPNext(pNextFeature);
+			pNextFeature = &ray_tracing_features;
+		}
+
 		vk::DeviceCreateInfo device_create_info({}, queue_create_info, {}, device_enabled_extensions, nullptr, pNextFeature);
 		device_ = std::make_shared<vk::raii::Device>(physical_device_->createDevice(device_create_info));
 
@@ -414,6 +448,9 @@ public:
 		vulkanFunctions.vkGetDeviceProcAddr = physical_device_->getDispatcher()->vkGetDeviceProcAddr;
 		VmaAllocatorCreateInfo allocatorCreateInfo = {};
 		allocatorCreateInfo.flags = 0;
+		if (ray_tracing_enabled_) {
+			allocatorCreateInfo.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+		}
 		if (device_info_.supportsFreeMemoryRequest()) {
 			allocatorCreateInfo.flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
 		}
@@ -454,6 +491,8 @@ public:
 		physical_device_.reset();
 		instance_context_.reset();
 	}
+
+	bool ray_tracing_enabled_ = false;
 
 	avk2::Device								device_info_;
 
@@ -612,6 +651,11 @@ avk2::raii::BufferData* avk2::VulkanEngine::createBuffer(size_t size)
 	usage_flags |= vk::BufferUsageFlagBits::eTransferSrc; // required for usage as SRC in copyBuffer(SRC, dst) - i.e. for shared_device_buffer::read
 	usage_flags |= vk::BufferUsageFlagBits::eVertexBuffer;// required for usage as vertices buffer - i.e. can be used via vkCmdBindVertexBuffers
 	usage_flags |= vk::BufferUsageFlagBits::eIndexBuffer; // required for usage as indices (i.e. faces) buffer - i.e. can be used via vkCmdBindIndexBuffer
+	if (avk2_context_->ray_tracing_enabled_) {
+		usage_flags |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+		usage_flags |= vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR;
+		usage_flags |= vk::BufferUsageFlagBits::eShaderDeviceAddress;
+	}
 	vk::BufferCreateInfo raii_buffer_create_info{vk::BufferCreateFlags(), size, usage_flags, vk::SharingMode::eExclusive, 1, &getQueueFamilyIndex()};
 	VkBufferCreateInfo buffer_create_info = raii_buffer_create_info;
 

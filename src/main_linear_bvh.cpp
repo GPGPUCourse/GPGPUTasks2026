@@ -7,6 +7,9 @@
 #include <libgpu/vulkan/engine.h>
 #include <libgpu/vulkan/tests/test_utils.h>
 
+#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_raii.hpp>
+
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
 
@@ -52,6 +55,16 @@ size_t countDiffs(const TypedImage<T> &a, const TypedImage<T> &b, T threshold) {
     return count;
 }
 
+struct VulkanRTContext {
+  VulkanRTContext(avk2::sh_ptr_vk_engine engine_, vk::raii::CommandBuffer cmd_buf_)
+    : engine(engine_), cmd_buf(std::move(cmd_buf_)) {}
+  avk2::sh_ptr_vk_engine engine;
+  vk::raii::CommandBuffer cmd_buf;
+  gpu::gpu_mem_8u build_scratch_buffer;
+  gpu::gpu_mem_8u blas_buffer;
+  std::optional<vk::raii::AccelerationStructureKHR> blas;
+};
+
 void run(int argc, char** argv)
 {
     // chooseGPUVkDevices:
@@ -67,7 +80,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
+    gpu::Context context = activateContext(device, gpu::Context::TypeVulkan);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -227,6 +240,86 @@ void run(int argc, char** argv)
             framebuffer_ambient_occlusion_gpu.fill(NO_AMBIENT_OCCLUSION);
             cleaning_framebuffers_time += cleaning_framebuffers_t.elapsed();
 
+            std::shared_ptr<VulkanRTContext> vkRtContext = {};
+            if (context.type() == gpu::Context::TypeVulkan) {
+                vkRtContext = std::make_shared<VulkanRTContext>(context.vk(), context.vk()->createCommandBuffer());
+                
+                auto &device = vkRtContext->engine->getDevice();
+                auto vertices_gpu_buffer = vertices_gpu.vkBufferData()->getBuffer();
+                auto &faces_gpu_buffer = faces_gpu.vkBufferData()->getBuffer();
+                auto vertices_gpu_address = device.getBufferAddress(vertices_gpu_buffer) + vertices_gpu.vkoffset();
+                auto faces_gpu_address = device.getBufferAddress(faces_gpu_buffer) + faces_gpu.vkoffset();
+
+                vk::AccelerationStructureGeometryTrianglesDataKHR trianglesData = {};
+                trianglesData.setVertexFormat(vk::Format::eR32G32B32Sfloat)
+                    .setVertexData(vertices_gpu_address)
+                    .setVertexStride(sizeof(float) * 3)
+                    .setMaxVertex(nvertices - 1)
+                    .setIndexType(vk::IndexType::eUint32)
+                    .setIndexData(faces_gpu_address);
+
+                vk::AccelerationStructureGeometryDataKHR geometryData = {};
+                geometryData.setTriangles(trianglesData); 
+
+                vk::AccelerationStructureGeometryKHR geometry = {};
+                geometry.setGeometryType(vk::GeometryTypeKHR::eTriangles)
+                    .setFlags(vk::GeometryFlagBitsKHR::eOpaque)
+                    .setGeometry(geometryData);
+
+                vk::AccelerationStructureBuildGeometryInfoKHR build_info = {};
+                build_info.setType(vk::AccelerationStructureTypeKHR::eBottomLevel)
+                    .setFlags(vk::BuildAccelerationStructureFlagBitsKHR::ePreferFastTrace)
+                    .setMode(vk::BuildAccelerationStructureModeKHR::eBuild)
+                    .setGeometryCount(1)
+                    .setGeometries(geometry);
+
+                uint32_t primitive_count = nfaces;
+                auto sizes = device.getAccelerationStructureBuildSizesKHR(
+                    vk::AccelerationStructureBuildTypeKHR::eDevice, build_info,
+                    primitive_count);
+                std::cout << "Acceleration structure build sizes:" << std::endl;
+                std::cout << "  accelerationStructureSize = " << sizes.accelerationStructureSize << std::endl;
+                std::cout << "  updateScratchSize = " << sizes.updateScratchSize << std::endl;
+                std::cout << "  buildScratchSize = " << sizes.buildScratchSize << std::endl;
+
+                // TODO: alignment (scratch/blas)
+                vkRtContext->build_scratch_buffer = gpu::gpu_mem_8u(sizes.buildScratchSize);
+                vkRtContext->blas_buffer = gpu::gpu_mem_8u(sizes.accelerationStructureSize);
+
+                build_info.scratchData.deviceAddress = device.getBufferAddress(
+                    vkRtContext->build_scratch_buffer.vkBufferData()->getBuffer()) +
+                    vkRtContext->build_scratch_buffer.vkoffset();
+                const vk::DeviceSize blas_offset = vkRtContext->blas_buffer.vkoffset();
+
+                {
+                  vk::AccelerationStructureCreateInfoKHR createInfo = {};
+                  createInfo.setBuffer(vkRtContext->blas_buffer.vkBufferData()->getBuffer())
+                      .setOffset(blas_offset)
+                      .setSize(sizes.accelerationStructureSize)
+                      .setType(vk::AccelerationStructureTypeKHR::eBottomLevel);
+                  vkRtContext->blas.emplace(device, createInfo);
+                }
+
+                build_info.setDstAccelerationStructure(*vkRtContext->blas.value());
+                
+                {
+                  vk::raii::Fence fence(device, vk::FenceCreateInfo{});
+
+                  vk::AccelerationStructureBuildRangeInfoKHR build_range_info = {};
+                  build_range_info.setPrimitiveCount(primitive_count);
+
+                  auto &cmdBuf = vkRtContext->cmd_buf;
+                  cmdBuf.begin(vk::CommandBufferBeginInfo{vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+                  
+                  auto *range_infos = &build_range_info;
+                  cmdBuf.buildAccelerationStructuresKHR(build_info, range_infos);
+
+                  cmdBuf.end();
+
+                  vkRtContext->engine->submitCommandBuffer(cmdBuf, fence);
+                }
+            }
+
             std::vector<double> rt_times_with_cpu_lbvh;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
@@ -249,13 +342,14 @@ void run(int argc, char** argv)
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
                         camera_gpu, nfaces, true, &framebuffer_pixel_info_gpu, &framebuffer_ambient_occlusion_temp_gpu);
                 } else if (context.type() == gpu::Context::TypeVulkan) {
-                    vk_rt_with_lbvh.exec(
-                        nfaces,
-                        gpu::WorkSize(16, 16, width, height),
-                        vertices_gpu, faces_gpu,
-                        lbvh_nodes_gpu, leaf_faces_indices_gpu,
-                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu);
+                    std::cout << "WARNING: Sofware ray tracing implemented on CUDA, not Vulkan" << std::endl;
+                    // vk_rt_with_lbvh.exec(
+                    //     nfaces,
+                    //     gpu::WorkSize(16, 16, width, height),
+                    //     vertices_gpu, faces_gpu,
+                    //     lbvh_nodes_gpu, leaf_faces_indices_gpu,
+                    //     framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                    //     camera_gpu);
                 } else {
                     rassert(false, 654724541234123);
                 }
