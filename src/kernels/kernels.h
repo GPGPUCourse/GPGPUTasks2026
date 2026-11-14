@@ -28,6 +28,18 @@ const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getRTBruteForce();
 const ProgramBinaries& getRTWithLBVH();
+
+const ProgramBinaries& getComputePrimitiveData();
+const ProgramBinaries& getReduceCentroidBounds();
+const ProgramBinaries& getGenerateMortonCodes();
+
+const ProgramBinaries& getFillBufferWithZeros();
+const ProgramBinaries& getRadixSort01LocalCounting();
+const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction();
+const ProgramBinaries& getRadixSort03Scatter();
+
+const ProgramBinaries& getBuildLBVHTopologyAndLeaves();
+const ProgramBinaries& getRefitInternalAabbs();
 }
 
 namespace avk2 {
