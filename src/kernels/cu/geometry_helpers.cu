@@ -169,3 +169,22 @@ bool intersect_ray_aabb_any(const float3 ray_o, const float3 ray_d,
     return intersect_ray_aabb(ray_o, ray_d, box, 0.0f, FLT_MAX, tHitNear, tHitFar);
 }
 }
+
+template <typename T, size_t SZ>
+struct Stack {
+    T _stack[SZ];
+    int _sz = 0;
+
+    __device__ void push(T v) {
+        curassert(_sz < SZ, 439782562356);
+        _stack[_sz++] = v;
+    }
+
+    __device__ T pop() {
+        if (_sz == 0) {
+            return nullptr;
+        }
+        curassert(_sz > 0, 469897456);
+        return _stack[--_sz];
+    }
+};
