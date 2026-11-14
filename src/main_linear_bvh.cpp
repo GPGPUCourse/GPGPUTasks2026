@@ -77,6 +77,7 @@ void run(int argc, char** argv)
 
     ocl::KernelSource ocl_rt_brute_force(ocl::getRTBruteForce());
     ocl::KernelSource ocl_rt_with_lbvh(ocl::getRTWithLBVH());
+    ocl::KernelSource ocl_triangle_bounds(ocl::getBuildLBVH(), "triangle_bounds");
 
     avk2::KernelSource vk_rt_brute_force(avk2::getRTBruteForce());
     avk2::KernelSource vk_rt_with_lbvh(avk2::getRTWithLBVH());
@@ -130,6 +131,8 @@ void run(int argc, char** argv)
         gpu::gpu_mem_32f vertices_gpu(3 * nvertices);
         gpu::gpu_mem_32u faces_gpu(3 * nfaces);
         gpu::shared_device_buffer_typed<CameraViewGPU> camera_gpu(1);
+        gpu::shared_device_buffer_typed<AABBGPU> triangle_bounding_boxes_gpu(nfaces);
+        gpu::gpu_mem_32f triangle_centroids_gpu(3 * nfaces);
 
         // Аллоцируем фрейм-буферы (то есть картинки в которые сохранится результат рендеринга)
         gpu::gpu_mem_32i framebuffer_face_id_gpu(width * height);
@@ -142,6 +145,16 @@ void run(int argc, char** argv)
         camera_gpu.writeN(&camera, 1);
         double pcie_writing_time = pcie_writing_t.elapsed();
         double pcie_reading_time = 0.0;
+
+        if (context.type() == gpu::Context::TypeOpenCL) {
+            ocl_triangle_bounds.exec(
+                gpu::WorkSize(GROUP_SIZE, nfaces),
+                vertices_gpu,
+                faces_gpu,
+                triangle_bounding_boxes_gpu.clmem(),
+                triangle_centroids_gpu,
+                nfaces);
+        }
 
         // Перед каждой отрисовкой мы будем зачищать результирующие framebuffers этими значениями
         const int NO_FACE_ID = -1;
