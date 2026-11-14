@@ -70,6 +70,7 @@ struct VulkanRTContext {
   std::optional<vk::raii::DescriptorPool> descriptorPool;
   std::optional<vk::raii::DescriptorSetLayout> descriptorSetLayout;
   std::optional<vk::raii::DescriptorSet> descriptorSet;
+  std::optional<vk::raii::PipelineLayout> pipelineLayout;
 };
 
 void run(int argc, char** argv)
@@ -512,6 +513,14 @@ void run(int argc, char** argv)
                       .setPNext(&tlas_info);
 
                   device.updateDescriptorSets(writes, {});
+                }
+
+                {
+                  vk::PipelineLayoutCreateInfo pipelineLayoutInfo = {};
+                  vk::DescriptorSetLayout setLayouts[] = {
+                      **vkRtContext->descriptorSetLayout};
+                  pipelineLayoutInfo.setSetLayouts(setLayouts);
+                  vkRtContext->pipelineLayout.emplace(device, pipelineLayoutInfo);
                 }
             }
             std::vector<double> rt_times_with_cpu_lbvh;
