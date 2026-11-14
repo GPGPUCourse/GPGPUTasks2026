@@ -88,6 +88,7 @@ void run(int argc, char** argv)
         "data/san-miguel/san-miguel.obj",
     };
 
+    constexpr bool enable_denoising = true;
     const int niters = 10; // при отладке удобно запускать одну итерацию
     std::vector<double> gpu_rt_perf_mrays_per_sec;
     std::vector<double> gpu_lbvh_perfs_mtris_per_sec;
@@ -170,7 +171,8 @@ void run(int argc, char** argv)
                         gpu::WorkSize(16, 16, width, height),
                         vertices_gpu, faces_gpu,
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu, nfaces);
+                        camera_gpu, nfaces, enable_denoising,
+                        &framebuffer_pixel_info_gpu, &framebuffer_ambient_occlusion_temp_gpu);
                 } else if (context.type() == gpu::Context::TypeVulkan) {
                     vk_rt_brute_force.exec(
                         nfaces,
@@ -247,7 +249,8 @@ void run(int argc, char** argv)
                         vertices_gpu, faces_gpu,
                         lbvh_nodes_gpu, leaf_faces_indices_gpu,
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu, nfaces, true, &framebuffer_pixel_info_gpu, &framebuffer_ambient_occlusion_temp_gpu);
+                        camera_gpu, nfaces, enable_denoising,
+                        &framebuffer_pixel_info_gpu, &framebuffer_ambient_occlusion_temp_gpu);
                 } else if (context.type() == gpu::Context::TypeVulkan) {
                     vk_rt_with_lbvh.exec(
                         nfaces,
@@ -282,8 +285,8 @@ void run(int argc, char** argv)
             if (has_brute_force) {
                 unsigned int count_ao_errors = countDiffs(brute_force_framebuffer_ambient_occlusion, cpu_lbvh_framebuffer_ambient_occlusion, 0.01f);
                 unsigned int count_face_id_errors = countDiffs(brute_force_framebuffer_face_ids, cpu_lbvh_framebuffer_face_ids, 1);
-                // rassert(count_ao_errors < width * height / 100, 345341512354123, count_ao_errors, to_percent(count_ao_errors, width * height));
-                // rassert(count_face_id_errors < width * height / 100, 3453415123546587, count_face_id_errors, to_percent(count_face_id_errors, width * height));
+                rassert(count_ao_errors < width * height / 100, 345341512354123, count_ao_errors, to_percent(count_ao_errors, width * height));
+                rassert(count_face_id_errors < width * height / 100, 3453415123546587, count_face_id_errors, to_percent(count_face_id_errors, width * height));
             }
         }
 
