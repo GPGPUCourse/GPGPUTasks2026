@@ -395,6 +395,9 @@ namespace avk2 {
 		const size_t			size_;
 	};
 
+	vk::raii::ShaderModule createShaderModule(
+		const vk::raii::Device &device, const VersionedBinary &binary);
+
 	class ProgramBinaries {
 	public:
 		ProgramBinaries(std::vector<const VersionedBinary *> binaries, std::string program_name);

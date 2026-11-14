@@ -82,7 +82,8 @@ endforeach()
 set(VULKAN_SOURCES
         src/kernels/vk/aplusb.comp
         src/kernels/vk/ray_tracing_render_brute_force.comp
-        src/kernels/vk/ray_tracing_render_using_lbvh.comp)
+        src/kernels/vk/ray_tracing_render_using_lbvh.comp
+        src/kernels/vk/ray_tracing_render_using_ray_query.comp)
 
 set(VULKAN_DEFINES)
 foreach(VK_FILE IN LISTS VULKAN_SOURCES)

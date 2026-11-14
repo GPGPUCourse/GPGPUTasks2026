@@ -12,6 +12,9 @@
 #include "camera_helpers.cu"
 #include "geometry_helpers.cu"
 #include "random_helpers.cu"
+#include "ao_denoising.cuh"
+
+#define MAX_STACK_SIZE 32
 
 // BVH traversal: closest hit along ray
 __device__ bool bvh_closest_hit(
@@ -32,6 +35,47 @@ __device__ bool bvh_closest_hit(
     const int leafStart = (int)nfaces - 1;
 
     // TODO implement BVH travering (with stack, don't use recursion)
+    int stack[MAX_STACK_SIZE];
+    int st_size = 0;
+    stack[st_size++] = rootIndex;
+
+    float t_closest = FLT_MAX;
+    uint32_t face_closest = -1u;
+    float u_closest, v_closest;
+
+    while (st_size > 0) {
+      int nodeId = stack[--st_size];
+
+      const BVHNodeGPU& node = nodes[nodeId];
+      float tHitNear, tHitFar;
+      if (intersect_ray_aabb(orig, dir, node.aabb, tMin, t_closest, tHitNear, tHitFar)) {
+        if (nodeId >= leafStart) {
+          uint32_t faceId = leafTriIndices[nodeId - leafStart];
+          uint3 f = loadFace(faces, faceId);
+          float3 v0 = loadVertex(vertices, f.x);
+          float3 v1 = loadVertex(vertices, f.y);
+          float3 v2 = loadVertex(vertices, f.z);
+          float intersect_t, intersect_u, intersect_v;
+          if (intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, t_closest, false, intersect_t, intersect_u, intersect_v)) {
+            t_closest = intersect_t;
+            u_closest = intersect_u;
+            v_closest = intersect_v;
+            face_closest = faceId;
+          }
+        } else {
+          stack[st_size++] = node.rightChildIndex;
+          stack[st_size++] = node.leftChildIndex;
+        }
+      }
+    }
+
+    if (face_closest != -1u) {
+      outT = t_closest;
+      outFaceId = face_closest;
+      outU = u_closest;
+      outV = v_closest;
+      return true;
+    }
 
     return false; // no intersections found
 }
@@ -52,6 +96,35 @@ __device__ bool any_hit_from(
     const int leafStart = (int)nfaces - 1;
 
     // TODO implement BVH travering (with stack, don't use recursion)
+    int stack[MAX_STACK_SIZE];
+    int st_size = 0;
+    stack[st_size++] = rootIndex;
+
+    while (st_size > 0) {
+      int nodeId = stack[--st_size];
+
+      const BVHNodeGPU& node = nodes[nodeId];
+      float tHitNear, tHitFar;
+      if (intersect_ray_aabb(orig, dir, node.aabb, 0, FLT_MAX, tHitNear, tHitFar)) {
+        if (nodeId >= leafStart) {
+          uint32_t faceId = leafTriIndices[nodeId - leafStart];
+          if (faceId == ignore_face) continue;
+          uint3 f = loadFace(faces, faceId);
+          float3 v0 = loadVertex(vertices, f.x);
+          float3 v1 = loadVertex(vertices, f.y);
+          float3 v2 = loadVertex(vertices, f.z);
+          float intersect_t, intersect_u, intersect_v;
+          if (intersect_ray_triangle(orig, dir, v0, v1, v2, 0, FLT_MAX, false, intersect_t, intersect_u, intersect_v)) {
+            return true;
+          }
+        } else {
+          stack[st_size++] = node.rightChildIndex;
+          assert(st_size <= MAX_STACK_SIZE);
+          stack[st_size++] = node.leftChildIndex;
+          assert(st_size <= MAX_STACK_SIZE);
+        }
+      }
+    }
 
     return false; // no intersections found
 }
@@ -70,9 +143,11 @@ __global__ void ray_tracing_render_using_lbvh(
     const BVHNodeGPU* bvhNodes,
     const unsigned int* leafTriIndices,
     int* framebuffer_face_id,
+    PixelInfoGPU *framebuffer_pixel_info,
     float* framebuffer_ambient_occlusion,
     CameraViewGPU *camera,
-    unsigned int nfaces
+    unsigned int nfaces,
+    bool writePixelInfo
 )
 {
     const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -110,6 +185,12 @@ __global__ void ray_tracing_render_using_lbvh(
     framebuffer_face_id[idx] = faceIdBest;
 
     float ao = 1.0f; // background stays white
+    if (writePixelInfo && faceIdBest < 0) {
+        PixelInfoGPU backgroundInfo;
+        backgroundInfo.t = 0.f;
+        backgroundInfo.normalCompressed = 0u;
+        framebuffer_pixel_info[idx] = backgroundInfo;
+    }
     if (faceIdBest >= 0) {
         uint3 f = loadFace(faces, faceIdBest);
         float3 a = loadVertex(vertices, f.x);
@@ -119,6 +200,13 @@ __global__ void ray_tracing_render_using_lbvh(
         float3 e1 = {b.x - a.x, b.y - a.y, b.z - a.z};
         float3 e2 = {c.x - a.x, c.y - a.y, c.z - a.z};
         float3 n  = normalize_f3(cross_f3(e1, e2));
+
+        if (writePixelInfo) {
+            PixelInfoGPU pixelInfo;
+            pixelInfo.t = tBest;
+            pixelInfo.normalCompressed = ao_denoising::compressNormal(n);
+            framebuffer_pixel_info[idx] = pixelInfo;
+        }
 
         // ensure hemisphere is "outside" relative to the camera ray
         if (n.x*ray_direction.x + n.y*ray_direction.y + n.z*ray_direction.z > 0.0f)
@@ -173,6 +261,9 @@ __global__ void ray_tracing_render_using_lbvh(
 }
 
 
+
+
+
 namespace cuda {
 void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
@@ -180,18 +271,29 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     gpu::gpu_mem_32i &framebuffer_face_id,
     gpu::gpu_mem_32f &framebuffer_ambient_occlusion,
     gpu::shared_device_buffer_typed<CameraViewGPU> camera,
-    unsigned int nfaces)
+    unsigned int nfaces,
+    bool enableDenoising,
+    gpu::shared_device_buffer_typed<PixelInfoGPU> *framebuffer_pixel_info, 
+    gpu::shared_device_buffer_typed<float> *framebuffer_ambient_occlusion_temp)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
     cudaStream_t stream = context.cudaStream();
-    ::ray_tracing_render_using_lbvh<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-        vertices.cuptr(), faces.cuptr(),
-        bvhNodes.cuptr(), leafTriIndices.cuptr(),
-        framebuffer_face_id.cuptr(), framebuffer_ambient_occlusion.cuptr(),
-        camera.cuptr(),
-        nfaces
-        );
+
+    PixelInfoGPU *pixel_info_ptr = framebuffer_pixel_info ? framebuffer_pixel_info->cuptr() : nullptr;
+    float *ao_temp_ptr = framebuffer_ambient_occlusion_temp ? framebuffer_ambient_occlusion_temp->cuptr() : nullptr;
+
+    ::ray_tracing_render_using_lbvh<<<workSize.cuGridSize(),
+                                      workSize.cuBlockSize(), 0, stream>>>(
+        vertices.cuptr(), faces.cuptr(), bvhNodes.cuptr(),
+        leafTriIndices.cuptr(), framebuffer_face_id.cuptr(), pixel_info_ptr,
+        framebuffer_ambient_occlusion.cuptr(), camera.cuptr(), nfaces,
+        enableDenoising);
+
+    if (enableDenoising) {
+        ao_denoising::denoiseAO(workSize, camera.cuptr(), framebuffer_ambient_occlusion.cuptr(),
+                               ao_temp_ptr, pixel_info_ptr, stream);
+    }
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda
