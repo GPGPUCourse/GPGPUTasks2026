@@ -28,12 +28,124 @@ static inline bool bvh_closest_hit(
     __private float*          outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
     __private float*          outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
+    if (nfaces == 0) {
+        *outT = FLT_MAX;
+        *outU = 0.0f;
+        *outV = 0.0f;
+        *outFaceId = -1;
+        return false;
+    }
+
     const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
+    const uint leafStart = nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    float tBest = FLT_MAX, uBest = 0.0f, vBest = 0.0f;
+    int faceIdBest = -1;
 
-    return false;
+    if (nfaces == 1) {
+        int face_id = (int)leafTriIndices[0];
+        uint3 face = loadFace(faces, (uint)face_id);
+        float3 v0 = loadVertex(vertices, face.x);
+        float3 v1 = loadVertex(vertices, face.y);
+        float3 v2 = loadVertex(vertices, face.z);
+        if (intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tBest, false,
+                                   &tBest, &uBest, &vBest)) {
+            faceIdBest = face_id;
+        }
+        *outT = tBest;
+        *outU = uBest;
+        *outV = vBest;
+        *outFaceId = faceIdBest;
+        return faceIdBest != -1;
+    }
+
+    __global const BVHNodeGPU* stack[DFS_STACK_SIZE];
+    int sp = 0;
+    __global const BVHNodeGPU* node = nodes + rootIndex;
+
+    do {
+        if (node == NULL) {
+            printf("Invalid node pointer\n");
+            break;
+        }
+        const uint l_id = node->leftChildIndex;
+        const uint r_id = node->rightChildIndex;
+
+        bool overlap_l = false;
+        bool overlap_r = false;
+        __global const BVHNodeGPU* child_l = NULL;
+        __global const BVHNodeGPU* child_r = NULL;
+        if (l_id < leafStart) {
+            child_l = nodes + l_id;
+            float tNear;
+            float tFar;
+            overlap_l = intersect_ray_aabb(orig, dir, child_l->aabb, tMin, tBest, &tNear, &tFar);
+        } else if (l_id != UINT_MAX) {
+            float t, u, v;
+            if (l_id - leafStart >= nfaces) {
+                printf("Invalid face index: %d\n", l_id - leafStart);
+                break;
+            }
+            int face_id = leafTriIndices[l_id - leafStart];
+            uint3  face = loadFace(faces, face_id);
+            float3 v0   = loadVertex(vertices, face.x);
+            float3 v1   = loadVertex(vertices, face.y);
+            float3 v2   = loadVertex(vertices, face.z);
+            overlap_l = intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tBest, false, &t, &u, &v);
+            if (overlap_l) {
+                tBest = t;
+                uBest = u;
+                vBest = v;
+                faceIdBest = face_id;
+            }
+        }
+
+        if (r_id < leafStart) {
+            child_r = nodes + r_id;
+            float tNear;
+            float tFar;
+            overlap_r = intersect_ray_aabb(orig, dir, child_r->aabb, tMin, tBest, &tNear, &tFar);
+        } else if (r_id != UINT_MAX) {
+            float t, u, v;
+            if (r_id - leafStart >= nfaces) {
+                printf("Invalid face index: %d\n", r_id - leafStart);
+                break;
+            }
+            int face_id = leafTriIndices[r_id - leafStart];
+            uint3  face = loadFace(faces, face_id);
+            float3 v0   = loadVertex(vertices, face.x);
+            float3 v1   = loadVertex(vertices, face.y);
+            float3 v2   = loadVertex(vertices, face.z);
+            overlap_r = intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tBest, false, &t, &u, &v);
+            if (overlap_r) {
+                tBest = t;
+                uBest = u;
+                vBest = v;
+                faceIdBest = face_id;
+            }
+        }
+
+        const bool descend_l = child_l != NULL && overlap_l;
+        const bool descend_r = child_r != NULL && overlap_r;
+        if (!descend_l && !descend_r) {
+            node = sp == 0 ? NULL : stack[--sp];
+        } else {
+            node = descend_l ? child_l : child_r;
+            if (descend_l && descend_r) {
+                if (sp >= DFS_STACK_SIZE) {
+                    printf("stack overflow\n");
+                    break;
+                }
+                stack[sp++] = child_r;
+            }
+        }
+    } while (node != NULL);
+
+    *outT = tBest;
+    *outU = uBest;
+    *outV = vBest;
+    *outFaceId = faceIdBest;
+    return (faceIdBest != -1);
 }
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
@@ -47,10 +159,95 @@ static inline bool any_hit_from(
     uint                      nfaces,
     int                       ignore_face)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
+    if (nfaces == 0) {
+        return false;
+    }
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    const int rootIndex = 0;
+    const uint leafStart = nfaces - 1;
+
+    if (nfaces == 1) {
+        int face_id = (int)leafTriIndices[0];
+        uint3 face = loadFace(faces, (uint)face_id);
+        float3 v0 = loadVertex(vertices, face.x);
+        float3 v1 = loadVertex(vertices, face.y);
+        float3 v2 = loadVertex(vertices, face.z);
+        float t, u, v;
+        return intersect_ray_triangle_any(orig, dir, v0, v1, v2, ignore_face,
+                                          &t, &u, &v);
+    }
+
+    __global const BVHNodeGPU* stack[DFS_STACK_SIZE];
+    int sp = 0;
+    __global const BVHNodeGPU* node = nodes + rootIndex;
+
+    do {
+        const uint l_id = node->leftChildIndex;
+        const uint r_id = node->rightChildIndex;
+        __global const BVHNodeGPU* child_l = NULL;
+        __global const BVHNodeGPU* child_r = NULL;
+
+        bool overlap_l = false;
+        bool overlap_r = false;
+        if (l_id < leafStart) {
+            child_l = nodes + l_id;
+            float tNear;
+            float tFar;
+            overlap_l = intersect_ray_aabb_any(orig, dir, child_l->aabb, &tNear, &tFar);
+        } else if (l_id != UINT_MAX) {
+            float t, u, v;
+            if (l_id - leafStart >= nfaces) {
+                printf("Invalid face index: %u\n", l_id - leafStart);
+                break;
+            }
+            int face_id = leafTriIndices[l_id - leafStart];
+            uint3  face = loadFace(faces, face_id);
+            float3 v0   = loadVertex(vertices, face.x);
+            float3 v1   = loadVertex(vertices, face.y);
+            float3 v2   = loadVertex(vertices, face.z);
+            overlap_l = intersect_ray_triangle_any(orig, dir, v0, v1, v2, ignore_face, &t, &u, &v);
+            if (overlap_l) {
+                return true;
+            }
+        }
+
+        if (r_id < leafStart) {
+            child_r = nodes + r_id;
+            float tNear;
+            float tFar;
+            overlap_r = intersect_ray_aabb_any(orig, dir, child_r->aabb, &tNear, &tFar);
+        } else if (r_id != UINT_MAX) {
+            float t, u, v;
+            if (r_id - leafStart >= nfaces) {
+                printf("Invalid face index: %u\n", r_id - leafStart);
+                break;
+            }
+            int face_id = leafTriIndices[r_id - leafStart];
+            uint3  face = loadFace(faces, face_id);
+            float3 v0   = loadVertex(vertices, face.x);
+            float3 v1   = loadVertex(vertices, face.y);
+            float3 v2   = loadVertex(vertices, face.z);
+            overlap_r = intersect_ray_triangle_any(orig, dir, v0, v1, v2, ignore_face, &t, &u, &v);
+            if (overlap_r) {
+                return true;
+            }
+        }
+
+        const bool descend_l = child_l != NULL && overlap_l;
+        const bool descend_r = child_r != NULL && overlap_r;
+        if (!descend_l && !descend_r) {
+            node = sp == 0 ? NULL : stack[--sp];
+        } else {
+            node = descend_l ? child_l : child_r;
+            if (descend_l && descend_r) {
+                if (sp >= DFS_STACK_SIZE) {
+                    printf("stack overflow\n");
+                    return false;
+                }
+                stack[sp++] = child_r;
+            }
+        }
+    } while (node != NULL);
 
     return false;
 }
