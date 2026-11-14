@@ -523,6 +523,16 @@ void run(int argc, char** argv)
                       avk2::
                           vulkan_binary_ray_tracing_render_using_ray_query_comp_spirv));
                 }
+
+                {
+                  vk::ComputePipelineCreateInfo pipelineInfo = {};
+                  pipelineInfo.setLayout(**vkRtContext->pipelineLayout)
+                      .setStage(vk::PipelineShaderStageCreateInfo()
+                                    .setStage(vk::ShaderStageFlagBits::eCompute)
+                                    .setModule(**vkRtContext->rt_shader_module)
+                                    .setPName("main"));
+                  vkRtContext->rt_compute_pipeline.emplace(device, nullptr, pipelineInfo);
+                }
             }
             std::vector<double> rt_times_with_cpu_lbvh;
             for (int iter = 0; iter < niters; ++iter) {
