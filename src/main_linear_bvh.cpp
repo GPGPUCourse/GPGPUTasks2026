@@ -81,6 +81,7 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_centroid_bounds(ocl::getBuildLBVH(), "reduce_centroid_bounds");
     ocl::KernelSource ocl_reduce_bounds(ocl::getBuildLBVH(), "reduce_bounds");
     ocl::KernelSource ocl_morton_codes(ocl::getBuildLBVH(), "morton_codes");
+    ocl::KernelSource ocl_sort_morton_pairs(ocl::getBuildLBVH(), "sort_morton_pairs");
 
     avk2::KernelSource vk_rt_brute_force(avk2::getRTBruteForce());
     avk2::KernelSource vk_rt_with_lbvh(avk2::getRTWithLBVH());
@@ -141,6 +142,7 @@ void run(int argc, char** argv)
         gpu::shared_device_buffer_typed<AABBGPU> centroid_bounds_gpu(centroid_bounds_count);
         gpu::shared_device_buffer_typed<AABBGPU> centroid_bounds_scratch_gpu(centroid_bounds_count);
         gpu::gpu_mem_32u morton_pairs_gpu(2 * nfaces);
+        gpu::gpu_mem_32u morton_pairs_scratch_gpu(2 * nfaces);
 
         // Аллоцируем фрейм-буферы (то есть картинки в которые сохранится результат рендеринга)
         gpu::gpu_mem_32i framebuffer_face_id_gpu(width * height);
@@ -189,34 +191,19 @@ void run(int argc, char** argv)
                 morton_pairs_gpu,
                 nfaces);
 
-            struct MortonPrimitive {
-                unsigned int morton_code;
-                unsigned int face_index;
-            };
+            for (unsigned int sorted_run_length = 1; sorted_run_length < nfaces; sorted_run_length *= 2) {
+                const unsigned int values_per_work_item = std::min(8u, 2 * sorted_run_length);
+                const unsigned int work_item_count = (nfaces + values_per_work_item - 1) / values_per_work_item;
 
-            auto morton_values = morton_pairs_gpu.readVector();
-            std::vector<MortonPrimitive> sorted_primitives(nfaces);
+                ocl_sort_morton_pairs.exec(
+                    gpu::WorkSize(GROUP_SIZE, work_item_count),
+                    morton_pairs_gpu,
+                    morton_pairs_scratch_gpu,
+                    sorted_run_length,
+                    nfaces);
 
-            for (unsigned int face_index = 0; face_index < nfaces; ++face_index) {
-                sorted_primitives[face_index] = {
-                    morton_values[2 * face_index],
-                    morton_values[2 * face_index + 1],
-                };
+                morton_pairs_gpu.swap(morton_pairs_scratch_gpu);
             }
-
-            std::stable_sort(
-                sorted_primitives.begin(),
-                sorted_primitives.end(),
-                [](const MortonPrimitive& first_primitive, const MortonPrimitive& second_primitive) {
-                    return first_primitive.morton_code < second_primitive.morton_code;
-                });
-
-            for (unsigned int face_index = 0; face_index < nfaces; ++face_index) {
-                morton_values[2 * face_index] = sorted_primitives[face_index].morton_code;
-                morton_values[2 * face_index + 1] = sorted_primitives[face_index].face_index;
-            }
-
-            morton_pairs_gpu.writeN(morton_values.data(), morton_values.size());
         }
 
         // Перед каждой отрисовкой мы будем зачищать результирующие framebuffers этими значениями

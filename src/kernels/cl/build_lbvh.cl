@@ -172,3 +172,59 @@ __kernel void morton_codes(
 
     morton_pairs[face_index] = (uint2)(morton_code, face_index);
 }
+
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__kernel void sort_morton_pairs(
+    __global const uint2* input_pairs,
+    __global uint2* output_pairs,
+    uint sorted_run_length,
+    uint pair_count)
+{
+    const uint merged_run_length = 2 * sorted_run_length;
+    const uint values_per_work_item = min(8u, merged_run_length);
+    const uint output_begin = get_global_id(0) * values_per_work_item;
+
+    if (output_begin >= pair_count) {
+        return;
+    }
+
+    const uint run_begin = output_begin / merged_run_length * merged_run_length;
+    const uint right_run_begin = min(run_begin + sorted_run_length, pair_count);
+    const uint run_end = min(run_begin + merged_run_length, pair_count);
+    const uint diagonal_index = output_begin - run_begin;
+    const uint left_count = right_run_begin - run_begin;
+    const uint right_count = run_end - right_run_begin;
+
+    uint partition_begin = diagonal_index > right_count
+        ? diagonal_index - right_count
+        : 0;
+    uint partition_end = min(diagonal_index, left_count);
+
+    while (partition_begin < partition_end) {
+        const uint partition_middle = partition_begin + (partition_end - partition_begin) / 2;
+        const uint left_index = run_begin + partition_middle;
+        const uint right_index = right_run_begin + diagonal_index - partition_middle - 1;
+        const bool left_precedes_right = input_pairs[left_index].x <= input_pairs[right_index].x;
+
+        if (left_precedes_right) {
+            partition_begin = partition_middle + 1;
+        } else {
+            partition_end = partition_middle;
+        }
+    }
+
+    uint left_index = run_begin + partition_begin;
+    uint right_index = right_run_begin + diagonal_index - partition_begin;
+    const uint output_end = min(output_begin + values_per_work_item, run_end);
+
+    for (uint output_index = output_begin; output_index < output_end; ++output_index) {
+        const bool take_left = left_index < right_run_begin &&
+            (right_index == run_end || input_pairs[left_index].x <= input_pairs[right_index].x);
+
+        if (take_left) {
+            output_pairs[output_index] = input_pairs[left_index++];
+        } else {
+            output_pairs[output_index] = input_pairs[right_index++];
+        }
+    }
+}
