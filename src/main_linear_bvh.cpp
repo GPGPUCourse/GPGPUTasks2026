@@ -118,6 +118,7 @@ void run(int argc, char** argv)
     const int niters = 10; // при отладке удобно запускать одну итерацию
     std::vector<double> gpu_rt_perf_mrays_per_sec;
     std::vector<double> gpu_lbvh_perfs_mtris_per_sec;
+    std::vector<double> hwrt_perfs_mrays_per_sec;
 
     std::cout << "Using " << AO_SAMPLES << " ray samples for ambient occlusion" << std::endl;
     for (std::string scene_path: scenes) {
@@ -254,296 +255,6 @@ void run(int argc, char** argv)
             framebuffer_ambient_occlusion_gpu.fill(NO_AMBIENT_OCCLUSION);
             cleaning_framebuffers_time += cleaning_framebuffers_t.elapsed();
 
-            std::shared_ptr<VulkanRTContext> vkRtContext = {};
-            if (context.type() == gpu::Context::TypeVulkan) {
-                vkRtContext = std::make_shared<VulkanRTContext>(context.vk(), context.vk()->createCommandBuffer());
-                
-                auto &device = vkRtContext->engine->getDevice();
-                auto vertices_gpu_buffer = vertices_gpu.vkBufferData()->getBuffer();
-                auto &faces_gpu_buffer = faces_gpu.vkBufferData()->getBuffer();
-                auto vertices_gpu_address = device.getBufferAddress(vertices_gpu_buffer) + vertices_gpu.vkoffset();
-                auto faces_gpu_address = device.getBufferAddress(faces_gpu_buffer) + faces_gpu.vkoffset();
-
-                {
-                  vk::AccelerationStructureGeometryTrianglesDataKHR
-                      trianglesData = {};
-                  trianglesData.setVertexFormat(vk::Format::eR32G32B32Sfloat)
-                      .setVertexData(vertices_gpu_address)
-                      .setVertexStride(sizeof(float) * 3)
-                      .setMaxVertex(nvertices - 1)
-                      .setIndexType(vk::IndexType::eUint32)
-                      .setIndexData(faces_gpu_address);
-
-                  vk::AccelerationStructureGeometryDataKHR geometryData = {};
-                  geometryData.setTriangles(trianglesData);
-
-                  vk::AccelerationStructureGeometryKHR geometry = {};
-                  geometry.setGeometryType(vk::GeometryTypeKHR::eTriangles)
-                      .setFlags(vk::GeometryFlagBitsKHR::eOpaque)
-                      .setGeometry(geometryData);
-
-                  vk::AccelerationStructureBuildGeometryInfoKHR build_info = {};
-                  build_info
-                      .setType(vk::AccelerationStructureTypeKHR::eBottomLevel)
-                      .setFlags(vk::BuildAccelerationStructureFlagBitsKHR::
-                                    ePreferFastTrace)
-                      .setMode(vk::BuildAccelerationStructureModeKHR::eBuild)
-                      .setGeometryCount(1)
-                      .setGeometries(geometry);
-
-                  uint32_t primitive_count = nfaces;
-                  auto sizes = device.getAccelerationStructureBuildSizesKHR(
-                      vk::AccelerationStructureBuildTypeKHR::eDevice,
-                      build_info, primitive_count);
-                  std::cout << "Acceleration structure build sizes:"
-                            << std::endl;
-                  std::cout << "  accelerationStructureSize = "
-                            << sizes.accelerationStructureSize << std::endl;
-                  std::cout
-                      << "  updateScratchSize = " << sizes.updateScratchSize
-                      << std::endl;
-                  std::cout << "  buildScratchSize = " << sizes.buildScratchSize
-                            << std::endl;
-
-                  // TODO: alignment (scratch/blas)
-                  vkRtContext->build_scratch_buffer =
-                      gpu::gpu_mem_8u(sizes.buildScratchSize);
-                  vkRtContext->blas_buffer =
-                      gpu::gpu_mem_8u(sizes.accelerationStructureSize);
-
-                  build_info.scratchData.deviceAddress =
-                      device.getBufferAddress(
-                          vkRtContext->build_scratch_buffer.vkBufferData()
-                              ->getBuffer()) +
-                      vkRtContext->build_scratch_buffer.vkoffset();
-                  const vk::DeviceSize blas_offset =
-                      vkRtContext->blas_buffer.vkoffset();
-
-                  {
-                    vk::AccelerationStructureCreateInfoKHR createInfo = {};
-                    createInfo
-                        .setBuffer(vkRtContext->blas_buffer.vkBufferData()
-                                       ->getBuffer())
-                        .setOffset(blas_offset)
-                        .setSize(sizes.accelerationStructureSize)
-                        .setType(
-                            vk::AccelerationStructureTypeKHR::eBottomLevel);
-                    vkRtContext->blas.emplace(device, createInfo);
-                  }
-
-                  build_info.setDstAccelerationStructure(
-                      *vkRtContext->blas.value());
-
-                  {
-                    vk::raii::Fence fence(device, vk::FenceCreateInfo{});
-
-                    vk::AccelerationStructureBuildRangeInfoKHR
-                        build_range_info = {};
-                    build_range_info.setPrimitiveCount(primitive_count);
-
-                    auto &cmdBuf = vkRtContext->cmd_buf;
-                    cmdBuf.reset({});
-                    cmdBuf.begin(vk::CommandBufferBeginInfo{
-                        vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-
-                    auto *range_infos = &build_range_info;
-                    cmdBuf.buildAccelerationStructuresKHR(build_info,
-                                                          range_infos);
-
-                    cmdBuf.end();
-
-                    vkRtContext->engine->submitCommandBuffer(cmdBuf, fence);
-                  }
-                }
-
-                {
-                  vk::AccelerationStructureDeviceAddressInfoKHR addressInfo = {};
-                  addressInfo.setAccelerationStructure(vkRtContext->blas.value());
-                  auto blasAddress = device.getAccelerationStructureAddressKHR(addressInfo);
-
-                  vk::AccelerationStructureInstanceKHR instance = {};
-                  instance.transform.matrix[0][0] = 1.0f;
-                  instance.transform.matrix[1][1] = 1.0f;
-                  instance.transform.matrix[2][2] = 1.0f;
-                  instance.setInstanceCustomIndex(0)
-                      .setMask(0xFF)
-                      .setInstanceShaderBindingTableRecordOffset(0)
-                      .setFlags(vk::GeometryInstanceFlagBitsKHR::
-                                    eTriangleFacingCullDisable)
-                      .setAccelerationStructureReference(blasAddress);
-
-                  vkRtContext->instances_buffer = gpu::shared_device_buffer_typed<vk::AccelerationStructureInstanceKHR>(1);
-                  vkRtContext->instances_buffer.writeN(&instance, 1);
-
-                  auto instancesAddress =
-                      device.getBufferAddress(
-                          vkRtContext->instances_buffer.vkBufferData()
-                              ->getBuffer()) +
-                      vkRtContext->instances_buffer.vkoffset();
-                  
-                  vk::AccelerationStructureGeometryInstancesDataKHR instancesData = {};
-                  instancesData.setArrayOfPointers(VK_FALSE)
-                      .data.setDeviceAddress(instancesAddress);
-                  
-                  vk::AccelerationStructureGeometryKHR geometry = {};
-                  geometry.setGeometryType(vk::GeometryTypeKHR::eInstances)
-                      .setFlags(vk::GeometryFlagBitsKHR::eOpaque)
-                      .geometry.setInstances(instancesData);
-
-                  vk::AccelerationStructureBuildGeometryInfoKHR build_info = {};
-                  build_info
-                      .setType(vk::AccelerationStructureTypeKHR::eTopLevel)
-                      .setFlags(vk::BuildAccelerationStructureFlagBitsKHR::
-                                    ePreferFastTrace)
-                      .setMode(vk::BuildAccelerationStructureModeKHR::eBuild)
-                      .setGeometries(geometry);
-
-                  auto sizes = device.getAccelerationStructureBuildSizesKHR(
-                      vk::AccelerationStructureBuildTypeKHR::eDevice,
-                      build_info, 1);
-                  
-                  //TODO alignment (scratch/tlas/etc)
-                  vkRtContext->tlas_scratch_buffer =
-                      gpu::gpu_mem_8u(sizes.buildScratchSize);
-                  vkRtContext->tlas_buffer =
-                      gpu::gpu_mem_8u(sizes.accelerationStructureSize);
-
-                  vk::AccelerationStructureCreateInfoKHR createInfo = {};
-                  createInfo.setBuffer(vkRtContext->tlas_buffer.vkBufferData()->getBuffer())
-                      .setOffset(vkRtContext->tlas_buffer.vkoffset())
-                      .setSize(sizes.accelerationStructureSize)
-                      .setType(vk::AccelerationStructureTypeKHR::eTopLevel);
-
-                  vkRtContext->tlas.emplace(device, createInfo);
-                  
-                  auto scratchBuffer = vkRtContext->tlas_scratch_buffer.vkBufferData()->getBuffer();
-                  auto scratchBufferAddress = device.getBufferAddress(scratchBuffer) + vkRtContext->tlas_scratch_buffer.vkoffset();
-                  build_info
-                      .setDstAccelerationStructure(*vkRtContext->tlas.value())
-                      .scratchData.setDeviceAddress(scratchBufferAddress);
-
-                  {
-                    vk::AccelerationStructureBuildRangeInfoKHR build_range_info = {};
-                    build_range_info.setPrimitiveCount(1);
-                    const auto *ranges = &build_range_info;
-
-                    auto &cmdBuf = vkRtContext->cmd_buf;
-                    cmdBuf.reset({});
-                    cmdBuf.begin(vk::CommandBufferBeginInfo{
-                        vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-                    vk::MemoryBarrier build_barrier;
-                    build_barrier.setSrcAccessMask(vk::AccessFlagBits::eMemoryWrite)
-                        .setDstAccessMask(vk::AccessFlagBits::eAccelerationStructureReadKHR |
-                            vk::AccessFlagBits::eShaderRead);
-                    cmdBuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
-                        vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
-                        {}, build_barrier, {}, {});
-                    cmdBuf.buildAccelerationStructuresKHR(build_info, ranges);
-                    cmdBuf.end();
-
-                    vk::raii::Fence fence(device, vk::FenceCreateInfo{});
-                    vkRtContext->engine->submitCommandBuffer(cmdBuf, fence);
-                  }
-                }
-
-                {
-                  vk::DescriptorPoolCreateInfo poolInfo = {};
-                  vk::DescriptorPoolSize poolSizes[] = {
-                    {vk::DescriptorType::eStorageBuffer, 5},
-                    {vk::DescriptorType::eAccelerationStructureKHR, 1}
-                  };
-                  poolInfo.setMaxSets(1).setPoolSizes(poolSizes).setFlags(
-                      vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet);
-                  vkRtContext->descriptorPool.emplace(device, poolInfo);
-                }
-
-                {
-                  vk::DescriptorSetLayoutBinding bindings[] = {
-                      {0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
-                      {1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
-                      {2, vk::DescriptorType::eAccelerationStructureKHR, 1, vk::ShaderStageFlagBits::eCompute},
-                      {3, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
-                      {4, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
-                      {5, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute}};
-
-                  vk::DescriptorSetLayoutCreateInfo layoutInfo = {};
-                  layoutInfo.setBindings(bindings);
-
-                  vkRtContext->descriptorSetLayout.emplace(device, layoutInfo);
-                }
-
-                {
-                  vk::DescriptorSetAllocateInfo allocInfo = {};
-                  allocInfo.setDescriptorPool(*vkRtContext->descriptorPool)
-                      .setSetLayouts(**vkRtContext->descriptorSetLayout);
-                  auto allocatedSets = device.allocateDescriptorSets(allocInfo);
-                  vkRtContext->descriptorSet.emplace(std::move(allocatedSets[0]));
-                }
-
-                {
-                  auto descriptor_set = **vkRtContext->descriptorSet;
-                  const auto buffer_info = [](const gpu::shared_device_buffer& buffer) {
-                      vk::DescriptorBufferInfo info;
-                      info.setBuffer(buffer.vkBufferData()->getBuffer());
-                      info.setOffset(buffer.vkoffset());
-                      info.setRange(buffer.size());
-                      return info;
-                  };
-
-                  const std::array<vk::DescriptorBufferInfo, 5> buffer_infos = {
-                      buffer_info(vertices_gpu),
-                      buffer_info(faces_gpu),
-                      buffer_info(framebuffer_face_id_gpu),
-                      buffer_info(framebuffer_ambient_occlusion_gpu),
-                      buffer_info(camera_gpu)};
-                  const std::array<uint32_t, 5> buffer_bindings = {0, 1, 3, 4, 5};
-
-                  auto tlas_handle = **vkRtContext->tlas;
-                  vk::WriteDescriptorSetAccelerationStructureKHR tlas_info;
-                  tlas_info.setAccelerationStructures(tlas_handle);
-
-                  std::array<vk::WriteDescriptorSet, 6> writes;
-                  for (size_t i = 0; i < buffer_infos.size(); ++i) {
-                      writes[i].setDstSet(descriptor_set)
-                          .setDstBinding(buffer_bindings[i])
-                          .setDescriptorType(vk::DescriptorType::eStorageBuffer)
-                          .setBufferInfo(buffer_infos[i]);
-                  }
-                  writes[5].setDstSet(descriptor_set)
-                      .setDstBinding(2)
-                      .setDescriptorType(vk::DescriptorType::eAccelerationStructureKHR)
-                      .setDescriptorCount(1)
-                      .setPNext(&tlas_info);
-
-                  device.updateDescriptorSets(writes, {});
-                }
-
-                {
-                  vk::PipelineLayoutCreateInfo pipelineLayoutInfo = {};
-                  vk::DescriptorSetLayout setLayouts[] = {
-                      **vkRtContext->descriptorSetLayout};
-                  pipelineLayoutInfo.setSetLayouts(setLayouts);
-                  vkRtContext->pipelineLayout.emplace(device, pipelineLayoutInfo);
-                }
-
-                {
-                  vkRtContext->rt_shader_module.emplace(avk2::createShaderModule(
-                      device,
-                      avk2::
-                          vulkan_binary_ray_tracing_render_using_ray_query_comp_spirv));
-                }
-
-                {
-                  vk::ComputePipelineCreateInfo pipelineInfo = {};
-                  pipelineInfo.setLayout(**vkRtContext->pipelineLayout)
-                      .setStage(vk::PipelineShaderStageCreateInfo()
-                                    .setStage(vk::ShaderStageFlagBits::eCompute)
-                                    .setModule(**vkRtContext->rt_shader_module)
-                                    .setPName("main"));
-                  vkRtContext->rt_compute_pipeline.emplace(device, nullptr, pipelineInfo);
-                }
-            }
-
             std::vector<double> rt_times_with_cpu_lbvh;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
@@ -566,36 +277,7 @@ void run(int argc, char** argv)
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
                         camera_gpu, nfaces, true, &framebuffer_pixel_info_gpu, &framebuffer_ambient_occlusion_temp_gpu);
                 } else if (context.type() == gpu::Context::TypeVulkan) {
-                    std::cout << "WARNING: Use HWRT, not cpu LBVH!!!" << std::endl;
-                    auto &cmdBuf = vkRtContext->cmd_buf;
-                    cmdBuf.reset({});
-                    cmdBuf.begin(vk::CommandBufferBeginInfo{
-                        vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-                    vk::MemoryBarrier input_barrier;
-                    input_barrier.setSrcAccessMask(vk::AccessFlagBits::eMemoryWrite)
-                        .setDstAccessMask(vk::AccessFlagBits::eShaderRead |
-                            vk::AccessFlagBits::eShaderWrite |
-                            vk::AccessFlagBits::eAccelerationStructureReadKHR);
-                    cmdBuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
-                        vk::PipelineStageFlagBits::eComputeShader,
-                        {}, input_barrier, {}, {});
-                    cmdBuf.bindPipeline(vk::PipelineBindPoint::eCompute, **vkRtContext->rt_compute_pipeline);
-                    cmdBuf.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
-                                              **vkRtContext->pipelineLayout, 0,
-                                              **vkRtContext->descriptorSet,
-                                              nullptr);
-                    cmdBuf.dispatch(
-                        (width + GROUP_SIZE_X - 1) / GROUP_SIZE_X,
-                        (height + GROUP_SIZE_Y - 1) / GROUP_SIZE_Y, 1);
-                    vk::MemoryBarrier output_barrier;
-                    output_barrier.setSrcAccessMask(vk::AccessFlagBits::eShaderWrite)
-                        .setDstAccessMask(vk::AccessFlagBits::eTransferRead);
-                    cmdBuf.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
-                        vk::PipelineStageFlagBits::eTransfer,
-                        {}, output_barrier, {}, {});
-                    cmdBuf.end();
-                    vk::raii::Fence fence(vkRtContext->engine->getDevice(), vk::FenceCreateInfo{});
-                    vkRtContext->engine->submitCommandBuffer(cmdBuf, fence);
+                    std::cout << "WARNING: software lbvh traversal implemented on CUDA!" << std::endl;
                 } else {
                     rassert(false, 654724541234123);
                 }
@@ -687,6 +369,365 @@ void run(int argc, char** argv)
             }
         }
 
+        double hwrt_setup_time = 0.0;
+        double hwrt_render_time = 0.0;
+        if (context.type() == gpu::Context::TypeVulkan) {
+            timer hwrt_setup_t;
+            auto vkRtContext = std::make_shared<VulkanRTContext>(context.vk(), context.vk()->createCommandBuffer());
+            
+            auto &device = vkRtContext->engine->getDevice();
+            auto vertices_gpu_buffer = vertices_gpu.vkBufferData()->getBuffer();
+            auto &faces_gpu_buffer = faces_gpu.vkBufferData()->getBuffer();
+            auto vertices_gpu_address = device.getBufferAddress(vertices_gpu_buffer) + vertices_gpu.vkoffset();
+            auto faces_gpu_address = device.getBufferAddress(faces_gpu_buffer) + faces_gpu.vkoffset();
+
+            {
+              vk::AccelerationStructureGeometryTrianglesDataKHR
+                  trianglesData = {};
+              trianglesData.setVertexFormat(vk::Format::eR32G32B32Sfloat)
+                  .setVertexData(vertices_gpu_address)
+                  .setVertexStride(sizeof(float) * 3)
+                  .setMaxVertex(nvertices - 1)
+                  .setIndexType(vk::IndexType::eUint32)
+                  .setIndexData(faces_gpu_address);
+
+              vk::AccelerationStructureGeometryDataKHR geometryData = {};
+              geometryData.setTriangles(trianglesData);
+
+              vk::AccelerationStructureGeometryKHR geometry = {};
+              geometry.setGeometryType(vk::GeometryTypeKHR::eTriangles)
+                  .setFlags(vk::GeometryFlagBitsKHR::eOpaque)
+                  .setGeometry(geometryData);
+
+              vk::AccelerationStructureBuildGeometryInfoKHR build_info = {};
+              build_info
+                  .setType(vk::AccelerationStructureTypeKHR::eBottomLevel)
+                  .setFlags(vk::BuildAccelerationStructureFlagBitsKHR::
+                                ePreferFastTrace)
+                  .setMode(vk::BuildAccelerationStructureModeKHR::eBuild)
+                  .setGeometryCount(1)
+                  .setGeometries(geometry);
+
+              uint32_t primitive_count = nfaces;
+              auto sizes = device.getAccelerationStructureBuildSizesKHR(
+                  vk::AccelerationStructureBuildTypeKHR::eDevice,
+                  build_info, primitive_count);
+              std::cout << "Acceleration structure build sizes:"
+                        << std::endl;
+              std::cout << "  accelerationStructureSize = "
+                        << sizes.accelerationStructureSize << std::endl;
+              std::cout
+                  << "  updateScratchSize = " << sizes.updateScratchSize
+                  << std::endl;
+              std::cout << "  buildScratchSize = " << sizes.buildScratchSize
+                        << std::endl;
+
+              // TODO: alignment (scratch/blas)
+              vkRtContext->build_scratch_buffer =
+                  gpu::gpu_mem_8u(sizes.buildScratchSize);
+              vkRtContext->blas_buffer =
+                  gpu::gpu_mem_8u(sizes.accelerationStructureSize);
+
+              build_info.scratchData.deviceAddress =
+                  device.getBufferAddress(
+                      vkRtContext->build_scratch_buffer.vkBufferData()
+                          ->getBuffer()) +
+                  vkRtContext->build_scratch_buffer.vkoffset();
+              const vk::DeviceSize blas_offset =
+                  vkRtContext->blas_buffer.vkoffset();
+
+              {
+                vk::AccelerationStructureCreateInfoKHR createInfo = {};
+                createInfo
+                    .setBuffer(vkRtContext->blas_buffer.vkBufferData()
+                                   ->getBuffer())
+                    .setOffset(blas_offset)
+                    .setSize(sizes.accelerationStructureSize)
+                    .setType(
+                        vk::AccelerationStructureTypeKHR::eBottomLevel);
+                vkRtContext->blas.emplace(device, createInfo);
+              }
+
+              build_info.setDstAccelerationStructure(
+                  *vkRtContext->blas.value());
+
+              {
+                vk::raii::Fence fence(device, vk::FenceCreateInfo{});
+
+                vk::AccelerationStructureBuildRangeInfoKHR
+                    build_range_info = {};
+                build_range_info.setPrimitiveCount(primitive_count);
+
+                auto &cmdBuf = vkRtContext->cmd_buf;
+                cmdBuf.reset({});
+                cmdBuf.begin(vk::CommandBufferBeginInfo{
+                    vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+
+                auto *range_infos = &build_range_info;
+                cmdBuf.buildAccelerationStructuresKHR(build_info,
+                                                      range_infos);
+
+                cmdBuf.end();
+
+                vkRtContext->engine->submitCommandBuffer(cmdBuf, fence);
+              }
+            }
+
+            {
+              vk::AccelerationStructureDeviceAddressInfoKHR addressInfo = {};
+              addressInfo.setAccelerationStructure(vkRtContext->blas.value());
+              auto blasAddress = device.getAccelerationStructureAddressKHR(addressInfo);
+
+              vk::AccelerationStructureInstanceKHR instance = {};
+              instance.transform.matrix[0][0] = 1.0f;
+              instance.transform.matrix[1][1] = 1.0f;
+              instance.transform.matrix[2][2] = 1.0f;
+              instance.setInstanceCustomIndex(0)
+                  .setMask(0xFF)
+                  .setInstanceShaderBindingTableRecordOffset(0)
+                  .setFlags(vk::GeometryInstanceFlagBitsKHR::
+                                eTriangleFacingCullDisable)
+                  .setAccelerationStructureReference(blasAddress);
+
+              vkRtContext->instances_buffer = gpu::shared_device_buffer_typed<vk::AccelerationStructureInstanceKHR>(1);
+              vkRtContext->instances_buffer.writeN(&instance, 1);
+
+              auto instancesAddress =
+                  device.getBufferAddress(
+                      vkRtContext->instances_buffer.vkBufferData()
+                          ->getBuffer()) +
+                  vkRtContext->instances_buffer.vkoffset();
+              
+              vk::AccelerationStructureGeometryInstancesDataKHR instancesData = {};
+              instancesData.setArrayOfPointers(VK_FALSE)
+                  .data.setDeviceAddress(instancesAddress);
+              
+              vk::AccelerationStructureGeometryKHR geometry = {};
+              geometry.setGeometryType(vk::GeometryTypeKHR::eInstances)
+                  .setFlags(vk::GeometryFlagBitsKHR::eOpaque)
+                  .geometry.setInstances(instancesData);
+
+              vk::AccelerationStructureBuildGeometryInfoKHR build_info = {};
+              build_info
+                  .setType(vk::AccelerationStructureTypeKHR::eTopLevel)
+                  .setFlags(vk::BuildAccelerationStructureFlagBitsKHR::
+                                ePreferFastTrace)
+                  .setMode(vk::BuildAccelerationStructureModeKHR::eBuild)
+                  .setGeometries(geometry);
+
+              auto sizes = device.getAccelerationStructureBuildSizesKHR(
+                  vk::AccelerationStructureBuildTypeKHR::eDevice,
+                  build_info, 1);
+              
+              //TODO alignment (scratch/tlas/etc)
+              vkRtContext->tlas_scratch_buffer =
+                  gpu::gpu_mem_8u(sizes.buildScratchSize);
+              vkRtContext->tlas_buffer =
+                  gpu::gpu_mem_8u(sizes.accelerationStructureSize);
+
+              vk::AccelerationStructureCreateInfoKHR createInfo = {};
+              createInfo.setBuffer(vkRtContext->tlas_buffer.vkBufferData()->getBuffer())
+                  .setOffset(vkRtContext->tlas_buffer.vkoffset())
+                  .setSize(sizes.accelerationStructureSize)
+                  .setType(vk::AccelerationStructureTypeKHR::eTopLevel);
+
+              vkRtContext->tlas.emplace(device, createInfo);
+              
+              auto scratchBuffer = vkRtContext->tlas_scratch_buffer.vkBufferData()->getBuffer();
+              auto scratchBufferAddress = device.getBufferAddress(scratchBuffer) + vkRtContext->tlas_scratch_buffer.vkoffset();
+              build_info
+                  .setDstAccelerationStructure(*vkRtContext->tlas.value())
+                  .scratchData.setDeviceAddress(scratchBufferAddress);
+
+              {
+                vk::AccelerationStructureBuildRangeInfoKHR build_range_info = {};
+                build_range_info.setPrimitiveCount(1);
+                const auto *ranges = &build_range_info;
+
+                auto &cmdBuf = vkRtContext->cmd_buf;
+                cmdBuf.reset({});
+                cmdBuf.begin(vk::CommandBufferBeginInfo{
+                    vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+                vk::MemoryBarrier build_barrier;
+                build_barrier.setSrcAccessMask(vk::AccessFlagBits::eMemoryWrite)
+                    .setDstAccessMask(vk::AccessFlagBits::eAccelerationStructureReadKHR |
+                        vk::AccessFlagBits::eShaderRead);
+                cmdBuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
+                    vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                    {}, build_barrier, {}, {});
+                cmdBuf.buildAccelerationStructuresKHR(build_info, ranges);
+                cmdBuf.end();
+
+                vk::raii::Fence fence(device, vk::FenceCreateInfo{});
+                vkRtContext->engine->submitCommandBuffer(cmdBuf, fence);
+              }
+            }
+
+            {
+              vk::DescriptorPoolCreateInfo poolInfo = {};
+              vk::DescriptorPoolSize poolSizes[] = {
+                {vk::DescriptorType::eStorageBuffer, 5},
+                {vk::DescriptorType::eAccelerationStructureKHR, 1}
+              };
+              poolInfo.setMaxSets(1).setPoolSizes(poolSizes).setFlags(
+                  vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet);
+              vkRtContext->descriptorPool.emplace(device, poolInfo);
+            }
+
+            {
+              vk::DescriptorSetLayoutBinding bindings[] = {
+                  {0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
+                  {1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
+                  {2, vk::DescriptorType::eAccelerationStructureKHR, 1, vk::ShaderStageFlagBits::eCompute},
+                  {3, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
+                  {4, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
+                  {5, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute}};
+
+              vk::DescriptorSetLayoutCreateInfo layoutInfo = {};
+              layoutInfo.setBindings(bindings);
+
+              vkRtContext->descriptorSetLayout.emplace(device, layoutInfo);
+            }
+
+            {
+              vk::DescriptorSetAllocateInfo allocInfo = {};
+              allocInfo.setDescriptorPool(*vkRtContext->descriptorPool)
+                  .setSetLayouts(**vkRtContext->descriptorSetLayout);
+              auto allocatedSets = device.allocateDescriptorSets(allocInfo);
+              vkRtContext->descriptorSet.emplace(std::move(allocatedSets[0]));
+            }
+
+            {
+              auto descriptor_set = **vkRtContext->descriptorSet;
+              const auto buffer_info = [](const gpu::shared_device_buffer& buffer) {
+                  vk::DescriptorBufferInfo info;
+                  info.setBuffer(buffer.vkBufferData()->getBuffer());
+                  info.setOffset(buffer.vkoffset());
+                  info.setRange(buffer.size());
+                  return info;
+              };
+
+              const std::array<vk::DescriptorBufferInfo, 5> buffer_infos = {
+                  buffer_info(vertices_gpu),
+                  buffer_info(faces_gpu),
+                  buffer_info(framebuffer_face_id_gpu),
+                  buffer_info(framebuffer_ambient_occlusion_gpu),
+                  buffer_info(camera_gpu)};
+              const std::array<uint32_t, 5> buffer_bindings = {0, 1, 3, 4, 5};
+
+              auto tlas_handle = **vkRtContext->tlas;
+              vk::WriteDescriptorSetAccelerationStructureKHR tlas_info;
+              tlas_info.setAccelerationStructures(tlas_handle);
+
+              std::array<vk::WriteDescriptorSet, 6> writes;
+              for (size_t i = 0; i < buffer_infos.size(); ++i) {
+                  writes[i].setDstSet(descriptor_set)
+                      .setDstBinding(buffer_bindings[i])
+                      .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+                      .setBufferInfo(buffer_infos[i]);
+              }
+              writes[5].setDstSet(descriptor_set)
+                  .setDstBinding(2)
+                  .setDescriptorType(vk::DescriptorType::eAccelerationStructureKHR)
+                  .setDescriptorCount(1)
+                  .setPNext(&tlas_info);
+
+              device.updateDescriptorSets(writes, {});
+            }
+
+            {
+              vk::PipelineLayoutCreateInfo pipelineLayoutInfo = {};
+              vk::DescriptorSetLayout setLayouts[] = {
+                  **vkRtContext->descriptorSetLayout};
+              pipelineLayoutInfo.setSetLayouts(setLayouts);
+              vkRtContext->pipelineLayout.emplace(device, pipelineLayoutInfo);
+            }
+
+            {
+              vkRtContext->rt_shader_module.emplace(avk2::createShaderModule(
+                  device,
+                  avk2::
+                      vulkan_binary_ray_tracing_render_using_ray_query_comp_spirv));
+            }
+
+            {
+              vk::ComputePipelineCreateInfo pipelineInfo = {};
+              pipelineInfo.setLayout(**vkRtContext->pipelineLayout)
+                  .setStage(vk::PipelineShaderStageCreateInfo()
+                                .setStage(vk::ShaderStageFlagBits::eCompute)
+                                .setModule(**vkRtContext->rt_shader_module)
+                                .setPName("main"));
+              vkRtContext->rt_compute_pipeline.emplace(device, nullptr, pipelineInfo);
+            }
+            hwrt_setup_time = hwrt_setup_t.elapsed();
+
+            timer cleaning_framebuffers_t;
+            framebuffer_face_id_gpu.fill(NO_FACE_ID);
+            framebuffer_ambient_occlusion_gpu.fill(NO_AMBIENT_OCCLUSION);
+            cleaning_framebuffers_time += cleaning_framebuffers_t.elapsed();
+
+            std::vector<double> hwrt_times;
+            for (int iter = 0; iter < niters; ++iter) {
+                timer t;
+                auto &cmdBuf = vkRtContext->cmd_buf;
+                cmdBuf.reset({});
+                cmdBuf.begin(vk::CommandBufferBeginInfo{
+                    vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+                vk::MemoryBarrier input_barrier;
+                input_barrier.setSrcAccessMask(vk::AccessFlagBits::eMemoryWrite)
+                    .setDstAccessMask(vk::AccessFlagBits::eShaderRead |
+                        vk::AccessFlagBits::eShaderWrite |
+                        vk::AccessFlagBits::eAccelerationStructureReadKHR);
+                cmdBuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
+                    vk::PipelineStageFlagBits::eComputeShader,
+                    {}, input_barrier, {}, {});
+                cmdBuf.bindPipeline(vk::PipelineBindPoint::eCompute, **vkRtContext->rt_compute_pipeline);
+                cmdBuf.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                                          **vkRtContext->pipelineLayout, 0,
+                                          **vkRtContext->descriptorSet,
+                                          nullptr);
+                cmdBuf.dispatch(
+                    (width + GROUP_SIZE_X - 1) / GROUP_SIZE_X,
+                    (height + GROUP_SIZE_Y - 1) / GROUP_SIZE_Y, 1);
+                vk::MemoryBarrier output_barrier;
+                output_barrier.setSrcAccessMask(vk::AccessFlagBits::eShaderWrite)
+                    .setDstAccessMask(vk::AccessFlagBits::eTransferRead);
+                cmdBuf.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                    vk::PipelineStageFlagBits::eTransfer,
+                    {}, output_barrier, {}, {});
+                cmdBuf.end();
+                vk::raii::Fence fence(vkRtContext->engine->getDevice(), vk::FenceCreateInfo{});
+                vkRtContext->engine->submitCommandBuffer(cmdBuf, fence);
+                hwrt_times.push_back(t.elapsed());
+            }
+            hwrt_render_time = stats::sum(hwrt_times);
+            const double mrays_per_sec = width * height * AO_SAMPLES * 1e-6f /
+                stats::median(hwrt_times);
+            std::cout << "HWRT setup time: " << hwrt_setup_time << " sec" << std::endl;
+            std::cout << "HWRT frame render times (in seconds) - "
+                      << stats::valuesStatsLine(hwrt_times) << std::endl;
+            std::cout << "HWRT performance: " << mrays_per_sec << " MRays/s" << std::endl;
+            hwrt_perfs_mrays_per_sec.push_back(mrays_per_sec);
+
+            timer pcie_reading_t;
+            image32i hwrt_framebuffer_face_ids(width, height, 1);
+            image32f hwrt_framebuffer_ambient_occlusion(width, height, 1);
+            framebuffer_face_id_gpu.readN(hwrt_framebuffer_face_ids.ptr(), width * height);
+            framebuffer_ambient_occlusion_gpu.readN(hwrt_framebuffer_ambient_occlusion.ptr(), width * height);
+            pcie_reading_time += pcie_reading_t.elapsed();
+
+            timer hwrt_images_saving_t;
+            debug_io::dumpImage(results_dir + "/framebuffer_face_ids_with_hwrt.bmp", debug_io::randomMapping(hwrt_framebuffer_face_ids, NO_FACE_ID));
+            debug_io::dumpImage(results_dir + "/framebuffer_ambient_occlusion_with_hwrt.bmp", debug_io::depthMapping(hwrt_framebuffer_ambient_occlusion));
+            images_saving_time += hwrt_images_saving_t.elapsed();
+            if (has_brute_force) {
+                unsigned int count_ao_errors = countDiffs(brute_force_framebuffer_ambient_occlusion, hwrt_framebuffer_ambient_occlusion, 0.01f);
+                unsigned int count_face_id_errors = countDiffs(brute_force_framebuffer_face_ids, hwrt_framebuffer_face_ids, 1);
+                // rassert(count_ao_errors < width * height / 100, 345341512354123, count_ao_errors, to_percent(count_ao_errors, width * height));
+                // rassert(count_face_id_errors < width * height / 100, 3453415123546587, count_face_id_errors, to_percent(count_face_id_errors, width * height));
+            }
+        }
+
         double total_time = total_t.elapsed();
         std::cout << "Scene processed in " << total_t.elapsed() << " sec = ";
         std::cout << to_percent(loading_data_time, total_time) << " scene IO + ";
@@ -697,6 +738,10 @@ void run(int argc, char** argv)
         std::cout << to_percent(rt_times_with_cpu_lbvh_sum, total_time) << " GPU with CPU LBVH + ";
         std::cout << to_percent(gpu_lbvh_time_sum, total_time) << " GPU LBVH + ";
         std::cout << to_percent(rt_times_with_gpu_lbvh_sum, total_time) << " GPU with GPU LBVH + ";
+        if (context.type() == gpu::Context::TypeVulkan) {
+            std::cout << to_percent(hwrt_setup_time, total_time) << " HWRT setup + ";
+            std::cout << to_percent(hwrt_render_time, total_time) << " HWRT rendering + ";
+        }
         std::cout << to_percent(images_saving_time, total_time) << " images IO + ";
         std::cout << to_percent(pcie_writing_time, total_time) << " PCI-E write + ";
         std::cout << to_percent(pcie_reading_time, total_time) << " PCI-E read + ";
@@ -705,13 +750,19 @@ void run(int argc, char** argv)
     }
 
     std::cout << "____________________________________________________________________________________________" << std::endl;
-    double avg_gpu_rt_perf = stats::avg(gpu_rt_perf_mrays_per_sec);
-    double avg_lbvh_build_perf = stats::avg(gpu_lbvh_perfs_mtris_per_sec);
-    std::cout << "Total GPU RT with  LBVH avg perf: " << avg_gpu_rt_perf << " MRays/sec (all " << stats::vectorToString(gpu_rt_perf_mrays_per_sec) << ")" << std::endl;
-    std::cout << "Total building GPU LBVH avg perf: " << avg_lbvh_build_perf << " MTris/sec (all " << stats::vectorToString(gpu_lbvh_perfs_mtris_per_sec) << ")" << std::endl;
-    std::cout << "Final score: " << avg_gpu_rt_perf * avg_lbvh_build_perf << " coolness" << std::endl;
-    if (gpu_rt_perf_mrays_per_sec.size() != 6 || gpu_lbvh_perfs_mtris_per_sec.size() != 3) {
-        std::cout << "Results are incomplete!" << std::endl;
+    if (context.type() == gpu::Context::TypeVulkan) {
+        std::cout << "Total HWRT avg perf: " << stats::avg(hwrt_perfs_mrays_per_sec)
+                  << " MRays/sec (all " << stats::vectorToString(hwrt_perfs_mrays_per_sec)
+                  << ")" << std::endl;
+    } else {
+        double avg_gpu_rt_perf = stats::avg(gpu_rt_perf_mrays_per_sec);
+        double avg_lbvh_build_perf = stats::avg(gpu_lbvh_perfs_mtris_per_sec);
+        std::cout << "Total GPU RT with  LBVH avg perf: " << avg_gpu_rt_perf << " MRays/sec (all " << stats::vectorToString(gpu_rt_perf_mrays_per_sec) << ")" << std::endl;
+        std::cout << "Total building GPU LBVH avg perf: " << avg_lbvh_build_perf << " MTris/sec (all " << stats::vectorToString(gpu_lbvh_perfs_mtris_per_sec) << ")" << std::endl;
+        std::cout << "Final score: " << avg_gpu_rt_perf * avg_lbvh_build_perf << " coolness" << std::endl;
+        if (gpu_rt_perf_mrays_per_sec.size() != 6 || gpu_lbvh_perfs_mtris_per_sec.size() != 3) {
+            std::cout << "Results are incomplete!" << std::endl;
+        }
     }
 }
 
