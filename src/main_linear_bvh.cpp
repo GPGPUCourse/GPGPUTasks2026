@@ -23,6 +23,8 @@
 #include <filesystem>
 #include <fstream>
 
+#include "kernels/vk/generated_kernels/ray_tracing_render_using_ray_query_comp_spirv_vulkan.h"
+
 // Считает сколько непустых пикселей
 template<typename T>
 size_t countNonEmpty(const TypedImage<T> &image, T empty_value) {
@@ -73,6 +75,8 @@ struct VulkanRTContext {
   std::optional<vk::raii::DescriptorSetLayout> descriptorSetLayout;
   std::optional<vk::raii::DescriptorSet> descriptorSet;
   std::optional<vk::raii::PipelineLayout> pipelineLayout;
+  std::optional<vk::raii::ShaderModule> rt_shader_module;
+  std::optional<vk::raii::Pipeline> rt_compute_pipeline;
 };
 
 void run(int argc, char** argv)
@@ -514,7 +518,10 @@ void run(int argc, char** argv)
                 }
 
                 {
-                  
+                  vkRtContext->rt_shader_module.emplace(avk2::createShaderModule(
+                      device,
+                      avk2::
+                          vulkan_binary_ray_tracing_render_using_ray_query_comp_spirv));
                 }
             }
             std::vector<double> rt_times_with_cpu_lbvh;
