@@ -209,7 +209,7 @@ void run(int argc, char** argv)
     std::cout << "Average SpMV performance across " << count << " matrix configurations:" << std::endl;
     std::cout << "CPU mean effective RAM bandwidth: " << cpu_bandwidth_sum / count << " GB/s ("
               << cpu_throughput_sum / count << " uint millions/s)" << std::endl;
-    std::cout << "GPU mean effective VRAM bandwidth (based on per-configuration median times): "
+    std::cout << "GPU mean effective VRAM bandwidth: "
               << gpu_bandwidth_sum / count << " GB/s ("
               << gpu_throughput_sum / count << " uint millions/s)" << std::endl;
 }
