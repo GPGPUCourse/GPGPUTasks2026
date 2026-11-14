@@ -342,6 +342,7 @@ void run(int argc, char** argv)
                     build_range_info.setPrimitiveCount(primitive_count);
 
                     auto &cmdBuf = vkRtContext->cmd_buf;
+                    cmdBuf.reset({});
                     cmdBuf.begin(vk::CommandBufferBeginInfo{
                         vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
@@ -427,8 +428,16 @@ void run(int argc, char** argv)
                     const auto *ranges = &build_range_info;
 
                     auto &cmdBuf = vkRtContext->cmd_buf;
+                    cmdBuf.reset({});
                     cmdBuf.begin(vk::CommandBufferBeginInfo{
                         vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+                    vk::MemoryBarrier build_barrier;
+                    build_barrier.setSrcAccessMask(vk::AccessFlagBits::eMemoryWrite)
+                        .setDstAccessMask(vk::AccessFlagBits::eAccelerationStructureReadKHR |
+                            vk::AccessFlagBits::eShaderRead);
+                    cmdBuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
+                        vk::PipelineStageFlagBits::eAccelerationStructureBuildKHR,
+                        {}, build_barrier, {}, {});
                     cmdBuf.buildAccelerationStructuresKHR(build_info, ranges);
                     cmdBuf.end();
 
@@ -534,6 +543,7 @@ void run(int argc, char** argv)
                   vkRtContext->rt_compute_pipeline.emplace(device, nullptr, pipelineInfo);
                 }
             }
+
             std::vector<double> rt_times_with_cpu_lbvh;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
@@ -556,14 +566,36 @@ void run(int argc, char** argv)
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
                         camera_gpu, nfaces, true, &framebuffer_pixel_info_gpu, &framebuffer_ambient_occlusion_temp_gpu);
                 } else if (context.type() == gpu::Context::TypeVulkan) {
-                    std::cout << "WARNING: Sofware ray tracing implemented on CUDA, not Vulkan" << std::endl;
-                    // vk_rt_with_lbvh.exec(
-                    //     nfaces,
-                    //     gpu::WorkSize(16, 16, width, height),
-                    //     vertices_gpu, faces_gpu,
-                    //     lbvh_nodes_gpu, leaf_faces_indices_gpu,
-                    //     framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                    //     camera_gpu);
+                    std::cout << "WARNING: Use HWRT, not cpu LBVH!!!" << std::endl;
+                    auto &cmdBuf = vkRtContext->cmd_buf;
+                    cmdBuf.reset({});
+                    cmdBuf.begin(vk::CommandBufferBeginInfo{
+                        vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+                    vk::MemoryBarrier input_barrier;
+                    input_barrier.setSrcAccessMask(vk::AccessFlagBits::eMemoryWrite)
+                        .setDstAccessMask(vk::AccessFlagBits::eShaderRead |
+                            vk::AccessFlagBits::eShaderWrite |
+                            vk::AccessFlagBits::eAccelerationStructureReadKHR);
+                    cmdBuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
+                        vk::PipelineStageFlagBits::eComputeShader,
+                        {}, input_barrier, {}, {});
+                    cmdBuf.bindPipeline(vk::PipelineBindPoint::eCompute, **vkRtContext->rt_compute_pipeline);
+                    cmdBuf.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+                                              **vkRtContext->pipelineLayout, 0,
+                                              **vkRtContext->descriptorSet,
+                                              nullptr);
+                    cmdBuf.dispatch(
+                        (width + GROUP_SIZE_X - 1) / GROUP_SIZE_X,
+                        (height + GROUP_SIZE_Y - 1) / GROUP_SIZE_Y, 1);
+                    vk::MemoryBarrier output_barrier;
+                    output_barrier.setSrcAccessMask(vk::AccessFlagBits::eShaderWrite)
+                        .setDstAccessMask(vk::AccessFlagBits::eTransferRead);
+                    cmdBuf.pipelineBarrier(vk::PipelineStageFlagBits::eComputeShader,
+                        vk::PipelineStageFlagBits::eTransfer,
+                        {}, output_barrier, {}, {});
+                    cmdBuf.end();
+                    vk::raii::Fence fence(vkRtContext->engine->getDevice(), vk::FenceCreateInfo{});
+                    vkRtContext->engine->submitCommandBuffer(cmdBuf, fence);
                 } else {
                     rassert(false, 654724541234123);
                 }

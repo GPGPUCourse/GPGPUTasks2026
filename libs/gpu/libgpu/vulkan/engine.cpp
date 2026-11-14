@@ -489,7 +489,8 @@ public:
 
 		queue_ = std::make_shared<vk::raii::Queue>(device_->getQueue(*queue_family_index, 0));
 
-		vk::CommandPoolCreateInfo command_pool_create_info({}, *queue_family_index);
+		vk::CommandPoolCreateInfo command_pool_create_info(
+			vk::CommandPoolCreateFlagBits::eResetCommandBuffer, *queue_family_index);
 		command_pool_ = std::make_shared<vk::raii::CommandPool>(device_->createCommandPool(command_pool_create_info));
 
 		std::vector<vk::DescriptorPoolSize> pool_size_per_type;

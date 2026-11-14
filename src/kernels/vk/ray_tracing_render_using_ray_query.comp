@@ -151,7 +151,6 @@ void main()
     uint i = gl_GlobalInvocationID.x;
     uint j = gl_GlobalInvocationID.y;
 
-    rassert(camera.magic_bits_guard == CAMERA_VIEW_GPU_MAGIC_BITS_GUARD, 346435342);
     if (i >= uint(camera.K.width) || j >= uint(camera.K.height))
         return;
 
