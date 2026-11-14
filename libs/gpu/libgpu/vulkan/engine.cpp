@@ -1141,6 +1141,20 @@ avk2::VersionedBinary::VersionedBinary(const char *data, const size_t size)
 		: data_(data), size_(size)
 {}
 
+vk::raii::ShaderModule avk2::createShaderModule(
+    const vk::raii::Device &device, const VersionedBinary &binary)
+{
+    rassert(binary.data() != nullptr && binary.size() > 0 &&
+        binary.size() % sizeof(uint32_t) == 0, 781463592701);
+
+    std::vector<uint32_t> code(binary.size() / sizeof(uint32_t));
+    memcpy(code.data(), binary.data(), binary.size());
+
+    vk::ShaderModuleCreateInfo create_info;
+    create_info.setCode(code);
+    return device.createShaderModule(create_info);
+}
+
 avk2::ProgramBinaries::ProgramBinaries(std::vector<const VersionedBinary*> binaries, std::string program_name)
 {
 	static int next_program_id = 0;
