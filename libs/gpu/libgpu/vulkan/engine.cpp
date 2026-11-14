@@ -408,22 +408,38 @@ public:
 		vk::PhysicalDeviceBufferDeviceAddressFeatures address_features;
 		vk::PhysicalDeviceAccelerationStructureFeaturesKHR acceleration_features;
 		vk::PhysicalDeviceRayTracingPipelineFeaturesKHR ray_tracing_features;
+		vk::PhysicalDeviceRayQueryFeaturesKHR ray_query_features;
+		bool ray_tracing_pipeline_enabled = false;
+		bool ray_query_enabled = false;
 		if (device_info_.supportsExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
-			device_info_.supportsExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME) &&
 			device_info_.supportsExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)) {
 			auto supported_features = physical_device_->getFeatures2<
 				vk::PhysicalDeviceFeatures2,
 				vk::PhysicalDeviceBufferDeviceAddressFeatures,
-				vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
-				vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>();
-			ray_tracing_enabled_ =
+				vk::PhysicalDeviceAccelerationStructureFeaturesKHR>();
+			const bool acceleration_structure_supported =
 				supported_features.get<vk::PhysicalDeviceBufferDeviceAddressFeatures>().bufferDeviceAddress &&
-				supported_features.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure &&
-				supported_features.get<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline;
+				supported_features.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure;
+			if (acceleration_structure_supported &&
+				device_info_.supportsExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)) {
+				auto pipeline_features = physical_device_->getFeatures2<
+					vk::PhysicalDeviceFeatures2,
+					vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>();
+				ray_tracing_pipeline_enabled = pipeline_features.get<
+					vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline;
+			}
+			if (acceleration_structure_supported &&
+				device_info_.supportsExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME)) {
+				auto query_features = physical_device_->getFeatures2<
+					vk::PhysicalDeviceFeatures2,
+					vk::PhysicalDeviceRayQueryFeaturesKHR>();
+				ray_query_enabled = query_features.get<
+					vk::PhysicalDeviceRayQueryFeaturesKHR>().rayQuery;
+			}
 		}
+		ray_tracing_enabled_ = ray_tracing_pipeline_enabled || ray_query_enabled;
 		if (ray_tracing_enabled_) {
 			device_enabled_extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
-			device_enabled_extensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
 			device_enabled_extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
 
 			address_features.setBufferDeviceAddress(true);
@@ -433,10 +449,18 @@ public:
 			acceleration_features.setAccelerationStructure(true);
 			acceleration_features.setPNext(pNextFeature);
 			pNextFeature = &acceleration_features;
-
+		}
+		if (ray_tracing_pipeline_enabled) {
+			device_enabled_extensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
 			ray_tracing_features.setRayTracingPipeline(true);
 			ray_tracing_features.setPNext(pNextFeature);
 			pNextFeature = &ray_tracing_features;
+		}
+		if (ray_query_enabled) {
+			device_enabled_extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+			ray_query_features.setRayQuery(true);
+			ray_query_features.setPNext(pNextFeature);
+			pNextFeature = &ray_query_features;
 		}
 
 		vk::DeviceCreateInfo device_create_info({}, queue_create_info, {}, device_enabled_extensions, nullptr, pNextFeature);
