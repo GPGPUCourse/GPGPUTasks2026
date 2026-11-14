@@ -13,6 +13,90 @@
 #include "geometry_helpers.cl"
 #include "random_helpers.cl"
 
+static inline bool IsLeaf(int node_idx, int leaf_start_idx) {
+    return node_idx >= leaf_start_idx;
+}
+
+static inline bool bvh_traversal(
+    const float3              orig,
+    const float3              dir,
+    __global const BVHNodeGPU* nodes,
+    __global const uint*      leafTriIndices,
+    uint                      nfaces,
+    __global const float*     vertices,
+    __global const uint*      faces,
+    float                     tMin,
+    __private float*          outT,
+    __private int*            outFaceId,
+    __private float*          outU,
+    __private float*          outV,
+    bool                      stop_at_first_hit,
+    int                       ignore_face_id
+) {
+    const uint root_index = 0;
+    const uint leaf_start = (uint)nfaces - 1;
+
+    int best_face_id = -1;
+    float best_t = FLT_MAX;
+    float best_u = 0;
+    float best_v = 0;
+
+    uint stack[256];
+    int stack_ptr = 0;
+    stack[stack_ptr++] = root_index;
+
+    do {
+        const uint cur_node_idx = stack[--stack_ptr];
+        if (cur_node_idx == UINT_MAX) {
+            continue;
+        }
+
+        __global const BVHNodeGPU* node = &nodes[cur_node_idx];
+        float first_dummy, second_dummy;
+        if (!intersect_ray_aabb(orig, dir, node->aabb, tMin, best_t, &first_dummy, &second_dummy)) {
+            continue;
+        }
+
+        if (IsLeaf(cur_node_idx, leaf_start)) {
+            const int triangle_id = leafTriIndices[cur_node_idx - leaf_start];
+            if (triangle_id == ignore_face_id) {
+                continue;
+            }
+
+            const uint3 face = loadFace(faces, triangle_id);
+            const float3 v0 = loadVertex(vertices, face.x);
+            const float3 v1 = loadVertex(vertices, face.y);
+            const float3 v2 = loadVertex(vertices, face.z);
+
+            float cur_t, cur_u, cur_v;
+            if (intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, best_t, false, &cur_t, &cur_u, &cur_v) && cur_t < best_t) {
+                best_t = cur_t;
+                best_u = cur_u;
+                best_v = cur_v;
+                best_face_id = triangle_id;
+
+                if (stop_at_first_hit) {
+                    return true;
+                }
+            }
+
+            continue;
+        }
+
+        stack[stack_ptr++] = node->rightChildIndex;
+        stack[stack_ptr++] = node->leftChildIndex;
+    } while (stack_ptr > 0);
+
+    if (best_face_id >= 0) {
+        *outFaceId = best_face_id;
+        *outT = best_t;
+        *outU = best_u;
+        *outV = best_v;
+    }
+
+    return best_face_id >= 0;
+}
+
 // BVH traversal: closest hit along ray
 static inline bool bvh_closest_hit(
     const float3              orig,
@@ -28,12 +112,7 @@ static inline bool bvh_closest_hit(
     __private float*          outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
     __private float*          outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
-
-    // TODO implement BVH travering (with stack, don't use recursion)
-
-    return false;
+    return bvh_traversal(orig, dir, nodes, leafTriIndices, nfaces, vertices, faces, tMin, outT, outFaceId, outU, outV, false, -1);
 }
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
@@ -47,12 +126,9 @@ static inline bool any_hit_from(
     uint                      nfaces,
     int                       ignore_face)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
-
-    // TODO implement BVH travering (with stack, don't use recursion)
-
-    return false;
+    float t, u, v;
+    int face_id;
+    return bvh_traversal(orig, dir, nodes, leafTriIndices, nfaces, vertices, faces, 1e-4f, &t, &face_id, &u, &v, true, ignore_face);
 }
 
 // Helper: build tangent basis for a given normal
