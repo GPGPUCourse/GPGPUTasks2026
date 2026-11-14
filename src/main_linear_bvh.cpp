@@ -5,6 +5,7 @@
 #include <libbase/fast_random.h>
 #include <libimages/debug_io.h>
 #include <libgpu/vulkan/engine.h>
+#include <libgpu/vulkan/data_buffer.h>
 #include <libgpu/vulkan/tests/test_utils.h>
 
 #include <vulkan/vulkan.hpp>
@@ -18,6 +19,7 @@
 
 #include "cpu_helpers/build_bvh_cpu.h"
 
+#include <array>
 #include <filesystem>
 #include <fstream>
 
@@ -434,7 +436,7 @@ void run(int argc, char** argv)
                 {
                   vk::DescriptorPoolCreateInfo poolInfo = {};
                   vk::DescriptorPoolSize poolSizes[] = {
-                    {vk::DescriptorType::eStorageBuffer, 2},
+                    {vk::DescriptorType::eStorageBuffer, 5},
                     {vk::DescriptorType::eAccelerationStructureKHR, 1}
                   };
                   poolInfo.setMaxSets(1).setPoolSizes(poolSizes).setFlags(
@@ -444,21 +446,12 @@ void run(int argc, char** argv)
 
                 {
                   vk::DescriptorSetLayoutBinding bindings[] = {
-                      {0, vk::DescriptorType::eStorageBuffer, 1,
-                       vk::ShaderStageFlagBits::eCompute |
-                           vk::ShaderStageFlagBits::eRaygenKHR |
-                           vk::ShaderStageFlagBits::eClosestHitKHR |
-                           vk::ShaderStageFlagBits::eMissKHR},
-                      {1, vk::DescriptorType::eStorageBuffer, 1,
-                       vk::ShaderStageFlagBits::eCompute |
-                           vk::ShaderStageFlagBits::eRaygenKHR |
-                           vk::ShaderStageFlagBits::eClosestHitKHR |
-                           vk::ShaderStageFlagBits::eMissKHR},
-                      {2, vk::DescriptorType::eAccelerationStructureKHR, 1,
-                       vk::ShaderStageFlagBits::eCompute |
-                           vk::ShaderStageFlagBits::eRaygenKHR |
-                           vk::ShaderStageFlagBits::eClosestHitKHR |
-                           vk::ShaderStageFlagBits::eMissKHR}};
+                      {0, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
+                      {1, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
+                      {2, vk::DescriptorType::eAccelerationStructureKHR, 1, vk::ShaderStageFlagBits::eCompute},
+                      {3, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
+                      {4, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute},
+                      {5, vk::DescriptorType::eStorageBuffer, 1, vk::ShaderStageFlagBits::eCompute}};
 
                   vk::DescriptorSetLayoutCreateInfo layoutInfo = {};
                   layoutInfo.setBindings(bindings);
@@ -475,38 +468,35 @@ void run(int argc, char** argv)
                 }
 
                 {
-                  auto& device = vkRtContext->engine->getDevice();
                   auto descriptor_set = **vkRtContext->descriptorSet;
+                  const auto buffer_info = [](const gpu::shared_device_buffer& buffer) {
+                      vk::DescriptorBufferInfo info;
+                      info.setBuffer(buffer.vkBufferData()->getBuffer());
+                      info.setOffset(buffer.vkoffset());
+                      info.setRange(buffer.size());
+                      return info;
+                  };
 
-                  vk::DescriptorBufferInfo camera_info;
-                  camera_info.setBuffer(camera_gpu.vkBufferData()->getBuffer());
-                  camera_info.setOffset(camera_gpu.vkoffset());
-                  camera_info.setRange(camera_gpu.size());
-
-                  vk::DescriptorBufferInfo output_info;
-                  output_info.setBuffer(
-                      framebuffer_ambient_occlusion_gpu.vkBufferData()->getBuffer());
-                  output_info.setOffset(framebuffer_ambient_occlusion_gpu.vkoffset());
-                  output_info.setRange(framebuffer_ambient_occlusion_gpu.size());
+                  const std::array<vk::DescriptorBufferInfo, 5> buffer_infos = {
+                      buffer_info(vertices_gpu),
+                      buffer_info(faces_gpu),
+                      buffer_info(framebuffer_face_id_gpu),
+                      buffer_info(framebuffer_ambient_occlusion_gpu),
+                      buffer_info(camera_gpu)};
+                  const std::array<uint32_t, 5> buffer_bindings = {0, 1, 3, 4, 5};
 
                   auto tlas_handle = **vkRtContext->tlas;
-
                   vk::WriteDescriptorSetAccelerationStructureKHR tlas_info;
                   tlas_info.setAccelerationStructures(tlas_handle);
 
-                  std::array<vk::WriteDescriptorSet, 3> writes;
-
-                  writes[0].setDstSet(descriptor_set)
-                      .setDstBinding(0)
-                      .setDescriptorType(vk::DescriptorType::eStorageBuffer)
-                      .setBufferInfo(camera_info);
-
-                  writes[1].setDstSet(descriptor_set)
-                      .setDstBinding(1)
-                      .setDescriptorType(vk::DescriptorType::eStorageBuffer)
-                      .setBufferInfo(output_info);
-
-                  writes[2].setDstSet(descriptor_set)
+                  std::array<vk::WriteDescriptorSet, 6> writes;
+                  for (size_t i = 0; i < buffer_infos.size(); ++i) {
+                      writes[i].setDstSet(descriptor_set)
+                          .setDstBinding(buffer_bindings[i])
+                          .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+                          .setBufferInfo(buffer_infos[i]);
+                  }
+                  writes[5].setDstSet(descriptor_set)
                       .setDstBinding(2)
                       .setDescriptorType(vk::DescriptorType::eAccelerationStructureKHR)
                       .setDescriptorCount(1)
@@ -521,6 +511,10 @@ void run(int argc, char** argv)
                       **vkRtContext->descriptorSetLayout};
                   pipelineLayoutInfo.setSetLayouts(setLayouts);
                   vkRtContext->pipelineLayout.emplace(device, pipelineLayoutInfo);
+                }
+
+                {
+                  
                 }
             }
             std::vector<double> rt_times_with_cpu_lbvh;
