@@ -82,6 +82,8 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_reduce_bounds(ocl::getBuildLBVH(), "reduce_bounds");
     ocl::KernelSource ocl_morton_codes(ocl::getBuildLBVH(), "morton_codes");
     ocl::KernelSource ocl_sort_morton_pairs(ocl::getBuildLBVH(), "sort_morton_pairs");
+    ocl::KernelSource ocl_init_bvh_leaves(ocl::getBuildLBVH(), "init_bvh_leaves");
+    ocl::KernelSource ocl_build_bvh_topology(ocl::getBuildLBVH(), "build_bvh_topology");
 
     avk2::KernelSource vk_rt_brute_force(avk2::getRTBruteForce());
     avk2::KernelSource vk_rt_with_lbvh(avk2::getRTWithLBVH());
@@ -143,6 +145,9 @@ void run(int argc, char** argv)
         gpu::shared_device_buffer_typed<AABBGPU> centroid_bounds_scratch_gpu(centroid_bounds_count);
         gpu::gpu_mem_32u morton_pairs_gpu(2 * nfaces);
         gpu::gpu_mem_32u morton_pairs_scratch_gpu(2 * nfaces);
+        gpu::shared_device_buffer_typed<BVHNodeGPU> bvh_nodes_gpu(2 * nfaces - 1);
+        gpu::gpu_mem_32u leaf_triangle_indices_gpu(nfaces);
+        gpu::gpu_mem_32u parent_indices_gpu(2 * nfaces - 1);
 
         // Аллоцируем фрейм-буферы (то есть картинки в которые сохранится результат рендеринга)
         gpu::gpu_mem_32i framebuffer_face_id_gpu(width * height);
@@ -204,6 +209,22 @@ void run(int argc, char** argv)
 
                 morton_pairs_gpu.swap(morton_pairs_scratch_gpu);
             }
+
+            ocl_init_bvh_leaves.exec(
+                gpu::WorkSize(GROUP_SIZE, nfaces),
+                morton_pairs_gpu,
+                triangle_bounding_boxes_gpu.clmem(),
+                bvh_nodes_gpu.clmem(),
+                leaf_triangle_indices_gpu,
+                parent_indices_gpu,
+                nfaces);
+
+            ocl_build_bvh_topology.exec(
+                gpu::WorkSize(GROUP_SIZE, nfaces),
+                morton_pairs_gpu,
+                bvh_nodes_gpu.clmem(),
+                parent_indices_gpu,
+                nfaces);
         }
 
         // Перед каждой отрисовкой мы будем зачищать результирующие framebuffers этими значениями

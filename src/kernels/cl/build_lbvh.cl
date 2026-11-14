@@ -3,6 +3,7 @@
 #endif
 
 #include "../defines.h"
+#include "../shared_structs/bvh_node_gpu_shared.h"
 #include "../shared_structs/morton_code_gpu_shared.h"
 #include "geometry_helpers.cl"
 
@@ -227,4 +228,170 @@ __kernel void sort_morton_pairs(
             output_pairs[output_index] = input_pairs[right_index++];
         }
     }
+}
+
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__kernel void init_bvh_leaves(
+    __global const uint2* morton_pairs,
+    __global const AABBGPU* triangle_bounding_boxes,
+    __global BVHNodeGPU* nodes,
+    __global uint* leaf_triangle_indices,
+    __global uint* parent_indices,
+    uint face_count)
+{
+    const uint primitive_index = get_global_id(0);
+
+    if (primitive_index >= face_count) {
+        return;
+    }
+
+    const uint face_index = morton_pairs[primitive_index].y;
+    const uint leaf_index = face_count - 1 + primitive_index;
+    const BVHNodeGPU leaf = {
+        triangle_bounding_boxes[face_index],
+        ~0u,
+        ~0u,
+    };
+
+    nodes[leaf_index] = leaf;
+    leaf_triangle_indices[primitive_index] = face_index;
+
+    if (primitive_index == 0) {
+        parent_indices[0] = ~0u;
+    }
+}
+
+static inline int common_prefix_length(
+    __global const uint2* morton_pairs,
+    uint pair_count,
+    int first_index,
+    int second_index)
+{
+    const bool second_index_outside = second_index < 0 || (uint)second_index >= pair_count;
+
+    if (second_index_outside) {
+        return -1;
+    }
+
+    const MortonCode first_code = morton_pairs[first_index].x;
+    const MortonCode second_code = morton_pairs[second_index].x;
+
+    if (first_code == second_code) {
+        return 32 + clz((uint)(first_index ^ second_index));
+    }
+
+    return clz(first_code ^ second_code);
+}
+
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__kernel void build_bvh_topology(
+    __global const uint2* morton_pairs,
+    __global BVHNodeGPU* nodes,
+    __global uint* parent_indices,
+    uint face_count)
+{
+    const int node_index = get_global_id(0);
+    const bool is_internal_node = face_count > 1 && (uint)node_index < face_count - 1;
+
+    if (!is_internal_node) {
+        return;
+    }
+
+    const int left_prefix_length = common_prefix_length(
+        morton_pairs,
+        face_count,
+        node_index,
+        node_index - 1);
+
+    const int right_prefix_length = common_prefix_length(
+        morton_pairs,
+        face_count,
+        node_index,
+        node_index + 1);
+
+    const int direction = right_prefix_length > left_prefix_length ? 1 : -1;
+
+    const int minimum_prefix_length = common_prefix_length(
+        morton_pairs,
+        face_count,
+        node_index,
+        node_index - direction);
+
+    int maximum_range_length = 2;
+
+    while (true) {
+        const int candidate_index = node_index + maximum_range_length * direction;
+        const int candidate_prefix_length = common_prefix_length(
+            morton_pairs,
+            face_count,
+            node_index,
+            candidate_index);
+
+        if (candidate_prefix_length <= minimum_prefix_length) {
+            break;
+        }
+
+        maximum_range_length *= 2;
+    }
+
+    int range_length = 0;
+
+    for (int stride = maximum_range_length / 2; stride > 0; stride /= 2) {
+        const int candidate_index = node_index + (range_length + stride) * direction;
+        const int candidate_prefix_length = common_prefix_length(
+            morton_pairs,
+            face_count,
+            node_index,
+            candidate_index);
+
+        if (candidate_prefix_length > minimum_prefix_length) {
+            range_length += stride;
+        }
+    }
+
+    const int range_end = node_index + range_length * direction;
+    const int first_primitive_index = min(node_index, range_end);
+    const int last_primitive_index = max(node_index, range_end);
+
+    const int range_prefix_length = common_prefix_length(
+        morton_pairs,
+        face_count,
+        first_primitive_index,
+        last_primitive_index);
+
+    int split_index = first_primitive_index;
+    int stride = last_primitive_index - first_primitive_index;
+
+    do {
+        stride = (stride + 1) / 2;
+        const int candidate_index = split_index + stride;
+
+        if (candidate_index < last_primitive_index) {
+            const int candidate_prefix_length = common_prefix_length(
+                morton_pairs,
+                face_count,
+                first_primitive_index,
+                candidate_index);
+
+            if (candidate_prefix_length > range_prefix_length) {
+                split_index = candidate_index;
+            }
+        }
+    } while (stride > 1);
+
+    const uint first_leaf_index = face_count - 1;
+
+    const uint left_child_index = split_index == first_primitive_index
+        ? first_leaf_index + split_index
+        : split_index;
+
+    const uint right_child_index = split_index + 1 == last_primitive_index
+        ? first_leaf_index + split_index + 1
+        : split_index + 1;
+
+    nodes[node_index].leftChildIndex = left_child_index;
+    nodes[node_index].rightChildIndex = right_child_index;
+
+    parent_indices[left_child_index] = node_index;
+    parent_indices[right_child_index] = node_index;
 }
