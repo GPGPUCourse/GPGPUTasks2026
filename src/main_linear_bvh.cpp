@@ -68,6 +68,7 @@ struct VulkanRTContext {
   std::optional<vk::raii::AccelerationStructureKHR> blas;
   std::optional<vk::raii::AccelerationStructureKHR> tlas;
   std::optional<vk::raii::DescriptorPool> descriptorPool;
+  std::optional<vk::raii::DescriptorSetLayout> descriptorSetLayout;
 };
 
 void run(int argc, char** argv)
@@ -436,6 +437,30 @@ void run(int argc, char** argv)
                   };
                   poolInfo.setMaxSets(1).setPoolSizes(poolSizes);
                   vkRtContext->descriptorPool.emplace(device, poolInfo);
+                }
+
+                {
+                  vk::DescriptorSetLayoutBinding bindings[] = {
+                      {0, vk::DescriptorType::eStorageBuffer, 1,
+                       vk::ShaderStageFlagBits::eCompute |
+                           vk::ShaderStageFlagBits::eRaygenKHR |
+                           vk::ShaderStageFlagBits::eClosestHitKHR |
+                           vk::ShaderStageFlagBits::eMissKHR},
+                      {1, vk::DescriptorType::eStorageBuffer, 1,
+                       vk::ShaderStageFlagBits::eCompute |
+                           vk::ShaderStageFlagBits::eRaygenKHR |
+                           vk::ShaderStageFlagBits::eClosestHitKHR |
+                           vk::ShaderStageFlagBits::eMissKHR},
+                      {2, vk::DescriptorType::eAccelerationStructureKHR, 1,
+                       vk::ShaderStageFlagBits::eCompute |
+                           vk::ShaderStageFlagBits::eRaygenKHR |
+                           vk::ShaderStageFlagBits::eClosestHitKHR |
+                           vk::ShaderStageFlagBits::eMissKHR}};
+
+                  vk::DescriptorSetLayoutCreateInfo layoutInfo = {};
+                  layoutInfo.setBindings(bindings);
+
+                  vkRtContext->descriptorSetLayout.emplace(device, layoutInfo);
                 }
             }
             std::vector<double> rt_times_with_cpu_lbvh;
