@@ -55,10 +55,7 @@ void run(int argc, char** argv)
 {
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
-    // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
-    // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
-    // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -119,30 +116,7 @@ void run(int argc, char** argv)
                 if (iter == 0) std::cout << "OpenMP threads: x" << getOpenMPThreadsCount() << " threads" << std::endl;
                 cpu::mandelbrot(current_results.ptr(), width, height, centralX - sizeX / 2.0f, centralY - sizeY / 2.0f, sizeX, sizeY, iterationsLimit, isSmoothing, true);
             } else if (algorithm == "GPU") {
-                // _______________________________OpenCL_____________________________________________
-                if (context.type() == gpu::Context::TypeOpenCL) {
-                    // TODO ocl_mandelbrot.exec(...);
-                    throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-
-                    // _______________________________CUDA___________________________________________
-                } else if (context.type() == gpu::Context::TypeCUDA) {
-                    // TODO cuda::mandelbrot(..);
-                    throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-
-                    // _______________________________Vulkan_________________________________________
-                } else if (context.type() == gpu::Context::TypeVulkan) {
-                    typedef unsigned int uint;
-                    struct {
-                        uint width; uint height;
-                       float fromX; float fromY;
-                       float sizeX; float sizeY;
-                        uint iters; uint isSmoothing;
-                    } params = { width, height, centralX - sizeX / 2.0f, centralY - sizeY / 2.0f, sizeX, sizeY, iterationsLimit, isSmoothing };
-                    // TODO vk_mandelbrot.exec(params, ...);
-                    throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-                } else {
-                    rassert(false, 546345243, context.type());
-                }
+                cuda::mandelbrot({16, 16, width, height}, gpu_results, width, height, centralX - sizeX / 2.0f, centralY - sizeY / 2.0f, sizeX, sizeY, iterationsLimit, isSmoothing);
             }
 
             times.push_back(t.elapsed());
@@ -156,8 +130,8 @@ void run(int argc, char** argv)
         // Вычисляем достигнутую эффективную пропускную способность алгоритма (из соображений что мы все итерации делались полностью, без быстрого выхода через break)
         size_t flopsInLoop = 10;
         size_t maxApproximateFlops = width * height * iterationsLimit * flopsInLoop;
-        size_t gflops = 1000*1000*1000;
-        std::cout << "Mandelbrot effective algorithm GFlops: " << maxApproximateFlops / gflops / stats::median(times) << " GFlops" << std::endl;
+        size_t giga = 1000*1000*1000;
+        std::cout << "Mandelbrot effective algorithm GFlops: " << (double) maxApproximateFlops / giga / stats::median(times) << " GFlops" << std::endl;
 
         // Сохраняем картинку
         image8u image = renderToColor(current_results.ptr(), width, height);
