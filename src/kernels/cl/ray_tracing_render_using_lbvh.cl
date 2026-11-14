@@ -104,19 +104,82 @@ static inline bool bvh_closest_hit(
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
 static inline bool any_hit_from(
-    const float3 orig,
-    const float3 dir,
+    const float3 ray_origin,
+    const float3 ray_direction,
     __global const float* vertices,
     __global const uint* faces,
     __global const BVHNodeGPU* nodes,
-    __global const uint* leafTriIndices,
-    uint nfaces,
-    int ignore_face)
+    __global const uint* leaf_triangle_indices,
+    uint face_count,
+    int ignored_face_id)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
+    const int root_index = 0;
+    const int first_leaf_index = (int)face_count - 1;
+    const float minimum_hit_distance = 1e-4f;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    if (face_count == 0) {
+        return false;
+    }
+
+    int node_stack[BVH_MAX_DEPTH];
+    int stack_size = 0;
+    node_stack[stack_size++] = root_index;
+
+    while (stack_size > 0) {
+        const int node_index = node_stack[--stack_size];
+        const BVHNodeGPU node = nodes[node_index];
+        float box_entry_distance, box_exit_distance;
+
+        const bool intersects_node_bounds = intersect_ray_aabb(
+            ray_origin,
+            ray_direction,
+            node.aabb,
+            minimum_hit_distance,
+            FLT_MAX,
+            &box_entry_distance,
+            &box_exit_distance);
+
+        if (!intersects_node_bounds) {
+            continue;
+        }
+
+        if (node_index >= first_leaf_index) {
+            const int face_id = leaf_triangle_indices[node_index - first_leaf_index];
+
+            if (face_id == ignored_face_id) {
+                continue;
+            }
+
+            const uint3 vertex_indices = loadFace(faces, face_id);
+            float hit_distance, barycentric_u, barycentric_v;
+
+            const bool intersects_triangle = intersect_ray_triangle(
+                ray_origin,
+                ray_direction,
+                loadVertex(vertices, vertex_indices.x),
+                loadVertex(vertices, vertex_indices.y),
+                loadVertex(vertices, vertex_indices.z),
+                minimum_hit_distance,
+                FLT_MAX,
+                false,
+                &hit_distance,
+                &barycentric_u,
+                &barycentric_v);
+
+            if (intersects_triangle) {
+                return true;
+            }
+        } else {
+            rassert(stack_size + 2 <= BVH_MAX_DEPTH, 873456213);
+
+            if (stack_size + 2 > BVH_MAX_DEPTH) {
+                return false;
+            }
+
+            node_stack[stack_size++] = node.rightChildIndex;
+            node_stack[stack_size++] = node.leftChildIndex;
+        }
+    }
 
     return false;
 }
