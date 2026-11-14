@@ -7,6 +7,8 @@
 
 #define AO_SAMPLES   8
 
+#define DFS_STACK_SIZE 32
+
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
 
 #endif // pragma once
