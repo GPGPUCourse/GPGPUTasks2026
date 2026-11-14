@@ -78,6 +78,9 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_rt_brute_force(ocl::getRTBruteForce());
     ocl::KernelSource ocl_rt_with_lbvh(ocl::getRTWithLBVH());
     ocl::KernelSource ocl_triangle_bounds(ocl::getBuildLBVH(), "triangle_bounds");
+    ocl::KernelSource ocl_centroid_bounds(ocl::getBuildLBVH(), "reduce_centroid_bounds");
+    ocl::KernelSource ocl_reduce_bounds(ocl::getBuildLBVH(), "reduce_bounds");
+    ocl::KernelSource ocl_morton_codes(ocl::getBuildLBVH(), "morton_codes");
 
     avk2::KernelSource vk_rt_brute_force(avk2::getRTBruteForce());
     avk2::KernelSource vk_rt_with_lbvh(avk2::getRTWithLBVH());
@@ -134,6 +137,11 @@ void run(int argc, char** argv)
         gpu::shared_device_buffer_typed<AABBGPU> triangle_bounding_boxes_gpu(nfaces);
         gpu::gpu_mem_32f triangle_centroids_gpu(3 * nfaces);
 
+        const unsigned int centroid_bounds_count = (nfaces + GROUP_SIZE - 1) / GROUP_SIZE;
+        gpu::shared_device_buffer_typed<AABBGPU> centroid_bounds_gpu(centroid_bounds_count);
+        gpu::shared_device_buffer_typed<AABBGPU> centroid_bounds_scratch_gpu(centroid_bounds_count);
+        gpu::gpu_mem_32u morton_pairs_gpu(2 * nfaces);
+
         // Аллоцируем фрейм-буферы (то есть картинки в которые сохранится результат рендеринга)
         gpu::gpu_mem_32i framebuffer_face_id_gpu(width * height);
         gpu::gpu_mem_32f framebuffer_ambient_occlusion_gpu(width * height);
@@ -154,6 +162,61 @@ void run(int argc, char** argv)
                 triangle_bounding_boxes_gpu.clmem(),
                 triangle_centroids_gpu,
                 nfaces);
+
+            ocl_centroid_bounds.exec(
+                gpu::WorkSize(GROUP_SIZE, nfaces),
+                triangle_centroids_gpu,
+                centroid_bounds_gpu.clmem(),
+                nfaces);
+
+            unsigned int bounds_count = centroid_bounds_count;
+
+            while (bounds_count > 1) {
+                ocl_reduce_bounds.exec(
+                    gpu::WorkSize(GROUP_SIZE, bounds_count),
+                    centroid_bounds_gpu.clmem(),
+                    centroid_bounds_scratch_gpu.clmem(),
+                    bounds_count);
+
+                centroid_bounds_gpu.swap(centroid_bounds_scratch_gpu);
+                bounds_count = (bounds_count + GROUP_SIZE - 1) / GROUP_SIZE;
+            }
+
+            ocl_morton_codes.exec(
+                gpu::WorkSize(GROUP_SIZE, nfaces),
+                triangle_centroids_gpu,
+                centroid_bounds_gpu.clmem(),
+                morton_pairs_gpu,
+                nfaces);
+
+            struct MortonPrimitive {
+                unsigned int morton_code;
+                unsigned int face_index;
+            };
+
+            auto morton_values = morton_pairs_gpu.readVector();
+            std::vector<MortonPrimitive> sorted_primitives(nfaces);
+
+            for (unsigned int face_index = 0; face_index < nfaces; ++face_index) {
+                sorted_primitives[face_index] = {
+                    morton_values[2 * face_index],
+                    morton_values[2 * face_index + 1],
+                };
+            }
+
+            std::stable_sort(
+                sorted_primitives.begin(),
+                sorted_primitives.end(),
+                [](const MortonPrimitive& first_primitive, const MortonPrimitive& second_primitive) {
+                    return first_primitive.morton_code < second_primitive.morton_code;
+                });
+
+            for (unsigned int face_index = 0; face_index < nfaces; ++face_index) {
+                morton_values[2 * face_index] = sorted_primitives[face_index].morton_code;
+                morton_values[2 * face_index + 1] = sorted_primitives[face_index].face_index;
+            }
+
+            morton_pairs_gpu.writeN(morton_values.data(), morton_values.size());
         }
 
         // Перед каждой отрисовкой мы будем зачищать результирующие framebuffers этими значениями
