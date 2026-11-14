@@ -69,6 +69,7 @@ struct VulkanRTContext {
   std::optional<vk::raii::AccelerationStructureKHR> tlas;
   std::optional<vk::raii::DescriptorPool> descriptorPool;
   std::optional<vk::raii::DescriptorSetLayout> descriptorSetLayout;
+  std::optional<vk::raii::DescriptorSet> descriptorSet;
 };
 
 void run(int argc, char** argv)
@@ -435,7 +436,8 @@ void run(int argc, char** argv)
                     {vk::DescriptorType::eStorageBuffer, 2},
                     {vk::DescriptorType::eAccelerationStructureKHR, 1}
                   };
-                  poolInfo.setMaxSets(1).setPoolSizes(poolSizes);
+                  poolInfo.setMaxSets(1).setPoolSizes(poolSizes).setFlags(
+                      vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet);
                   vkRtContext->descriptorPool.emplace(device, poolInfo);
                 }
 
@@ -461,6 +463,14 @@ void run(int argc, char** argv)
                   layoutInfo.setBindings(bindings);
 
                   vkRtContext->descriptorSetLayout.emplace(device, layoutInfo);
+                }
+
+                {
+                  vk::DescriptorSetAllocateInfo allocInfo = {};
+                  allocInfo.setDescriptorPool(*vkRtContext->descriptorPool)
+                      .setSetLayouts(**vkRtContext->descriptorSetLayout);
+                  auto allocatedSets = device.allocateDescriptorSets(allocInfo);
+                  vkRtContext->descriptorSet.emplace(std::move(allocatedSets[0]));
                 }
             }
             std::vector<double> rt_times_with_cpu_lbvh;
