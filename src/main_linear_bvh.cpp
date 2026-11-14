@@ -472,6 +472,47 @@ void run(int argc, char** argv)
                   auto allocatedSets = device.allocateDescriptorSets(allocInfo);
                   vkRtContext->descriptorSet.emplace(std::move(allocatedSets[0]));
                 }
+
+                {
+                  auto& device = vkRtContext->engine->getDevice();
+                  auto descriptor_set = **vkRtContext->descriptorSet;
+
+                  vk::DescriptorBufferInfo camera_info;
+                  camera_info.setBuffer(camera_gpu.vkBufferData()->getBuffer());
+                  camera_info.setOffset(camera_gpu.vkoffset());
+                  camera_info.setRange(camera_gpu.size());
+
+                  vk::DescriptorBufferInfo output_info;
+                  output_info.setBuffer(
+                      framebuffer_ambient_occlusion_gpu.vkBufferData()->getBuffer());
+                  output_info.setOffset(framebuffer_ambient_occlusion_gpu.vkoffset());
+                  output_info.setRange(framebuffer_ambient_occlusion_gpu.size());
+
+                  auto tlas_handle = **vkRtContext->tlas;
+
+                  vk::WriteDescriptorSetAccelerationStructureKHR tlas_info;
+                  tlas_info.setAccelerationStructures(tlas_handle);
+
+                  std::array<vk::WriteDescriptorSet, 3> writes;
+
+                  writes[0].setDstSet(descriptor_set)
+                      .setDstBinding(0)
+                      .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+                      .setBufferInfo(camera_info);
+
+                  writes[1].setDstSet(descriptor_set)
+                      .setDstBinding(1)
+                      .setDescriptorType(vk::DescriptorType::eStorageBuffer)
+                      .setBufferInfo(output_info);
+
+                  writes[2].setDstSet(descriptor_set)
+                      .setDstBinding(2)
+                      .setDescriptorType(vk::DescriptorType::eAccelerationStructureKHR)
+                      .setDescriptorCount(1)
+                      .setPNext(&tlas_info);
+
+                  device.updateDescriptorSets(writes, {});
+                }
             }
             std::vector<double> rt_times_with_cpu_lbvh;
             for (int iter = 0; iter < niters; ++iter) {
