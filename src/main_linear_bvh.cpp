@@ -67,6 +67,7 @@ struct VulkanRTContext {
   gpu::shared_device_buffer_typed<vk::AccelerationStructureInstanceKHR> instances_buffer;
   std::optional<vk::raii::AccelerationStructureKHR> blas;
   std::optional<vk::raii::AccelerationStructureKHR> tlas;
+  std::optional<vk::raii::DescriptorPool> descriptorPool;
 };
 
 void run(int argc, char** argv)
@@ -425,6 +426,16 @@ void run(int argc, char** argv)
                     vk::raii::Fence fence(device, vk::FenceCreateInfo{});
                     vkRtContext->engine->submitCommandBuffer(cmdBuf, fence);
                   }
+                }
+
+                {
+                  vk::DescriptorPoolCreateInfo poolInfo = {};
+                  vk::DescriptorPoolSize poolSizes[] = {
+                    {vk::DescriptorType::eStorageBuffer, 2},
+                    {vk::DescriptorType::eAccelerationStructureKHR, 1}
+                  };
+                  poolInfo.setMaxSets(1).setPoolSizes(poolSizes);
+                  vkRtContext->descriptorPool.emplace(device, poolInfo);
                 }
             }
             std::vector<double> rt_times_with_cpu_lbvh;
