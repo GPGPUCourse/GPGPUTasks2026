@@ -485,7 +485,7 @@ void run(int argc, char** argv)
     std::cout << "____________________________________________________________________________________________" << std::endl;
     double avg_gpu_rt_perf = stats::avg(gpu_rt_perf_mrays_per_sec);
     double avg_lbvh_build_perf = stats::avg(gpu_lbvh_perfs_mtris_per_sec);
-    std::cout << "Total SWRT with LBVH avg perf: " << avg_gpu_rt_perf << " MRays/sec (all " << stats::vectorToString(gpu_rt_perf_mrays_per_sec) << ")" << std::endl;
+    std::cout << "Total GPU with LBVH avg perf: " << avg_gpu_rt_perf << " MRays/sec (all " << stats::vectorToString(gpu_rt_perf_mrays_per_sec) << ")" << std::endl;
     std::cout << "Total building GPU LBVH avg perf: " << avg_lbvh_build_perf << " MTris/sec (all " << stats::vectorToString(gpu_lbvh_perfs_mtris_per_sec) << ")" << std::endl;
     std::cout << "Final score: " << avg_gpu_rt_perf * avg_lbvh_build_perf << " coolness" << std::endl;
     if (gpu_rt_perf_mrays_per_sec.size() != 6 || gpu_lbvh_perfs_mtris_per_sec.size() != 3) {
