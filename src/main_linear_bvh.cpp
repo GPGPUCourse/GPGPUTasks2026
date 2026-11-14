@@ -277,7 +277,13 @@ void run(int argc, char** argv)
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
                         camera_gpu, nfaces, true, &framebuffer_pixel_info_gpu, &framebuffer_ambient_occlusion_temp_gpu);
                 } else if (context.type() == gpu::Context::TypeVulkan) {
-                    std::cout << "WARNING: software lbvh traversal implemented on CUDA!" << std::endl;
+                    vk_rt_with_lbvh.exec(
+                        nfaces,
+                        gpu::WorkSize(16, 16, width, height),
+                        vertices_gpu, faces_gpu,
+                        lbvh_nodes_gpu, leaf_faces_indices_gpu,
+                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                        camera_gpu);
                 } else {
                     rassert(false, 654724541234123);
                 }
@@ -750,19 +756,18 @@ void run(int argc, char** argv)
     }
 
     std::cout << "____________________________________________________________________________________________" << std::endl;
+    double avg_gpu_rt_perf = stats::avg(gpu_rt_perf_mrays_per_sec);
+    double avg_lbvh_build_perf = stats::avg(gpu_lbvh_perfs_mtris_per_sec);
+    std::cout << "Total SWRT with LBVH avg perf: " << avg_gpu_rt_perf << " MRays/sec (all " << stats::vectorToString(gpu_rt_perf_mrays_per_sec) << ")" << std::endl;
+    std::cout << "Total building GPU LBVH avg perf: " << avg_lbvh_build_perf << " MTris/sec (all " << stats::vectorToString(gpu_lbvh_perfs_mtris_per_sec) << ")" << std::endl;
+    std::cout << "Final score: " << avg_gpu_rt_perf * avg_lbvh_build_perf << " coolness" << std::endl;
+    if (gpu_rt_perf_mrays_per_sec.size() != 6 || gpu_lbvh_perfs_mtris_per_sec.size() != 3) {
+        std::cout << "Results are incomplete!" << std::endl;
+    }
     if (context.type() == gpu::Context::TypeVulkan) {
         std::cout << "Total HWRT avg perf: " << stats::avg(hwrt_perfs_mrays_per_sec)
                   << " MRays/sec (all " << stats::vectorToString(hwrt_perfs_mrays_per_sec)
                   << ")" << std::endl;
-    } else {
-        double avg_gpu_rt_perf = stats::avg(gpu_rt_perf_mrays_per_sec);
-        double avg_lbvh_build_perf = stats::avg(gpu_lbvh_perfs_mtris_per_sec);
-        std::cout << "Total GPU RT with  LBVH avg perf: " << avg_gpu_rt_perf << " MRays/sec (all " << stats::vectorToString(gpu_rt_perf_mrays_per_sec) << ")" << std::endl;
-        std::cout << "Total building GPU LBVH avg perf: " << avg_lbvh_build_perf << " MTris/sec (all " << stats::vectorToString(gpu_lbvh_perfs_mtris_per_sec) << ")" << std::endl;
-        std::cout << "Final score: " << avg_gpu_rt_perf * avg_lbvh_build_perf << " coolness" << std::endl;
-        if (gpu_rt_perf_mrays_per_sec.size() != 6 || gpu_lbvh_perfs_mtris_per_sec.size() != 3) {
-            std::cout << "Results are incomplete!" << std::endl;
-        }
     }
 }
 
