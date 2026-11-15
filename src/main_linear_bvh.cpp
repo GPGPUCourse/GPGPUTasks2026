@@ -164,91 +164,6 @@ void run(int argc, char** argv)
         double pcie_writing_time = pcie_writing_t.elapsed();
         double pcie_reading_time = 0.0;
 
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            ocl_triangle_bounds.exec(
-                gpu::WorkSize(GROUP_SIZE, nfaces),
-                vertices_gpu,
-                faces_gpu,
-                triangle_bounding_boxes_gpu.clmem(),
-                triangle_centroids_gpu,
-                nfaces);
-
-            ocl_centroid_bounds.exec(
-                gpu::WorkSize(GROUP_SIZE, nfaces),
-                triangle_centroids_gpu,
-                centroid_bounds_gpu.clmem(),
-                nfaces);
-
-            unsigned int bounds_count = centroid_bounds_count;
-
-            while (bounds_count > 1) {
-                ocl_reduce_bounds.exec(
-                    gpu::WorkSize(GROUP_SIZE, bounds_count),
-                    centroid_bounds_gpu.clmem(),
-                    centroid_bounds_scratch_gpu.clmem(),
-                    bounds_count);
-
-                centroid_bounds_gpu.swap(centroid_bounds_scratch_gpu);
-                bounds_count = (bounds_count + GROUP_SIZE - 1) / GROUP_SIZE;
-            }
-
-            ocl_morton_codes.exec(
-                gpu::WorkSize(GROUP_SIZE, nfaces),
-                triangle_centroids_gpu,
-                centroid_bounds_gpu.clmem(),
-                morton_pairs_gpu,
-                nfaces);
-
-            for (unsigned int sorted_run_length = 1; sorted_run_length < nfaces; sorted_run_length *= 2) {
-                const unsigned int values_per_work_item = std::min(8u, 2 * sorted_run_length);
-                const unsigned int work_item_count = (nfaces + values_per_work_item - 1) / values_per_work_item;
-
-                ocl_sort_morton_pairs.exec(
-                    gpu::WorkSize(GROUP_SIZE, work_item_count),
-                    morton_pairs_gpu,
-                    morton_pairs_scratch_gpu,
-                    sorted_run_length,
-                    nfaces);
-
-                morton_pairs_gpu.swap(morton_pairs_scratch_gpu);
-            }
-
-            ocl_init_bvh_leaves.exec(
-                gpu::WorkSize(GROUP_SIZE, nfaces),
-                morton_pairs_gpu,
-                triangle_bounding_boxes_gpu.clmem(),
-                bvh_nodes_gpu.clmem(),
-                leaf_triangle_indices_gpu,
-                parent_indices_gpu,
-                nfaces);
-
-            ocl_build_bvh_topology.exec(
-                gpu::WorkSize(GROUP_SIZE, nfaces),
-                morton_pairs_gpu,
-                bvh_nodes_gpu.clmem(),
-                parent_indices_gpu,
-                nfaces);
-
-            if (nfaces > 1) {
-                const gpu::WorkSize internal_work_size(GROUP_SIZE, nfaces - 1);
-
-                ocl_compute_bvh_depths.exec(
-                    internal_work_size,
-                    parent_indices_gpu,
-                    node_depths_gpu,
-                    nfaces);
-
-                for (unsigned int depth = BVH_MAX_DEPTH; depth > 0; --depth) {
-                    ocl_refit_bvh_level.exec(
-                        internal_work_size,
-                        bvh_nodes_gpu.clmem(),
-                        node_depths_gpu,
-                        depth - 1,
-                        nfaces);
-                }
-            }
-        }
-
         // Перед каждой отрисовкой мы будем зачищать результирующие framebuffers этими значениями
         const int NO_FACE_ID = -1;
         const float NO_AMBIENT_OCCLUSION = -1.0f;
@@ -311,6 +226,8 @@ void run(int argc, char** argv)
 
         double cpu_lbvh_time = 0.0;
         double rt_times_with_cpu_lbvh_sum = 0.0;
+        image32i cpu_lbvh_framebuffer_face_ids;
+        image32f cpu_lbvh_framebuffer_ambient_occlusion;
         {
             std::vector<BVHNodeGPU> lbvh_nodes_cpu;
             std::vector<uint32_t> leaf_faces_indices_cpu;
@@ -370,8 +287,8 @@ void run(int argc, char** argv)
             gpu_rt_perf_mrays_per_sec.push_back(mrays_per_sec);
 
             timer pcie_reading_t;
-            image32i cpu_lbvh_framebuffer_face_ids(width, height, 1);
-            image32f cpu_lbvh_framebuffer_ambient_occlusion(width, height, 1);
+            cpu_lbvh_framebuffer_face_ids = image32i(width, height, 1);
+            cpu_lbvh_framebuffer_ambient_occlusion = image32f(width, height, 1);
             framebuffer_face_id_gpu.readN(cpu_lbvh_framebuffer_face_ids.ptr(), width * height);
             framebuffer_ambient_occlusion_gpu.readN(cpu_lbvh_framebuffer_ambient_occlusion.ptr(), width * height);
             pcie_reading_time += pcie_reading_t.elapsed();
@@ -382,7 +299,7 @@ void run(int argc, char** argv)
             images_saving_time += cpu_lbvh_images_saving_t.elapsed();
             if (has_brute_force) {
                 unsigned int count_ao_errors = countDiffs(brute_force_framebuffer_ambient_occlusion, cpu_lbvh_framebuffer_ambient_occlusion, 0.01f);
-                unsigned int count_face_id_errors = countDiffs(brute_force_framebuffer_face_ids, cpu_lbvh_framebuffer_face_ids, 1);
+                unsigned int count_face_id_errors = countDiffs(brute_force_framebuffer_face_ids, cpu_lbvh_framebuffer_face_ids, 0);
                 rassert(count_ao_errors < width * height / 100, 345341512354123, count_ao_errors, to_percent(count_ao_errors, width * height));
                 rassert(count_face_id_errors < width * height / 100, 3453415123546587, count_face_id_errors, to_percent(count_face_id_errors, width * height));
             }
@@ -391,16 +308,93 @@ void run(int argc, char** argv)
         double gpu_lbvh_time_sum = 0.0;
         double rt_times_with_gpu_lbvh_sum = 0.0;
 
-        // TODO постройте LBVH на GPU
-        // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
-
-        if (gpu_lbvg_gpu_rt_done) {
+        if (context.type() == gpu::Context::TypeOpenCL) {
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO постройте LBVH на GPU
+                ocl_triangle_bounds.exec(
+                    gpu::WorkSize(GROUP_SIZE, nfaces),
+                    vertices_gpu,
+                    faces_gpu,
+                    triangle_bounding_boxes_gpu.clmem(),
+                    triangle_centroids_gpu,
+                    nfaces);
+
+                ocl_centroid_bounds.exec(
+                    gpu::WorkSize(GROUP_SIZE, nfaces),
+                    triangle_centroids_gpu,
+                    centroid_bounds_gpu.clmem(),
+                    nfaces);
+
+                unsigned int bounds_count = centroid_bounds_count;
+
+                while (bounds_count > 1) {
+                    ocl_reduce_bounds.exec(
+                        gpu::WorkSize(GROUP_SIZE, bounds_count),
+                        centroid_bounds_gpu.clmem(),
+                        centroid_bounds_scratch_gpu.clmem(),
+                        bounds_count);
+
+                    centroid_bounds_gpu.swap(centroid_bounds_scratch_gpu);
+                    bounds_count = (bounds_count + GROUP_SIZE - 1) / GROUP_SIZE;
+                }
+
+                ocl_morton_codes.exec(
+                    gpu::WorkSize(GROUP_SIZE, nfaces),
+                    triangle_centroids_gpu,
+                    centroid_bounds_gpu.clmem(),
+                    morton_pairs_gpu,
+                    nfaces);
+
+                for (unsigned int sorted_run_length = 1; sorted_run_length < nfaces; sorted_run_length *= 2) {
+                    const unsigned int values_per_work_item = std::min(8u, 2 * sorted_run_length);
+                    const unsigned int work_item_count = (nfaces + values_per_work_item - 1) / values_per_work_item;
+
+                    ocl_sort_morton_pairs.exec(
+                        gpu::WorkSize(GROUP_SIZE, work_item_count),
+                        morton_pairs_gpu,
+                        morton_pairs_scratch_gpu,
+                        sorted_run_length,
+                        nfaces);
+
+                    morton_pairs_gpu.swap(morton_pairs_scratch_gpu);
+                }
+
+                ocl_init_bvh_leaves.exec(
+                    gpu::WorkSize(GROUP_SIZE, nfaces),
+                    morton_pairs_gpu,
+                    triangle_bounding_boxes_gpu.clmem(),
+                    bvh_nodes_gpu.clmem(),
+                    leaf_triangle_indices_gpu,
+                    parent_indices_gpu,
+                    nfaces);
+
+                ocl_build_bvh_topology.exec(
+                    gpu::WorkSize(GROUP_SIZE, nfaces),
+                    morton_pairs_gpu,
+                    bvh_nodes_gpu.clmem(),
+                    parent_indices_gpu,
+                    nfaces);
+
+                if (nfaces > 1) {
+                    const gpu::WorkSize internal_work_size(GROUP_SIZE, nfaces - 1);
+
+                    ocl_compute_bvh_depths.exec(
+                        internal_work_size,
+                        parent_indices_gpu,
+                        node_depths_gpu,
+                        nfaces);
+
+                    for (unsigned int depth = BVH_MAX_DEPTH; depth > 0; --depth) {
+                        ocl_refit_bvh_level.exec(
+                            internal_work_size,
+                            bvh_nodes_gpu.clmem(),
+                            node_depths_gpu,
+                            depth - 1,
+                            nfaces);
+                    }
+                }
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -419,7 +413,16 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                ocl_rt_with_lbvh.exec(
+                    gpu::WorkSize(16, 16, width, height),
+                    vertices_gpu,
+                    faces_gpu,
+                    bvh_nodes_gpu.clmem(),
+                    leaf_triangle_indices_gpu,
+                    framebuffer_face_id_gpu,
+                    framebuffer_ambient_occlusion_gpu,
+                    camera_gpu.clmem(),
+                    nfaces);
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }
@@ -440,9 +443,19 @@ void run(int argc, char** argv)
             debug_io::dumpImage(results_dir + "/framebuffer_face_ids_with_gpu_lbvh.bmp", debug_io::randomMapping(gpu_lbvh_framebuffer_face_ids, NO_FACE_ID));
             debug_io::dumpImage(results_dir + "/framebuffer_ambient_occlusion_with_gpu_lbvh.bmp", debug_io::depthMapping(gpu_lbvh_framebuffer_ambient_occlusion));
             images_saving_time += gpu_lbvh_images_saving_t.elapsed();
+
+            const unsigned int cpu_gpu_face_errors = countDiffs(cpu_lbvh_framebuffer_face_ids, gpu_lbvh_framebuffer_face_ids, 0);
+            const unsigned int cpu_gpu_ao_errors = countDiffs(cpu_lbvh_framebuffer_ambient_occlusion, gpu_lbvh_framebuffer_ambient_occlusion, 0.01f);
+            const unsigned int allowed_pixel_errors = width * height / 100;
+
+            rassert(cpu_gpu_face_errors < allowed_pixel_errors, 748365219, cpu_gpu_face_errors);
+            rassert(cpu_gpu_ao_errors < allowed_pixel_errors, 748365220, cpu_gpu_ao_errors);
+            std::cout << "CPU/GPU LBVH framebuffer differences: " << cpu_gpu_face_errors
+                << " face IDs, " << cpu_gpu_ao_errors << " AO pixels" << std::endl;
+
             if (has_brute_force) {
                 unsigned int count_ao_errors = countDiffs(brute_force_framebuffer_ambient_occlusion, gpu_lbvh_framebuffer_ambient_occlusion, 0.01f);
-                unsigned int count_face_id_errors = countDiffs(brute_force_framebuffer_face_ids, gpu_lbvh_framebuffer_face_ids, 1);
+                unsigned int count_face_id_errors = countDiffs(brute_force_framebuffer_face_ids, gpu_lbvh_framebuffer_face_ids, 0);
                 rassert(count_ao_errors < width * height / 100, 3567856512354123, count_ao_errors, to_percent(count_ao_errors, width * height));
                 rassert(count_face_id_errors < width * height / 100, 3453465346387, count_face_id_errors, to_percent(count_face_id_errors, width * height));
             }
