@@ -28,6 +28,12 @@ const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getRTBruteForce();
 const ProgramBinaries& getRTWithLBVH();
+const ProgramBinaries& GetComputePrimitives();
+const ProgramBinaries& GetComputeMinMaxCentroids();
+const ProgramBinaries& GetComputeMortonCodes();
+const ProgramBinaries& GetMergeSort();
+const ProgramBinaries& GetBuildTree();
+const ProgramBinaries& GetBuildInternalAABB();
 }
 
 namespace avk2 {
