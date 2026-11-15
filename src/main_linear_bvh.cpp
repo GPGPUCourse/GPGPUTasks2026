@@ -84,6 +84,8 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_sort_morton_pairs(ocl::getBuildLBVH(), "sort_morton_pairs");
     ocl::KernelSource ocl_init_bvh_leaves(ocl::getBuildLBVH(), "init_bvh_leaves");
     ocl::KernelSource ocl_build_bvh_topology(ocl::getBuildLBVH(), "build_bvh_topology");
+    ocl::KernelSource ocl_compute_bvh_depths(ocl::getBuildLBVH(), "compute_bvh_depths");
+    ocl::KernelSource ocl_refit_bvh_level(ocl::getBuildLBVH(), "refit_bvh_level");
 
     avk2::KernelSource vk_rt_brute_force(avk2::getRTBruteForce());
     avk2::KernelSource vk_rt_with_lbvh(avk2::getRTWithLBVH());
@@ -148,6 +150,7 @@ void run(int argc, char** argv)
         gpu::shared_device_buffer_typed<BVHNodeGPU> bvh_nodes_gpu(2 * nfaces - 1);
         gpu::gpu_mem_32u leaf_triangle_indices_gpu(nfaces);
         gpu::gpu_mem_32u parent_indices_gpu(2 * nfaces - 1);
+        gpu::gpu_mem_32u node_depths_gpu(nfaces);
 
         // Аллоцируем фрейм-буферы (то есть картинки в которые сохранится результат рендеринга)
         gpu::gpu_mem_32i framebuffer_face_id_gpu(width * height);
@@ -225,6 +228,25 @@ void run(int argc, char** argv)
                 bvh_nodes_gpu.clmem(),
                 parent_indices_gpu,
                 nfaces);
+
+            if (nfaces > 1) {
+                const gpu::WorkSize internal_work_size(GROUP_SIZE, nfaces - 1);
+
+                ocl_compute_bvh_depths.exec(
+                    internal_work_size,
+                    parent_indices_gpu,
+                    node_depths_gpu,
+                    nfaces);
+
+                for (unsigned int depth = BVH_MAX_DEPTH; depth > 0; --depth) {
+                    ocl_refit_bvh_level.exec(
+                        internal_work_size,
+                        bvh_nodes_gpu.clmem(),
+                        node_depths_gpu,
+                        depth - 1,
+                        nfaces);
+                }
+            }
         }
 
         // Перед каждой отрисовкой мы будем зачищать результирующие framebuffers этими значениями

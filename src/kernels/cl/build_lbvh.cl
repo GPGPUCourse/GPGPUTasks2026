@@ -6,6 +6,7 @@
 #include "../shared_structs/bvh_node_gpu_shared.h"
 #include "../shared_structs/morton_code_gpu_shared.h"
 #include "geometry_helpers.cl"
+#include "helpers/rassert.cl"
 
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void triangle_bounds(
@@ -394,4 +395,64 @@ __kernel void build_bvh_topology(
 
     parent_indices[left_child_index] = node_index;
     parent_indices[right_child_index] = node_index;
+}
+
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__kernel void compute_bvh_depths(
+    __global const uint* parent_indices,
+    __global uint* node_depths,
+    uint face_count)
+{
+    const uint node_index = get_global_id(0);
+    const bool is_internal_node = face_count > 1 && node_index < face_count - 1;
+
+    if (!is_internal_node) {
+        return;
+    }
+
+    uint depth = 0;
+    uint parent_index = parent_indices[node_index];
+
+    while (parent_index != ~0u && depth < BVH_MAX_DEPTH) {
+        parent_index = parent_indices[parent_index];
+        ++depth;
+    }
+
+    rassert(parent_index == ~0u, 642153871);
+    node_depths[node_index] = depth;
+}
+
+__attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
+__kernel void refit_bvh_level(
+    __global BVHNodeGPU* nodes,
+    __global const uint* node_depths,
+    uint target_depth,
+    uint face_count)
+{
+    const uint node_index = get_global_id(0);
+    const bool is_internal_node = face_count > 1 && node_index < face_count - 1;
+
+    if (!is_internal_node) {
+        return;
+    }
+
+    if (node_depths[node_index] != target_depth) {
+        return;
+    }
+
+    const uint left_child_index = nodes[node_index].leftChildIndex;
+    const uint right_child_index = nodes[node_index].rightChildIndex;
+    const AABBGPU left_bounds = nodes[left_child_index].aabb;
+    const AABBGPU right_bounds = nodes[right_child_index].aabb;
+
+    const AABBGPU combined_bounds = {
+        fmin(left_bounds.min_x, right_bounds.min_x),
+        fmin(left_bounds.min_y, right_bounds.min_y),
+        fmin(left_bounds.min_z, right_bounds.min_z),
+        fmax(left_bounds.max_x, right_bounds.max_x),
+        fmax(left_bounds.max_y, right_bounds.max_y),
+        fmax(left_bounds.max_z, right_bounds.max_z),
+    };
+
+    nodes[node_index].aabb = combined_bounds;
 }
