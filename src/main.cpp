@@ -92,7 +92,7 @@ int main()
 		std::string vendorName(vendorNameSize, '0');
 		OCL_SAFE_CALL(
 			clGetPlatformInfo(platform, CL_PLATFORM_VENDOR, vendorNameSize, vendorName.data(), nullptr));
-		std::cout << "    Vendor name: " << vendorName << std::endl;
+		std::cout << "    Vendor name: " << vendorName.c_str() << std::endl;
 
 		// TODO 2.1
 		// Запросите число доступных устройств данной платформы (аналогично тому, как это было сделано для запроса числа доступных платформ - см. секцию "OpenCL Runtime" -> "Query Devices")
@@ -109,7 +109,7 @@ int main()
 			std::string deviceName(deviceNameSize, '0');
 			OCL_SAFE_CALL(
 				clGetDeviceInfo(device, CL_DEVICE_NAME, deviceNameSize, deviceName.data(), nullptr));
-			std::cout << "      Device name: " << deviceName << std::endl;
+			std::cout << "      Device name: " << deviceName.c_str() << std::endl;
 
 			cl_device_type deviceType;
 			OCL_SAFE_CALL(
@@ -127,7 +127,7 @@ int main()
 			std::string deviceVersion(deviceVersionSize, '0');
 			OCL_SAFE_CALL(
 				clGetDeviceInfo(device, CL_DEVICE_VERSION, deviceVersionSize, deviceVersion.data(), nullptr));
-			std::cout << "        OpenCL version: " << deviceVersion << std::endl;
+			std::cout << "        OpenCL version: " << deviceVersion.c_str() << std::endl;
 
 			size_t driverVersionSize = 0;
 			OCL_SAFE_CALL(
@@ -135,7 +135,7 @@ int main()
 			std::string driverVersion(driverVersionSize, '0');
 			OCL_SAFE_CALL(
 				clGetDeviceInfo(device, CL_DRIVER_VERSION, driverVersionSize, driverVersion.data(), nullptr));
-			std::cout << "        OpenCL implementation version: " << driverVersion << std::endl;
+			std::cout << "        OpenCL implementation version: " << driverVersion.c_str() << std::endl;
 
 			cl_bool imagesSupport = false;
 			OCL_SAFE_CALL(
