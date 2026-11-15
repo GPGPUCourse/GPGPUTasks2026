@@ -13,6 +13,8 @@
 #include "geometry_helpers.cu"
 #include "random_helpers.cu"
 
+#define BVH_STACK_SIZE 128
+
 // BVH traversal: closest hit along ray
 __device__ bool bvh_closest_hit(
     const float3& orig,
@@ -31,9 +33,45 @@ __device__ bool bvh_closest_hit(
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    int stack[BVH_STACK_SIZE];
+    int stackSize = 0;
+    stack[stackSize++] = rootIndex;
 
-    return false; // no intersections found
+    float tBest = FLT_MAX;
+    bool found = false;
+
+    while (stackSize > 0) {
+        int nodeIndex = stack[--stackSize];
+        const BVHNodeGPU node = nodes[nodeIndex];
+
+        float tNear, tFar;
+        if (!intersect_ray_aabb(orig, dir, node.aabb, tMin, tBest, tNear, tFar))
+            continue;
+
+        if (nodeIndex >= leafStart) {
+            unsigned int faceId = leafTriIndices[nodeIndex - leafStart];
+            uint3 f = loadFace(faces, faceId);
+            float3 a = loadVertex(vertices, f.x);
+            float3 b = loadVertex(vertices, f.y);
+            float3 c = loadVertex(vertices, f.z);
+
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, tBest, false, t, u, v)) {
+                tBest = t;
+                outT = t;
+                outU = u;
+                outV = v;
+                outFaceId = (int)faceId;
+                found = true;
+            }
+        } 
+        else {
+            stack[stackSize++] = (int)node.leftChildIndex;
+            stack[stackSize++] = (int)node.rightChildIndex;
+        }
+    }
+
+    return found;
 }
 
 // BVH traversal: any hit (for AO rays)
@@ -51,9 +89,43 @@ __device__ bool any_hit_from(
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    // те же параметры, что в brute force версии any_hit_from
+    const float tMin = 1e-4f;
+    const float tMax = FLT_MAX;
 
-    return false; // no intersections found
+    int stack[BVH_STACK_SIZE];
+    int stackSize = 0;
+    stack[stackSize++] = rootIndex;
+
+    while (stackSize > 0) {
+        int nodeIndex = stack[--stackSize];
+        const BVHNodeGPU node = nodes[nodeIndex];
+
+        float tNear, tFar;
+        if (!intersect_ray_aabb(orig, dir, node.aabb, tMin, tMax, tNear, tFar))
+            continue;
+
+        if (nodeIndex >= leafStart) {
+            unsigned int faceId = leafTriIndices[nodeIndex - leafStart];
+            if ((int)faceId == ignore_face)
+                continue;
+
+            uint3 f = loadFace(faces, faceId);
+            float3 a = loadVertex(vertices, f.x);
+            float3 b = loadVertex(vertices, f.y);
+            float3 c = loadVertex(vertices, f.z);
+
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, tMax, false, t, u, v))
+                return true;
+        }
+        else {
+            stack[stackSize++] = (int)node.leftChildIndex;
+            stack[stackSize++] = (int)node.rightChildIndex;
+        }
+    }
+
+    return false;
 }
 
 // + helper: build tangent basis for a given normal
