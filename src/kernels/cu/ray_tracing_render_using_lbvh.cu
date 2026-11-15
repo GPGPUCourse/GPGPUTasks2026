@@ -13,6 +13,43 @@
 #include "geometry_helpers.cu"
 #include "random_helpers.cu"
 
+static __device__ int next_bvh_node(
+    const float3& orig,
+    const float3& dir,
+    const BVHNodeGPU* nodes,
+    int nodeIndex,
+    float tMin,
+    float tMax,
+    int* stack,
+    int& top)
+{
+    int left = nodes[nodeIndex].leftChildIndex;
+    int right = nodes[nodeIndex].rightChildIndex;
+    
+    float tNear, tFar;
+    bool hitL = intersect_ray_aabb(orig, dir, nodes[left].aabb, tMin, tMax, tNear, tFar);
+    bool hitR = intersect_ray_aabb(orig, dir, nodes[right].aabb, tMin, tMax, tNear, tFar);
+
+    if (hitL) {
+        if (hitR) {
+            stack[top] = right;
+            top++;
+        }
+        return left;
+    }
+
+    if (hitR) {
+        return right;
+    }
+
+    if (top > 0) {
+        top--;
+        return stack[top];
+    }
+
+    return -1;
+}
+
 // BVH traversal: closest hit along ray
 __device__ bool bvh_closest_hit(
     const float3& orig,
@@ -28,12 +65,41 @@ __device__ bool bvh_closest_hit(
     float& outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
     float& outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
-    const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
+    int stack[64];
+    int top = 0;
+    int nodeIndex = 0;
+    bool found = false;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    while(nodeIndex >= 0) {
+        if (nodeIndex < leafStart) {
+            nodeIndex = next_bvh_node( orig, dir, nodes, nodeIndex, tMin, outT, stack, top);
+            continue;
+        }
 
-    return false; // no intersections found
+        int faceId = leafTriIndices[nodeIndex - leafStart];
+        uint3 face = loadFace(faces, faceId);
+        float3 a = loadVertex(vertices, face.x);
+        float3 b = loadVertex(vertices, face.y);
+        float3 c = loadVertex(vertices, face.z);
+
+        float t, u, v;
+        if(intersect_ray_triangle( orig, dir, a, b, c, tMin, outT, false, t, u, v)) {
+            outT = t;
+            outU = u;
+            outV = v;
+            outFaceId = faceId;
+            found = true;
+        }
+
+        if(top == 0) {
+            break;
+        }
+
+        top--;
+        nodeIndex = stack[top];
+    }
+    return found;
 }
 
 // BVH traversal: any hit (for AO rays)
@@ -50,10 +116,39 @@ __device__ bool any_hit_from(
 {
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
+    const float tMin = 1e-4f;
+    int stack[64];
+    int top = 0;
+    int nodeIndex = 0;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    while(nodeIndex >= 0) {
+        if (nodeIndex < leafStart) {
+            nodeIndex = next_bvh_node( orig, dir, nodes, nodeIndex, tMin, FLT_MAX, stack, top);
+            continue;
+        }
 
-    return false; // no intersections found
+        int faceId = leafTriIndices[nodeIndex - leafStart];
+        if (faceId != ignore_face) {
+            uint3 face = loadFace(faces, faceId);
+            float3 a = loadVertex(vertices, face.x);
+            float3 b = loadVertex(vertices, face.y);
+            float3 c = loadVertex(vertices, face.z);
+
+            float t, u, v;
+            if(intersect_ray_triangle( orig, dir, a, b, c, tMin, FLT_MAX, false, t, u, v)) {
+                return true;
+            }
+        }
+
+        if(top == 0) {
+            break;
+        }
+
+        top--;
+        nodeIndex = stack[top];
+    }
+
+    return false;
 }
 
 // + helper: build tangent basis for a given normal
