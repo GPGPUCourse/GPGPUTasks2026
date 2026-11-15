@@ -28,12 +28,71 @@ __device__ bool bvh_closest_hit(
     float& outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
     float& outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
+    if (nfaces == 0)
+        return false;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    const unsigned int rootIndex = 0;
+    const unsigned int leafStart = (int)nfaces - 1;
+    outT = FLT_MAX;
+    bool foundHit = false;
 
-    return false; // no intersections found
+    const unsigned int stack_maxsize = 65;
+    unsigned int st[stack_maxsize];
+    unsigned int st_index = 0;
+    st[st_index] = rootIndex;
+    ++st_index;
+
+    while (st_index > 0) {
+        unsigned int v = st[st_index - 1];
+        --st_index;
+
+        if (v >= leafStart) {
+            unsigned int faceId = leafTriIndices[v - (nfaces - 1)];
+            uint3 face = loadFace(faces, faceId);
+
+            float3 v0 = loadVertex(vertices, face.x);
+            float3 v1 = loadVertex(vertices, face.y);
+            float3 v2 = loadVertex(vertices, face.z);
+
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, outT, false, t, u, v)) {
+                outT = t, outU = u, outV = v, outFaceId = faceId;
+                foundHit = true;
+            }
+            continue;
+        }
+
+        unsigned int left  = nodes[v].leftChildIndex;
+        float left_tHitNear, left_tHitFar;
+        bool left_ok = intersect_ray_aabb(orig, dir, nodes[left].aabb, tMin, outT, left_tHitNear, left_tHitFar);
+
+        unsigned int right = nodes[v].rightChildIndex;
+        float right_tHitNear, right_tHitFar;
+        bool right_ok = intersect_ray_aabb(orig, dir, nodes[right].aabb, tMin, outT, right_tHitNear, right_tHitFar);
+        if (left_ok && right_ok) {
+            if (left_tHitNear < right_tHitNear) {
+                curassert(st_index < stack_maxsize, 187537185);
+                st[st_index] = right, ++st_index;
+                curassert(st_index < stack_maxsize, 187537185);
+                st[st_index] = left, ++st_index;
+            }
+            else {
+                curassert(st_index < stack_maxsize, 187537185);
+                st[st_index] = left, ++st_index;
+                curassert(st_index < stack_maxsize, 187537185);
+                st[st_index] = right, ++st_index;
+            }
+        }
+        else if (left_ok) {
+            curassert(st_index < stack_maxsize, 187537185);
+            st[st_index] = left, ++st_index;
+        }
+        else if (right_ok) {
+            curassert(st_index < stack_maxsize, 187537185);
+            st[st_index] = right, ++st_index;
+        }
+    }
+    return foundHit;
 }
 
 // BVH traversal: any hit (for AO rays)
@@ -48,12 +107,57 @@ __device__ bool any_hit_from(
     unsigned int nfaces,
     int ignore_face)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
+    if (nfaces == 0)
+        return false;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    const unsigned int rootIndex = 0;
+    const unsigned int leafStart = (int)nfaces - 1;
+    const float tMin = 1e-4f, tMax = FLT_MAX;
+    const unsigned int stack_maxsize = 65;
+    unsigned int st[stack_maxsize];
+    unsigned int st_index = 0;
+    st[st_index] = rootIndex;
+    ++st_index;
 
-    return false; // no intersections found
+    while (st_index > 0) {
+        unsigned int v = st[st_index - 1];
+        --st_index;
+
+        if (v >= leafStart) {
+            unsigned int faceId = leafTriIndices[v - (nfaces - 1)];
+            if (faceId == ignore_face)
+                continue;
+            uint3 face = loadFace(faces, faceId);
+
+            float3 v0 = loadVertex(vertices, face.x);
+            float3 v1 = loadVertex(vertices, face.y);
+            float3 v2 = loadVertex(vertices, face.z);
+
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tMax, false, t, u, v))
+                return true;
+
+            continue;
+        }
+
+        unsigned int left  = nodes[v].leftChildIndex;
+        float left_tHitNear, left_tHitFar;
+        bool left_ok = intersect_ray_aabb(orig, dir, nodes[left].aabb, tMin, tMax, left_tHitNear, left_tHitFar);
+
+        unsigned int right = nodes[v].rightChildIndex;
+        float right_tHitNear, right_tHitFar;
+        bool right_ok = intersect_ray_aabb(orig, dir, nodes[right].aabb, tMin, tMax, right_tHitNear, right_tHitFar);
+
+        if (left_ok) {
+            curassert(st_index < stack_maxsize, 187537185);
+            st[st_index] = left, ++st_index;
+        }
+        if (right_ok) {
+            curassert(st_index < stack_maxsize, 187537185);
+            st[st_index] = right, ++st_index;
+        }
+    }
+    return false;
 }
 
 // + helper: build tangent basis for a given normal
