@@ -212,7 +212,7 @@ __kernel void ray_tracing_render_using_lbvh(
     const uint j = get_global_id(1);
 
     rassert(camera->magic_bits_guard == CAMERA_VIEW_GPU_MAGIC_BITS_GUARD, 786435342);
-    if (i >= camera->K.width || j >= camera->K.height)
+    if (i >= camera->K.width || j >= camera->K.height) {
         return;
     }
 
