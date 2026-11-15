@@ -73,6 +73,8 @@ void run(int argc, char** argv)
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
 
+    const gpu::WorkSize work_size(256, n);
+
     // Запускаем кернел (несколько раз и с замером времени выполнения)
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) {
@@ -81,11 +83,19 @@ void run(int argc, char** argv)
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
         if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            unsigned int level {1};
             // ocl_fill_with_zeros.exec();
             // ocl_sum_reduction.exec();
             // ocl_prefix_accumulation.exec();
+            ocl_sum_reduction.exec(work_size, input_gpu, buffer1_pow2_sum_gpu, level, n);
+            level *= 2;
+
+            while(level <= n)
+            {
+                ocl_sum_reduction.exec(work_size, buffer1_pow2_sum_gpu, buffer2_pow2_sum_gpu, level, n);
+                std::swap(buffer1_pow2_sum_gpu, buffer2_pow2_sum_gpu);
+                level *= 2;
+            }
         } else if (context.type() == gpu::Context::TypeCUDA) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
@@ -113,7 +123,7 @@ void run(int argc, char** argv)
               << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
     // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    std::vector<unsigned int> gpu_prefix_sum = prefix_sum_accum_gpu.readVector();
+    std::vector<unsigned int> gpu_prefix_sum = buffer1_pow2_sum_gpu.readVector();
 
     // Сверяем результат
     for (size_t i = 0; i < n; ++i) {
