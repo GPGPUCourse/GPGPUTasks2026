@@ -3,6 +3,12 @@
 #include "cl/generated_kernels/aplusb.h"
 #include "cl/generated_kernels/ray_tracing_render_brute_force.h"
 #include "cl/generated_kernels/ray_tracing_render_using_lbvh.h"
+#include "cl/generated_kernels/primitives_computation.h"
+#include "cl/generated_kernels/centroids_min_max_reduction.h"
+#include "cl/generated_kernels/morton_codes.h"
+#include "cl/generated_kernels/merge_sort.h"
+#include "cl/generated_kernels/build_tree.h"
+#include "cl/generated_kernels/build_internal_aabb.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/ray_tracing_render_brute_force_comp.h"
@@ -54,6 +60,30 @@ const ProgramBinaries& getRTBruteForce()
 const ProgramBinaries& getRTWithLBVH()
 {
     return opencl_binaries_ray_tracing_render_using_lbvh;
+}
+
+const ProgramBinaries& GetComputePrimitives() {
+    return opencl_binaries_primitives_computation;
+}
+
+const ProgramBinaries& GetComputeMinMaxCentroids() {
+    return opencl_binaries_centroids_min_max_reduction;
+}
+
+const ProgramBinaries& GetComputeMortonCodes() {
+    return opencl_binaries_morton_codes;
+}
+
+const ProgramBinaries& GetMergeSort() {
+    return opencl_binaries_merge_sort;
+}
+
+const ProgramBinaries& GetBuildTree() {
+    return opencl_binaries_build_tree;
+}
+
+const ProgramBinaries& GetBuildInternalAABB() {
+    return opencl_binaries_build_internal_aabb;
 }
 } // namespace ocl
 
