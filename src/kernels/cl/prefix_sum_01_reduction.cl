@@ -5,13 +5,28 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-__attribute__((reqd_work_group_size(1, 1, 1)))
 __kernel void prefix_sum_01_reduction(
-    // это лишь шаблон! смело меняйте аргументы и используемые буфера! можете сделать даже больше кернелов, если это вызовет затруднения - смело спрашивайте в чате
-    // НЕ ПОДСТРАИВАЙТЕСЬ ПОД СИСТЕМУ! СВЕРНИТЕ С РЕЛЬС!! БУНТ!!! АНТИХАЙП!11!!1
-    __global const uint* pow2_sum, // contains n values
-    __global       uint* next_pow2_sum, // will contain (n+1)/2 values
-    unsigned int n)
+    __global const uint* buf1,
+    __global       uint* buf2,
+    int level, // 1,2,4,8,16
+    uint n) // total num elements in bufs
 {
-    // TODO
+    int gid = get_global_id(0);
+    int pair_element_id = gid - level;
+
+    // check global id bound
+    if (gid < 0 || gid >= n)
+        return;
+
+    uint buf1_val = buf1[gid];
+
+    // check pair element id bound
+    if (pair_element_id < 0)
+    {
+        buf2[gid] = buf1_val;
+    }
+    else
+    {
+        buf2[gid] = buf1_val + buf1[pair_element_id];
+    }
 }
