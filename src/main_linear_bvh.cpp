@@ -229,9 +229,6 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на CPU LBVH
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-
                 if (context.type() == gpu::Context::TypeOpenCL) {
                     ocl_rt_with_lbvh.exec(
                         gpu::WorkSize(16, 16, width, height),
@@ -279,7 +276,9 @@ void run(int argc, char** argv)
             images_saving_time += cpu_lbvh_images_saving_t.elapsed();
             if (has_brute_force) {
                 unsigned int count_ao_errors = countDiffs(brute_force_framebuffer_ambient_occlusion, cpu_lbvh_framebuffer_ambient_occlusion, 0.01f);
-                unsigned int count_face_id_errors = countDiffs(brute_force_framebuffer_face_ids, cpu_lbvh_framebuffer_face_ids, 1);
+                unsigned int count_face_id_errors = countDiffs(brute_force_framebuffer_face_ids, cpu_lbvh_framebuffer_face_ids, 0);
+                std::cout << "Brute-force comparison: " << count_face_id_errors << " differing face IDs, "
+                          << count_ao_errors << " AO pixels differing by more than 0.01" << std::endl;
                 rassert(count_ao_errors < width * height / 100, 345341512354123, count_ao_errors, to_percent(count_ao_errors, width * height));
                 rassert(count_face_id_errors < width * height / 100, 3453415123546587, count_face_id_errors, to_percent(count_face_id_errors, width * height));
             }
@@ -364,12 +363,14 @@ void run(int argc, char** argv)
 
     std::cout << "____________________________________________________________________________________________" << std::endl;
     double avg_gpu_rt_perf = stats::avg(gpu_rt_perf_mrays_per_sec);
-    double avg_lbvh_build_perf = stats::avg(gpu_lbvh_perfs_mtris_per_sec);
     std::cout << "Total GPU RT with  LBVH avg perf: " << avg_gpu_rt_perf << " MRays/sec (all " << stats::vectorToString(gpu_rt_perf_mrays_per_sec) << ")" << std::endl;
-    std::cout << "Total building GPU LBVH avg perf: " << avg_lbvh_build_perf << " MTris/sec (all " << stats::vectorToString(gpu_lbvh_perfs_mtris_per_sec) << ")" << std::endl;
-    std::cout << "Final score: " << avg_gpu_rt_perf * avg_lbvh_build_perf << " coolness" << std::endl;
-    if (gpu_rt_perf_mrays_per_sec.size() != 6 || gpu_lbvh_perfs_mtris_per_sec.size() != 3) {
-        std::cout << "Results are incomplete!" << std::endl;
+    if (!gpu_lbvh_perfs_mtris_per_sec.empty()) {
+        double avg_lbvh_build_perf = stats::avg(gpu_lbvh_perfs_mtris_per_sec);
+        std::cout << "Total building GPU LBVH avg perf: " << avg_lbvh_build_perf << " MTris/sec (all " << stats::vectorToString(gpu_lbvh_perfs_mtris_per_sec) << ")" << std::endl;
+        std::cout << "Final score: " << avg_gpu_rt_perf * avg_lbvh_build_perf << " coolness" << std::endl;
+        if (gpu_rt_perf_mrays_per_sec.size() != 6 || gpu_lbvh_perfs_mtris_per_sec.size() != 3) {
+            std::cout << "Results are incomplete!" << std::endl;
+        }
     }
 }
 
@@ -382,9 +383,6 @@ int main(int argc, char** argv)
         std::cerr << "Error: " << e.what() << std::endl;
         if (e.what() == DEVICE_NOT_SUPPORT_API) {
             // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за выбора CUDA API (его нет на процессоре - т.е. в случае CI на GitHub Actions)
-            exit_code = 0;
-        } else if (e.what() == CODE_IS_NOT_IMPLEMENTED) {
-            // Возвращаем exit code = 0 чтобы на CI не было красного крестика о неуспешном запуске из-за того что задание еще не выполнено
             exit_code = 0;
         } else {
             // Выставляем ненулевой exit code, чтобы сообщить, что случилась ошибка

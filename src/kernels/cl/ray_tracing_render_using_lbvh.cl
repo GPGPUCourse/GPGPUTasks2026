@@ -13,8 +13,8 @@
 #include "geometry_helpers.cl"
 #include "random_helpers.cl"
 
-// BVH traversal: closest hit along ray
-static inline bool bvh_closest_hit(
+// A nonnegative ignoreFace selects any-hit mode for an AO ray.
+static inline bool trace_bvh(
     const float3              orig,
     const float3              dir,
     __global const BVHNodeGPU* nodes,
@@ -23,17 +23,81 @@ static inline bool bvh_closest_hit(
     __global const float*     vertices,
     __global const uint*      faces,
     float                     tMin,
-    __private float*          outT, // сюда нужно записать t рассчитанный в intersect_ray_triangle(..., t, u, v)
+    int                       ignoreFace,
+    __private float*          outT,
     __private int*            outFaceId,
-    __private float*          outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
-    __private float*          outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
+    __private float*          outU,
+    __private float*          outV)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
+    if (nfaces == 0)
+        return false;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    const uint leafStart = nfaces - 1;
+    // Each split consumes at least one bit of the 30-bit Morton code
+    // or the 32-bit tie breaker. Keep at most one sibling per level.
+    uint stack[64];
+    uint pending = 0;
+    uint nodeIndex = 0;
+    float bestT = *outT;
+    int bestFace = -1;
 
-    return false;
+    float nearT, farT;
+    if (!intersect_ray_aabb(orig, dir, nodes[0].aabb, tMin, bestT, &nearT, &farT))
+        return false;
+
+    for (;;) {
+        if (nodeIndex >= leafStart) {
+            const int faceId = (int)leafTriIndices[nodeIndex - leafStart];
+            if (faceId != ignoreFace) {
+                const uint3 f = loadFace(faces, (uint)faceId);
+                float t, u, v;
+                if (intersect_ray_triangle(orig, dir,
+                                           loadVertex(vertices, f.x),
+                                           loadVertex(vertices, f.y),
+                                           loadVertex(vertices, f.z),
+                                           tMin, bestT, false, &t, &u, &v)) {
+                    if (ignoreFace >= 0)
+                        return true;
+                    // Increasing face IDs win exact distance ties, as in brute force.
+                    if (bestFace < 0 || t < bestT || faceId > bestFace) {
+                        bestT = t;
+                        bestFace = faceId;
+                        *outU = u;
+                        *outV = v;
+                    }
+                }
+            }
+        } else {
+            const uint left = nodes[nodeIndex].leftChildIndex;
+            const uint right = nodes[nodeIndex].rightChildIndex;
+            float leftNear, rightNear;
+            const bool hitLeft = intersect_ray_aabb(orig, dir, nodes[left].aabb,
+                                                    tMin, bestT, &leftNear, &farT);
+            const bool hitRight = intersect_ray_aabb(orig, dir, nodes[right].aabb,
+                                                     tMin, bestT, &rightNear, &farT);
+            if (hitLeft && hitRight) {
+                const bool leftFirst = leftNear <= rightNear;
+                stack[pending++] = leftFirst ? right : left;
+                nodeIndex = leftFirst ? left : right;
+                continue;
+            }
+            if (hitLeft || hitRight) {
+                nodeIndex = hitLeft ? left : right;
+                continue;
+            }
+        }
+
+        // A closer triangle may have shortened the ray since a node was queued.
+        do {
+            if (pending == 0) {
+                *outT = bestT;
+                *outFaceId = bestFace;
+                return bestFace >= 0;
+            }
+            nodeIndex = stack[--pending];
+        } while (!intersect_ray_aabb(orig, dir, nodes[nodeIndex].aabb,
+                                    tMin, bestT, &nearT, &farT));
+    }
 }
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
@@ -47,12 +111,10 @@ static inline bool any_hit_from(
     uint                      nfaces,
     int                       ignore_face)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
-
-    // TODO implement BVH travering (with stack, don't use recursion)
-
-    return false;
+    float t = FLT_MAX, u, v;
+    int faceId;
+    return trace_bvh(orig, dir, nodes, leafTriIndices, nfaces, vertices, faces,
+                     1e-4f, ignore_face, &t, &faceId, &u, &v);
 }
 
 // Helper: build tangent basis for a given normal
@@ -101,7 +163,7 @@ __kernel void ray_tracing_render_using_lbvh(
     int   faceIdBest = -1;
 
     // Use BVH traversal instead of brute-force loop
-    bool hit = bvh_closest_hit(
+    trace_bvh(
         ray_origin,
         ray_direction,
         bvhNodes,
@@ -110,6 +172,7 @@ __kernel void ray_tracing_render_using_lbvh(
         vertices,
         faces,
         tMin,
+        -1,
         &tBest,
         &faceIdBest,
         &uBest,
