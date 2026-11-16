@@ -273,7 +273,7 @@ bool bvh_closest_hit(vec3 orig,
         bool aabbTest = intersect_ray_aabb(orig, dir, node.aabb, tMin, tMax, tNear, tFar);
         if (!aabbTest) { continue; }
         if (nodeId < leafStart) {
-            if (tNear < closest) {
+            if (tNear <= closest) {
                 stack[stackCnt++] = node.leftChildIndex;
                 stack[stackCnt++] = node.rightChildIndex;
             }
@@ -285,7 +285,7 @@ bool bvh_closest_hit(vec3 orig,
             vec3 v2 = loadVertex(face.z);
             float t, u, v;
             bool triTest = intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tMax, false, t, u, v);
-            if (triTest && t < closest) {
+            if (triTest && t <= closest) {
                 closest = t;
                 tMax = t;
                 intersects = true;
