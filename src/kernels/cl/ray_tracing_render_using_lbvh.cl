@@ -13,44 +13,132 @@
 #include "geometry_helpers.cl"
 #include "random_helpers.cl"
 
+#define MAX_STACK_SIZE 60 // 30 для миллиарда треугольников, умножить на 2
+
 // BVH traversal: closest hit along ray
-static inline bool bvh_closest_hit(
-    const float3              orig,
-    const float3              dir,
-    __global const BVHNodeGPU* nodes,
-    __global const uint*      leafTriIndices,
-    uint                      nfaces,
-    __global const float*     vertices,
-    __global const uint*      faces,
-    float                     tMin,
+static inline bool bvh_closest_hit( // Находит пересечение луча с первым к нему треугольником из всех треугольников BVH
+    const float3              orig, // начало луча
+    const float3              dir, // направление луча, вектор
+    __global const BVHNodeGPU* nodes, // дерево
+    __global const uint*      leafTriIndices, // индекс среди листов --> индекс треугольника в faces
+    uint                      nfaces, // кол-во треугольников
+    __global const float*     vertices, // массив координат всех вершин треугольников
+    __global const uint*      faces, // треугольники, len=3*nfaces. Ссылается на vertices
+    float                     tMin, // погрешность проверки пересечения лучка с треугольником
     __private float*          outT, // сюда нужно записать t рассчитанный в intersect_ray_triangle(..., t, u, v)
-    __private int*            outFaceId,
+    __private int*            outFaceId, // индекс найденного треугольника
     __private float*          outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
     __private float*          outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    __global const BVHNodeGPU* stack[MAX_STACK_SIZE];
+    stack[0] = NULL;
+    uint stack_size = 1;
+    __global const BVHNodeGPU* node = &nodes[rootIndex];
+    bool found = false;
+    do {
+        uint nodeId = (uint)(node - nodes);
+        if (nodeId >= leafStart) {
+            uint faceId = leafTriIndices[nodeId - leafStart];
+            uint3 face = loadFace(faces, faceId);
+            float3 a = loadVertex(vertices, face.x);
+            float3 b = loadVertex(vertices, face.y);
+            float3 c = loadVertex(vertices, face.z);
 
-    return false;
+            float t, u, v;
+            bool intersect_res = intersect_ray_triangle(orig, dir, a, b, c, tMin, *outT, false, &t, &u, &v);
+            if (intersect_res) {
+                found = true;
+                *outT = t;
+                *outFaceId = (int)faceId;
+                *outU = u;
+                *outV = v;
+            }
+
+            node = stack[--stack_size];
+            continue;
+        }
+
+        __global const BVHNodeGPU* childL = &nodes[node->leftChildIndex];
+        __global const BVHNodeGPU* childR = &nodes[node->rightChildIndex];
+        float tNearL, tFarL, tNearR, tFarR;
+        bool overlapL = intersect_ray_aabb(orig, dir, childL->aabb, tMin, *outT, &tNearL, &tFarL);
+        bool overlapR = intersect_ray_aabb(orig, dir, childR->aabb, tMin, *outT, &tNearR, &tFarR);
+
+        if (!overlapL && !overlapR) {
+            node = stack[--stack_size];
+        } else {
+            node = overlapL ? childL : childR;
+            if (overlapL && overlapR) {
+                stack[stack_size++] = childR;
+            }
+        }
+    } while (node != NULL);
+
+    return found;
 }
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
 static inline bool any_hit_from(
-    const float3              orig,
-    const float3              dir,
-    __global const float*     vertices,
-    __global const uint*      faces,
-    __global const BVHNodeGPU* nodes,
-    __global const uint*      leafTriIndices,
-    uint                      nfaces,
-    int                       ignore_face)
+    const float3              orig, // начало луча
+    const float3              dir, // направление луча, вектор
+    __global const float*     vertices, // массив координат всех вершин треугольников: x0,y0,z0,x1,y1,z1,...; len=3*nfaces
+    __global const uint*      faces, // треугольники
+    __global const BVHNodeGPU* nodes, // дерево
+    __global const uint*      leafTriIndices, // индекс среди листов --> индекс треугольника в faces
+    uint                      nfaces, // кол-во треугольников
+    int                       ignore_face) // треугольник, который не надо учитывать при поиске
 {
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    const float tMin = 1e-4f;
+    const float tMax = FLT_MAX;
+
+    __global const BVHNodeGPU* stack[MAX_STACK_SIZE];
+    stack[0] = NULL;
+    uint stack_size = 1;
+    __global const BVHNodeGPU* node = &nodes[rootIndex];
+    do {
+        uint nodeId = (uint)(node - nodes);
+        if (nodeId >= leafStart) {
+            uint faceId = leafTriIndices[nodeId - leafStart];
+            if (faceId == ignore_face) {
+                node = stack[--stack_size];
+                continue;
+            }
+            uint3 face = loadFace(faces, faceId);
+            float3 a = loadVertex(vertices, face.x);
+            float3 b = loadVertex(vertices, face.y);
+            float3 c = loadVertex(vertices, face.z);
+
+            float t, u, v;
+            bool intersect_res = intersect_ray_triangle(orig, dir, a, b, c, tMin, tMax, false, &t, &u, &v);
+            if (intersect_res) {
+                return true;
+            }
+
+            node = stack[--stack_size];
+            continue;
+        }
+
+        __global const BVHNodeGPU* childL = &nodes[node->leftChildIndex];
+        __global const BVHNodeGPU* childR = &nodes[node->rightChildIndex];
+        float tNearL, tFarL, tNearR, tFarR;
+        bool overlapL = intersect_ray_aabb(orig, dir, childL->aabb, tMin, tMax, &tNearL, &tFarL);
+        bool overlapR = intersect_ray_aabb(orig, dir, childR->aabb, tMin, tMax, &tNearR, &tFarR);
+
+        if (!overlapL && !overlapR) {
+            node = stack[--stack_size];
+        } else {
+            node = overlapL ? childL : childR;
+            if (overlapL && overlapR) {
+                stack[stack_size++] = childR;
+            }
+        }
+    } while (node != NULL);
 
     return false;
 }
@@ -79,20 +167,22 @@ __kernel void ray_tracing_render_using_lbvh(
     __global const CameraViewGPU* camera,
     uint                       nfaces)
 {
-    const uint i = get_global_id(0);
-    const uint j = get_global_id(1);
+    const uint i = get_global_id(0); // одна координата вычисляемого пикселя
+    const uint j = get_global_id(1); // вторая координата вычисляемого пикселя
 
     rassert(camera->magic_bits_guard == CAMERA_VIEW_GPU_MAGIC_BITS_GUARD, 786435342);
     if (i >= camera->K.width || j >= camera->K.height)
         return;
 
-    float3 ray_origin;
-    float3 ray_direction;
+    float3 ray_origin; // точка, из которой исходит луч
+    float3 ray_direction; // направление луча из исходной точки, вектор
     make_primary_ray(camera,
                      (float)i + 0.5f,
                      (float)j + 0.5f,
                      &ray_origin,
                      &ray_direction);
+    
+    // теперь ray_origin и ray_direction заполнены
 
     float tMin      = 1e-6f;
     float tBest     = FLT_MAX;
