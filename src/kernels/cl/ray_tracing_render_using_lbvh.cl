@@ -94,7 +94,51 @@ static inline bool any_hit_from(
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    const float tMin = 1e-4f;
+    const float tMax = FLT_MAX;
+
+    __global const BVHNodeGPU* stack[MAX_STACK_SIZE];
+    stack[0] = NULL;
+    uint stack_size = 1;
+    __global const BVHNodeGPU* node = &nodes[rootIndex];
+    do {
+        uint nodeId = (uint)(node - nodes);
+        if (nodeId >= leafStart) {
+            uint faceId = leafTriIndices[nodeId - leafStart];
+            if (faceId == ignore_face) {
+                node = stack[--stack_size];
+                continue;
+            }
+            uint3 face = loadFace(faces, faceId);
+            float3 a = loadVertex(vertices, face.x);
+            float3 b = loadVertex(vertices, face.y);
+            float3 c = loadVertex(vertices, face.z);
+
+            float t, u, v;
+            bool intersect_res = intersect_ray_triangle(orig, dir, a, b, c, tMin, tMax, false, &t, &u, &v);
+            if (intersect_res) {
+                return true;
+            }
+
+            node = stack[--stack_size];
+            continue;
+        }
+
+        __global const BVHNodeGPU* childL = &nodes[node->leftChildIndex];
+        __global const BVHNodeGPU* childR = &nodes[node->rightChildIndex];
+        float tNearL, tFarL, tNearR, tFarR;
+        bool overlapL = intersect_ray_aabb(orig, dir, childL->aabb, tMin, tMax, &tNearL, &tFarL);
+        bool overlapR = intersect_ray_aabb(orig, dir, childR->aabb, tMin, tMax, &tNearR, &tFarR);
+
+        if (!overlapL && !overlapR) {
+            node = stack[--stack_size];
+        } else {
+            node = overlapL ? childL : childR;
+            if (overlapL && overlapR) {
+                stack[stack_size++] = childR;
+            }
+        }
+    } while (node != NULL);
 
     return false;
 }
