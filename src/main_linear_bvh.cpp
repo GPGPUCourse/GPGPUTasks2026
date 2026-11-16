@@ -67,7 +67,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -229,9 +229,6 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на CPU LBVH
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-
                 if (context.type() == gpu::Context::TypeOpenCL) {
                     ocl_rt_with_lbvh.exec(
                         gpu::WorkSize(16, 16, width, height),
@@ -288,16 +285,30 @@ void run(int argc, char** argv)
         double gpu_lbvh_time_sum = 0.0;
         double rt_times_with_gpu_lbvh_sum = 0.0;
 
-        // TODO постройте LBVH на GPU
-        // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
+        bool gpu_lbvg_gpu_rt_done = context.type() == gpu::Context::TypeCUDA;
+        const unsigned int built_node_count = nfaces <= 1 ? 1u : 2u * nfaces - 1u;
+        gpu::shared_device_buffer_typed<BVHNodeGPU> built_nodes(gpu_lbvg_gpu_rt_done ? built_node_count : 1u);
+        gpu::gpu_mem_32u built_leaves(gpu_lbvg_gpu_rt_done ? nfaces : 1u);
+        gpu::gpu_mem_32u scratch_morton(gpu_lbvg_gpu_rt_done ? nfaces : 1u);
+        gpu::gpu_mem_32u scratch_order(gpu_lbvg_gpu_rt_done ? nfaces : 1u);
+        gpu::gpu_mem_32u scratch_parent(gpu_lbvg_gpu_rt_done ? built_node_count : 1u);
+        gpu::gpu_mem_32u scratch_visits(gpu_lbvg_gpu_rt_done ? nfaces : 1u);
+        gpu::shared_device_buffer_typed<AABBGPU> scratch_aabb(gpu_lbvg_gpu_rt_done ? nfaces : 1u);
+        gpu::gpu_mem_32f scratch_centroid(gpu_lbvg_gpu_rt_done ? 3u * nfaces : 1u);
+        gpu::gpu_mem_32f scratch_partial(gpu_lbvg_gpu_rt_done ? 6u * 1024u : 1u);
+        gpu::gpu_mem_32f scratch_bounds(6u);
 
         if (gpu_lbvg_gpu_rt_done) {
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO постройте LBVH на GPU
+                cuda::build_lbvh(
+                    vertices_gpu, faces_gpu,
+                    built_nodes, built_leaves,
+                    scratch_morton, scratch_order, scratch_parent, scratch_visits,
+                    scratch_aabb, scratch_centroid, scratch_partial, scratch_bounds,
+                    nvertices, nfaces);
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -316,7 +327,12 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                cuda::ray_tracing_render_using_lbvh(
+                    gpu::WorkSize(16, 16, width, height),
+                    vertices_gpu, faces_gpu,
+                    built_nodes, built_leaves,
+                    framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                    camera_gpu, nfaces);
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }
