@@ -1,0 +1,49 @@
+{
+	"abstract" : true,
+	"backtrace" : 2,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"_add_library",
+			"add_library"
+		],
+		"files" : 
+		[
+			"C:/vcpkg/scripts/buildsystems/vcpkg.cmake",
+			"libs/json/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 1
+			},
+			{
+				"command" : 1,
+				"file" : 1,
+				"line" : 9,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 666,
+				"parent" : 1
+			}
+		]
+	},
+	"codemodelVersion" : 
+	{
+		"major" : 2,
+		"minor" : 10
+	},
+	"id" : "libjson::@bed19f98146862686cc4",
+	"name" : "libjson",
+	"paths" : 
+	{
+		"build" : "libs/json",
+		"source" : "libs/json"
+	},
+	"sources" : [],
+	"type" : "INTERFACE_LIBRARY"
+}
