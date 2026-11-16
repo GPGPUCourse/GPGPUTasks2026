@@ -251,10 +251,10 @@ float random01(inout uint s)
 bool bvh_closest_hit(vec3 orig,
                      vec3 dir,
                      float tMin,
-                     out float outT, // сюда нужно записать t рассчитанный в intersect_ray_triangle(..., t, u, v)
-                     out int outFaceId,
-                     out float outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
-                     out float outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
+                     inout float outT, // сюда нужно записать t рассчитанный в intersect_ray_triangle(..., t, u, v)
+                     inout int outFaceId,
+                     inout float outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
+                     inout float outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
     uint rootIndex = 0;
     uint leafStart = int(params.nfaces) - 1;
@@ -273,7 +273,7 @@ bool bvh_closest_hit(vec3 orig,
         bool aabbTest = intersect_ray_aabb(orig, dir, node.aabb, tMin, tMax, tNear, tFar);
         if (!aabbTest) { continue; }
         if (nodeId < leafStart) {
-            if (tNear <= closest) {
+            if (tNear < closest) {
                 stack[stackCnt++] = node.leftChildIndex;
                 stack[stackCnt++] = node.rightChildIndex;
             }
@@ -285,9 +285,9 @@ bool bvh_closest_hit(vec3 orig,
             vec3 v2 = loadVertex(face.z);
             float t, u, v;
             bool triTest = intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tMax, false, t, u, v);
-            if (triTest && t <= closest) {
+            if (triTest && t < closest) {
                 closest = t;
-                //tMax = t;
+                tMax = t;
                 intersects = true;
                 outFaceId = int(faceId);
                 outT = t;
