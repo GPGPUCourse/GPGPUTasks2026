@@ -6,3 +6,4 @@
 /results/
 cmake-build*
 .vs
+.vscode

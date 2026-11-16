@@ -28,12 +28,90 @@ static inline bool bvh_closest_hit(
     __private float*          outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
     __private float*          outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
-    const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    uint stack[MAX_STACK_SIZE];
+    uint current_index = 0;
+    uint stack_size = 0;
+    float t, u, v;
+    float tBest = FLT_MAX;
+    float uBest, vBest;
+    int faceIdBest = -1;
+    bool found = false;
 
-    return false;
+    do {
+        uint left = nodes[current_index].leftChildIndex;
+        uint right = nodes[current_index].rightChildIndex;
+
+        if (left == UINT_MAX && right == UINT_MAX) {
+            int faceId = (int)leafTriIndices[current_index - leafStart];
+            uint3  face = loadFace(faces, (uint)faceId);
+            float3 v0   = loadVertex(vertices, face.x);
+            float3 v1   = loadVertex(vertices, face.y);
+            float3 v2   = loadVertex(vertices, face.z);
+            if (intersect_ray_triangle(
+                orig, dir,
+                v0, v1, v2,
+                tMin, tBest,
+                false,
+                &t, &u, &v
+            )) {
+                found = true;
+                tBest = t;
+                uBest = u;
+                vBest = v;
+                faceIdBest = faceId;
+            }
+            if (stack_size == 0)
+                break;
+            current_index = stack[--stack_size];
+            continue;
+        }
+        float tLeftNear, tLeftFar;
+        float tRightNear, tRightFar;
+        bool intersect_left_aabb = intersect_ray_aabb(
+            orig, dir,
+            nodes[left].aabb,
+            tMin, tBest,
+            &tLeftNear, &tLeftFar
+        );
+        bool intersect_right_aabb = intersect_ray_aabb(
+            orig, dir,
+            nodes[right].aabb,
+            tMin, tBest,
+            &tRightNear, &tRightFar
+        );
+        if (intersect_left_aabb && intersect_right_aabb) {
+            if (tLeftNear <= tRightNear) {
+                current_index = left;
+                stack[stack_size++] = right;
+            }
+            else {
+                current_index = right;
+                stack[stack_size++] = left;
+            }
+        }
+        else if (intersect_left_aabb) {
+            current_index = left;
+        }
+        else if (intersect_right_aabb) {
+            current_index = right;
+        }
+        else {
+            if (stack_size == 0)
+                break;
+            current_index = stack[--stack_size];
+        }
+    } while (true);
+
+    if (found) {
+        *outT = tBest;
+        *outU = uBest;
+        *outV = vBest;
+        *outFaceId = faceIdBest;
+    }
+
+    return found;
 }
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
@@ -47,10 +125,72 @@ static inline bool any_hit_from(
     uint                      nfaces,
     int                       ignore_face)
 {
-    const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    uint stack[MAX_STACK_SIZE];
+    uint current_index = 0;
+    uint stack_size = 0;
+    float t, u, v;
+
+    do {
+        uint left = nodes[current_index].leftChildIndex;
+        uint right = nodes[current_index].rightChildIndex;
+
+        if (left == UINT_MAX && right == UINT_MAX) {
+            int faceId = (int)leafTriIndices[current_index - leafStart];
+            if (ignore_face != faceId) {
+                uint3  face = loadFace(faces, (uint)faceId);
+                float3 v0   = loadVertex(vertices, face.x);
+                float3 v1   = loadVertex(vertices, face.y);
+                float3 v2   = loadVertex(vertices, face.z);
+                if (intersect_ray_triangle_any(
+                    orig, dir,
+                    v0, v1, v2,
+                    false,
+                    &t, &u, &v
+                )) {
+                    return true;
+                }
+            }
+            if (stack_size == 0)
+                break;
+            current_index = stack[--stack_size];
+            continue;
+        }
+        float tLeftNear, tLeftFar;
+        float tRightNear, tRightFar;
+        bool intersect_left_aabb = intersect_ray_aabb_any(
+            orig, dir,
+            nodes[left].aabb,
+            &tLeftNear, &tLeftFar
+        );
+        bool intersect_right_aabb = intersect_ray_aabb_any(
+            orig, dir,
+            nodes[right].aabb,
+            &tRightNear, &tRightFar
+        );
+        if (intersect_left_aabb && intersect_right_aabb) {
+            if (tLeftNear <= tRightNear) {
+                current_index = left;
+                stack[stack_size++] = right;
+            }
+            else {
+                current_index = right;
+                stack[stack_size++] = left;
+            }
+        }
+        else if (intersect_left_aabb) {
+            current_index = left;
+        }
+        else if (intersect_right_aabb) {
+            current_index = right;
+        }
+        else {
+            if (stack_size == 0)
+                break;
+            current_index = stack[--stack_size];
+        }
+    } while (true);
 
     return false;
 }
