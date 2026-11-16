@@ -1,0 +1,248 @@
+{
+	"archive" : 
+	{
+		"commandFragments" : 
+		[
+			{
+				"fragment" : "/machine:x64",
+				"role" : "flags"
+			}
+		]
+	},
+	"artifacts" : 
+	[
+		{
+			"path" : "libs/utils/libutils.lib"
+		}
+	],
+	"backtrace" : 2,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"_add_library",
+			"add_library",
+			"target_link_libraries",
+			"target_include_directories"
+		],
+		"files" : 
+		[
+			"C:/vcpkg/scripts/buildsystems/vcpkg.cmake",
+			"libs/utils/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 1
+			},
+			{
+				"command" : 1,
+				"file" : 1,
+				"line" : 31,
+				"parent" : 0
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 666,
+				"parent" : 1
+			},
+			{
+				"command" : 2,
+				"file" : 1,
+				"line" : 34,
+				"parent" : 0
+			},
+			{
+				"command" : 3,
+				"file" : 1,
+				"line" : 35,
+				"parent" : 0
+			}
+		]
+	},
+	"codemodelVersion" : 
+	{
+		"major" : 2,
+		"minor" : 10
+	},
+	"compileDependencies" : 
+	[
+		{
+			"backtrace" : 3,
+			"id" : "Threads::Threads::@e42e11acb977bccfc0e7"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libgpu::@90375ef4966b2202aea0"
+		}
+	],
+	"compileGroups" : 
+	[
+		{
+			"compileCommandFragments" : 
+			[
+				{
+					"fragment" : "/DWIN32 /D_WINDOWS /EHsc -openmp /Zi /Ob0 /Od /RTC1 -std:c++17 -MDd"
+				}
+			],
+			"defines" : 
+			[
+				{
+					"backtrace" : 3,
+					"define" : "GTEST_LINKED_AS_SHARED_LIBRARY=1"
+				}
+			],
+			"includes" : 
+			[
+				{
+					"backtrace" : 4,
+					"path" : "C:/Users/user/GPGPUTasks2026/libs/utils"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/user/GPGPUTasks2026/libs/gpu"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/VulkanSDK/1.4.357.0/include"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/user/GPGPUTasks2026/libs/base"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/user/GPGPUTasks2026/libs/images"
+				},
+				{
+					"backtrace" : 3,
+					"path" : "C:/Users/user/GPGPUTasks2026/libs/clew"
+				},
+				{
+					"backtrace" : 3,
+					"isSystem" : true,
+					"path" : "C:/vcpkg/installed/x64-windows/include"
+				}
+			],
+			"language" : "CXX",
+			"languageStandard" : 
+			{
+				"backtraces" : 
+				[
+					3
+				],
+				"standard" : "17"
+			},
+			"sourceIndexes" : 
+			[
+				0,
+				1
+			]
+		}
+	],
+	"dependencies" : 
+	[
+		{
+			"id" : "libgpu::@90375ef4966b2202aea0"
+		}
+	],
+	"id" : "libutils::@e42e11acb977bccfc0e7",
+	"interfaceCompileDependencies" : 
+	[
+		{
+			"backtrace" : 3,
+			"id" : "Threads::Threads::@e42e11acb977bccfc0e7"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libgpu::@90375ef4966b2202aea0"
+		}
+	],
+	"interfaceLinkLibraries" : 
+	[
+		{
+			"backtrace" : 3,
+			"id" : "Threads::Threads::@e42e11acb977bccfc0e7"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libgpu::@90375ef4966b2202aea0"
+		}
+	],
+	"linkLibraries" : 
+	[
+		{
+			"backtrace" : 3,
+			"id" : "Threads::Threads::@e42e11acb977bccfc0e7"
+		},
+		{
+			"backtrace" : 3,
+			"id" : "libgpu::@90375ef4966b2202aea0"
+		}
+	],
+	"name" : "libutils",
+	"nameOnDisk" : "libutils.lib",
+	"paths" : 
+	{
+		"build" : "libs/utils",
+		"source" : "libs/utils"
+	},
+	"sourceGroups" : 
+	[
+		{
+			"name" : "Source Files",
+			"sourceIndexes" : 
+			[
+				0,
+				1
+			]
+		},
+		{
+			"name" : "Header Files",
+			"sourceIndexes" : 
+			[
+				2,
+				3,
+				4,
+				5
+			]
+		}
+	],
+	"sources" : 
+	[
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/utils/libutils/misc.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"compileGroupIndex" : 0,
+			"path" : "libs/base/libbase/string_utils.cpp",
+			"sourceGroupIndex" : 0
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/base/libbase/fast_random.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/utils/libutils/misc.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/base/libbase/string_utils.h",
+			"sourceGroupIndex" : 1
+		},
+		{
+			"backtrace" : 2,
+			"path" : "libs/base/libbase/timer.h",
+			"sourceGroupIndex" : 1
+		}
+	],
+	"type" : "STATIC_LIBRARY"
+}

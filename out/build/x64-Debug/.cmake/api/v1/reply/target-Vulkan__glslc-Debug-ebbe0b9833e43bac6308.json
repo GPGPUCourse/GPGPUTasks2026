@@ -1,0 +1,77 @@
+{
+	"abstract" : true,
+	"artifacts" : 
+	[
+		{
+			"path" : "C:/VulkanSDK/1.4.357.0/Bin/glslc.exe"
+		}
+	],
+	"backtrace" : 5,
+	"backtraceGraph" : 
+	{
+		"commands" : 
+		[
+			"_add_executable",
+			"add_executable",
+			"_find_package",
+			"find_package"
+		],
+		"files" : 
+		[
+			"C:/vcpkg/scripts/buildsystems/vcpkg.cmake",
+			"C:/Program Files/Microsoft Visual Studio/18/Community/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/share/cmake-4.3/Modules/FindVulkan.cmake",
+			"libs/gpu/CMakeLists.txt"
+		],
+		"nodes" : 
+		[
+			{
+				"file" : 2
+			},
+			{
+				"command" : 3,
+				"file" : 2,
+				"line" : 207,
+				"parent" : 0
+			},
+			{
+				"command" : 2,
+				"file" : 0,
+				"line" : 939,
+				"parent" : 1
+			},
+			{
+				"file" : 1,
+				"parent" : 2
+			},
+			{
+				"command" : 1,
+				"file" : 1,
+				"line" : 734,
+				"parent" : 3
+			},
+			{
+				"command" : 0,
+				"file" : 0,
+				"line" : 615,
+				"parent" : 4
+			}
+		]
+	},
+	"codemodelVersion" : 
+	{
+		"major" : 2,
+		"minor" : 10
+	},
+	"id" : "Vulkan::glslc::@90375ef4966b2202aea0",
+	"imported" : true,
+	"local" : true,
+	"name" : "Vulkan::glslc",
+	"nameOnDisk" : "glslc.exe",
+	"paths" : 
+	{
+		"build" : "libs/gpu",
+		"source" : "libs/gpu"
+	},
+	"sources" : [],
+	"type" : "EXECUTABLE"
+}

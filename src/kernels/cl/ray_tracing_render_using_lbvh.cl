@@ -13,6 +13,88 @@
 #include "geometry_helpers.cl"
 #include "random_helpers.cl"
 
+#define LBVH_STACK_SIZE 128
+#define LBVH_INVALID_INDEX 0xFFFFFFFFu
+
+static inline bool intersect_aabb(
+    const AABBGPU box,
+    const float3 orig,
+    const float3 dir,
+    const float tMin,
+    const float tMax)
+{
+    float tEnter = tMin;
+    float tExit = tMax;
+
+    if (dir.x == 0.0f) {
+        if (orig.x < box.min_x || orig.x > box.max_x)
+            return false;
+    } else {
+        float invD = 1.0f / dir.x;
+
+        float t0 = (box.min_x - orig.x) * invD;
+        float t1 = (box.max_x - orig.x) * invD;
+
+        if (t0 > t1) {
+            float tmp = t0;
+            t0 = t1;
+            t1 = tmp;
+        }
+
+        tEnter = fmax(tEnter, t0);
+        tExit = fmin(tExit, t1);
+
+        if (tEnter > tExit)
+            return false;
+    }
+
+    if (dir.y == 0.0f) {
+        if (orig.y < box.min_y || orig.y > box.max_y)
+            return false;
+    } else {
+        float invD = 1.0f / dir.y;
+
+        float t0 = (box.min_y - orig.y) * invD;
+        float t1 = (box.max_y - orig.y) * invD;
+
+        if (t0 > t1) {
+            float tmp = t0;
+            t0 = t1;
+            t1 = tmp;
+        }
+
+        tEnter = fmax(tEnter, t0);
+        tExit = fmin(tExit, t1);
+
+        if (tEnter > tExit)
+            return false;
+    }
+
+    if (dir.z == 0.0f) {
+        if (orig.z < box.min_z || orig.z > box.max_z)
+            return false;
+    } else {
+        float invD = 1.0f / dir.z;
+
+        float t0 = (box.min_z - orig.z) * invD;
+        float t1 = (box.max_z - orig.z) * invD;
+
+        if (t0 > t1) {
+            float tmp = t0;
+            t0 = t1;
+            t1 = tmp;
+        }
+
+        tEnter = fmax(tEnter, t0);
+        tExit = fmin(tExit, t1);
+
+        if (tEnter > tExit)
+            return false;
+    }
+
+    return true;
+}
+
 // BVH traversal: closest hit along ray
 static inline bool bvh_closest_hit(
     const float3              orig,
@@ -28,13 +110,65 @@ static inline bool bvh_closest_hit(
     __private float*          outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
     __private float*          outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
+    const uint rootIndex = 0u;
+    const uint leafStart = nfaces - 1u;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    *outT = FLT_MAX;
+    *outFaceId = -1;
+    *outU = 0.0f;
+    *outV = 0.0f;
 
-    return false;
+    if (nfaces == 0u)
+        return false;
+
+    uint stack[LBVH_STACK_SIZE];
+    uint top = 0u;
+
+    stack[top++] = rootIndex;
+
+    while (top > 0u) {
+        uint nodeIndex = stack[--top];
+        BVHNodeGPU node = nodes[nodeIndex];
+
+        if (!intersect_aabb(node.aabb, orig, dir, tMin, *outT))
+        {
+            continue;
+        }
+
+        if (nodeIndex >= leafStart) {
+            uint leafIndex = nodeIndex - leafStart;
+            uint triangleIndex = leafTriIndices[leafIndex];
+
+            uint3 f = loadFace(faces, triangleIndex);
+
+            float3 a = loadVertex(vertices, f.x);
+            float3 b = loadVertex(vertices, f.y);
+            float3 c = loadVertex(vertices, f.z);
+
+            float t, u, v;
+
+            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, *outT, false, &t, &u, &v))
+            {
+                *outT = t;
+                *outFaceId = (int)triangleIndex;
+                *outU = u;
+                *outV = v;
+            }
+        }
+        else {
+            if (top + 2u > LBVH_STACK_SIZE) {
+                rassert(false, 78345123);
+                return false;
+            }
+
+            stack[top++] = node.rightChildIndex;
+            stack[top++] = node.leftChildIndex;
+        }
+    }
+
+    return *outFaceId >= 0;
 }
+
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
 static inline bool any_hit_from(
@@ -47,11 +181,59 @@ static inline bool any_hit_from(
     uint                      nfaces,
     int                       ignore_face)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
+    if (nfaces == 0u)
+        return false;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    const uint rootIndex = 0u;
+    const uint leafStart = nfaces - 1u;
 
+    uint stack[LBVH_STACK_SIZE];
+    uint top = 0u;
+
+    stack[top++] = rootIndex;
+
+    const float tMin = 1e-4f;
+    const float tMax = FLT_MAX;
+
+    while (top > 0u) {
+        uint nodeIndex = stack[--top];
+
+        BVHNodeGPU node = nodes[nodeIndex];
+
+        if (!intersect_aabb(node.aabb, orig, dir, tMin, tMax)) {
+            continue;
+        }
+
+        if (nodeIndex >= leafStart) {
+
+            uint leafIndex = nodeIndex - leafStart;
+            uint triangleIndex = leafTriIndices[leafIndex];
+
+            if ((int)triangleIndex == ignore_face)
+                continue;
+
+            uint3 f = loadFace(faces, triangleIndex);
+
+            float3 a = loadVertex(vertices, f.x);
+            float3 b = loadVertex(vertices, f.y);
+            float3 c = loadVertex(vertices, f.z);
+
+            float t, u, v;
+
+            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, tMax, false, &t, &u, &v)) {
+                return true;
+            }
+        }
+        else {
+            if (top + 2u > LBVH_STACK_SIZE) {
+                rassert(false, 78345124);
+                return false;
+            }
+
+            stack[top++] = node.rightChildIndex;
+            stack[top++] = node.leftChildIndex;
+        }
+    }
     return false;
 }
 

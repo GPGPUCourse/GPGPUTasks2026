@@ -1,0 +1,15 @@
+﻿{
+  "configurations": [
+    {
+      "name": "x64-Debug",
+      "generator": "Ninja",
+      "configurationType": "Debug",
+      "inheritEnvironments": [ "msvc_x64_x64" ],
+      "buildRoot": "${projectDir}\\out\\build\\${name}",
+      "installRoot": "${projectDir}\\out\\install\\${name}",
+      "cmakeCommandArgs": "-DCMAKE_TOOLCHAIN_FILE=\"C:\\vcpkg\\scripts\\buildsystems\\vcpkg.cmake\" -DGLSLC_BIN=\"C:\\VulkanSDK\\1.4.357.0\\Bin\\glslc.exe\" -DSPIR_CLANG_BIN=\"C:\\Program Files\\LLVM\\bin\\clang.exe\" -DCMAKE_PREFIX_PATH=\"C:\\VulkanSDK\\1.4.357.0\" -DGPU_CUDA_SUPPORT=OFF",
+      "buildCommandArgs": "",
+      "ctestCommandArgs": ""
+    }
+  ]
+}

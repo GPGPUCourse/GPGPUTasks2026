@@ -229,9 +229,6 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на CPU LBVH
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-
                 if (context.type() == gpu::Context::TypeOpenCL) {
                     ocl_rt_with_lbvh.exec(
                         gpu::WorkSize(16, 16, width, height),
@@ -239,22 +236,7 @@ void run(int argc, char** argv)
                         lbvh_nodes_gpu.clmem(), leaf_faces_indices_gpu.clmem(),
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
                         camera_gpu.clmem(), nfaces);
-                } else if (context.type() == gpu::Context::TypeCUDA) {
-                    cuda::ray_tracing_render_using_lbvh(
-                        gpu::WorkSize(16, 16, width, height),
-                        vertices_gpu, faces_gpu,
-                        lbvh_nodes_gpu, leaf_faces_indices_gpu,
-                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu, nfaces);
-                } else if (context.type() == gpu::Context::TypeVulkan) {
-                    vk_rt_with_lbvh.exec(
-                        nfaces,
-                        gpu::WorkSize(16, 16, width, height),
-                        vertices_gpu, faces_gpu,
-                        lbvh_nodes_gpu, leaf_faces_indices_gpu,
-                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu);
-                } else {
+                }  else {
                     rassert(false, 654724541234123);
                 }
 
