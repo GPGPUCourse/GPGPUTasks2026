@@ -15,7 +15,44 @@ __global__ void matrix_multiply_via_local_memory(
                        unsigned int h,
                        unsigned int k)
 {
-    // TODO
+    const unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    const unsigned int tx = threadIdx.x;
+    const unsigned int ty = threadIdx.y;
+
+    if (x >= w || y >= h) {
+        return;
+    }
+
+    float acc = 0.0f;
+
+    // Rectangular support in release 1.0
+    const unsigned int p = GROUP_SIZE_X;
+    __shared__ float local_data_a[GROUP_SIZE_Y][GROUP_SIZE_X + 1];
+    __shared__ float local_data_b[GROUP_SIZE_Y][GROUP_SIZE_X + 1];
+
+    for (int i = 0; i < k; i += p) {
+        __syncthreads();
+
+        if (i + tx < k) {
+            local_data_a[ty][tx] = a[y * k + i + tx];
+        }
+
+        if (i + ty < k) {
+            local_data_b[ty][tx] = b[(i + ty) * w + x];
+        }
+
+        __syncthreads();
+
+        for (int j = 0; j < p; ++j) {
+            if (i + j < k) {
+                acc += local_data_a[ty][j] * local_data_b[j][tx];
+            }
+        }
+    }
+
+    c[y * w + x] = acc; 
 }
 
 namespace cuda {
