@@ -13,7 +13,6 @@
 #include "geometry_helpers.cu"
 #include "random_helpers.cu"
 
-// BVH traversal: closest hit along ray
 __device__ bool bvh_closest_hit(
     const float3& orig,
     const float3& dir,
@@ -23,21 +22,49 @@ __device__ bool bvh_closest_hit(
     const float* vertices,
     const unsigned int* faces,
     float tMin,
-    float& outT, // сюда нужно записать t рассчитанный в intersect_ray_triangle(..., t, u, v)
+    float& outT,
     int& outFaceId,
-    float& outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
-    float& outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
+    float& outU,
+    float& outV)
 {
-    const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
+    int stack[64];
+    int sp = 0;
+    stack[sp++] = 0;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    bool hit = false;
 
-    return false; // no intersections found
+    while (sp > 0) {
+        const int ni = stack[--sp];
+        const BVHNodeGPU& node = nodes[ni];
+
+        float tNear, tFar;
+        if (!intersect_ray_aabb(orig, dir, node.aabb, tMin, outT, tNear, tFar))
+            continue;
+
+        if (ni >= leafStart) {
+            const unsigned int faceId = leafTriIndices[ni - leafStart];
+            const uint3 f = loadFace(faces, faceId);
+            const float3 a = loadVertex(vertices, f.x);
+            const float3 b = loadVertex(vertices, f.y);
+            const float3 c = loadVertex(vertices, f.z);
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, outT, false, t, u, v)) {
+                outT = t;
+                outFaceId = (int)faceId;
+                outU = u;
+                outV = v;
+                hit = true;
+            }
+        } else {
+            stack[sp++] = (int)node.leftChildIndex;
+            stack[sp++] = (int)node.rightChildIndex;
+        }
+    }
+
+    return hit;
 }
 
-// BVH traversal: any hit (for AO rays)
-// ignore_face: do not count intersections with this triangle index
 __device__ bool any_hit_from(
     const float3& orig,
     const float3& dir,
@@ -48,12 +75,40 @@ __device__ bool any_hit_from(
     unsigned int nfaces,
     int ignore_face)
 {
-    const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
+    const float tMin = 1e-4f;
+    const float tMax = FLT_MAX;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    int stack[64];
+    int sp = 0;
+    stack[sp++] = 0;
 
-    return false; // no intersections found
+    while (sp > 0) {
+        const int ni = stack[--sp];
+        const BVHNodeGPU& node = nodes[ni];
+
+        float tNear, tFar;
+        if (!intersect_ray_aabb(orig, dir, node.aabb, tMin, tMax, tNear, tFar))
+            continue;
+
+        if (ni >= leafStart) {
+            const unsigned int faceId = leafTriIndices[ni - leafStart];
+            if ((int)faceId == ignore_face)
+                continue;
+            const uint3 f = loadFace(faces, faceId);
+            const float3 a = loadVertex(vertices, f.x);
+            const float3 b = loadVertex(vertices, f.y);
+            const float3 c = loadVertex(vertices, f.z);
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, tMax, false, t, u, v))
+                return true;
+        } else {
+            stack[sp++] = (int)node.leftChildIndex;
+            stack[sp++] = (int)node.rightChildIndex;
+        }
+    }
+
+    return false;
 }
 
 // + helper: build tangent basis for a given normal
