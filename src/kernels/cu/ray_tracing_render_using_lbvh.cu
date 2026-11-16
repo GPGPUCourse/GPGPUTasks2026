@@ -16,19 +16,33 @@
 #include <thrust/execution_policy.h>
 #include <thrust/sort.h>
 
-static const int kFarStack = 64;
+static const int kStack = 64;
 
-__device__ bool walk_lbvh(
+__device__ __forceinline__ float safe_inverse(float d)
+{
+    return 1.0f / (fabsf(d) < 1e-8f ? copysignf(1e-8f, d) : d);
+}
+
+__device__ __forceinline__ bool hit_box(const AABBGPU& box, const float3& o, const float3& inv, float tMin, float tMax)
+{
+    const float x0 = (box.min_x - o.x) * inv.x, x1 = (box.max_x - o.x) * inv.x;
+    const float y0 = (box.min_y - o.y) * inv.y, y1 = (box.max_y - o.y) * inv.y;
+    const float z0 = (box.min_z - o.z) * inv.z, z1 = (box.max_z - o.z) * inv.z;
+    const float tNear = fmaxf(fmaxf(fminf(x0, x1), fminf(y0, y1)), fmaxf(fminf(z0, z1), tMin));
+    const float tFar = fminf(fminf(fmaxf(x0, x1), fmaxf(y0, y1)), fminf(fmaxf(z0, z1), tMax));
+    return tNear <= tFar;
+}
+
+template <bool kAnyHit>
+__device__ __forceinline__ bool walk_lbvh(
     const float3& orig,
     const float3& dir,
-    const BVHNodeGPU* nodes,
-    const unsigned int* leafTriIndices,
+    const BVHNodeGPU* __restrict__ nodes,
+    const unsigned int* __restrict__ leafTriIndices,
     unsigned int nfaces,
-    const float* vertices,
-    const unsigned int* faces,
+    const float* __restrict__ vertices,
+    const unsigned int* __restrict__ faces,
     float tMin,
-    float tMax,
-    bool anyHit,
     int ignoreFace,
     float& outT,
     int& outFace,
@@ -39,61 +53,43 @@ __device__ bool walk_lbvh(
         return false;
 
     const int leafStart = (int)nfaces - 1;
-    int farChild[kFarStack];
+    const float3 inv = make_float3(safe_inverse(dir.x), safe_inverse(dir.y), safe_inverse(dir.z));
+    int stack[kStack];
     int sp = 0;
-    int idx = 0;
-    float bestT = tMax;
+    stack[sp++] = 0;
+    float bestT = FLT_MAX;
     bool found = false;
 
-    for (;;) {
-        bool down = true;
-        while (down) {
-            down = false;
-            const BVHNodeGPU node = nodes[idx];
-            float tNear, tFar;
-            if (!intersect_ray_aabb(orig, dir, node.aabb, tMin, bestT, tNear, tFar))
-                break;
+    while (sp > 0) {
+        const int idx = stack[--sp];
+        const BVHNodeGPU& node = nodes[idx];
+        if (!hit_box(node.aabb, orig, inv, tMin, bestT))
+            continue;
 
-            if (idx >= leafStart) {
-                const unsigned int fi = leafTriIndices[idx - leafStart];
-                if (!(anyHit && (int)fi == ignoreFace)) {
-                    const uint3 f = loadFace(faces, fi);
-                    const float3 a = loadVertex(vertices, f.x);
-                    const float3 b = loadVertex(vertices, f.y);
-                    const float3 c = loadVertex(vertices, f.z);
-                    float t, u, v;
-                    if (intersect_ray_triangle(orig, dir, a, b, c, tMin, bestT, /*backface*/ false, t, u, v)) {
-                        if (anyHit)
-                            return true;
-                        bestT = t;
-                        outT = t;
-                        outU = u;
-                        outV = v;
-                        outFace = (int)fi;
-                        found = true;
-                    }
-                }
-                break;
-            }
-
-            const int left = (int)node.leftChildIndex;
-            const int right = (int)node.rightChildIndex;
-            float leftNear, leftFar, rightNear, rightFar;
-            const bool hitLeft = intersect_ray_aabb(orig, dir, nodes[left].aabb, tMin, bestT, leftNear, leftFar);
-            const bool hitRight = intersect_ray_aabb(orig, dir, nodes[right].aabb, tMin, bestT, rightNear, rightFar);
-            if (hitLeft && hitRight) {
-                const bool leftFirst = leftNear <= rightNear;
-                farChild[sp++] = leftFirst ? right : left;
-                idx = leftFirst ? left : right;
-                down = true;
-            } else if (hitLeft || hitRight) {
-                idx = hitLeft ? left : right;
-                down = true;
-            }
+        if (idx < leafStart) {
+            stack[sp++] = (int)node.leftChildIndex;
+            stack[sp++] = (int)node.rightChildIndex;
+            continue;
         }
-        if (sp == 0)
-            break;
-        idx = farChild[--sp];
+
+        const unsigned int fi = leafTriIndices[idx - leafStart];
+        if (kAnyHit && (int)fi == ignoreFace)
+            continue;
+        const uint3 f = loadFace(faces, fi);
+        const float3 a = loadVertex(vertices, f.x);
+        const float3 b = loadVertex(vertices, f.y);
+        const float3 c = loadVertex(vertices, f.z);
+        float t, u, v;
+        if (intersect_ray_triangle(orig, dir, a, b, c, tMin, bestT, /*backface*/ false, t, u, v)) {
+            if (kAnyHit)
+                return true;
+            bestT = t;
+            outT = t;
+            outU = u;
+            outV = v;
+            outFace = (int)fi;
+            found = true;
+        }
     }
     return found;
 }
@@ -113,8 +109,8 @@ __device__ bool bvh_closest_hit(
     float& outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
     float& outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
-    return walk_lbvh(orig, dir, nodes, leafTriIndices, nfaces, vertices, faces,
-        tMin, FLT_MAX, false, -1, outT, outFaceId, outU, outV);
+    return walk_lbvh<false>(orig, dir, nodes, leafTriIndices, nfaces, vertices, faces,
+        tMin, -1, outT, outFaceId, outU, outV);
 }
 
 // BVH traversal: any hit (for AO rays)
@@ -131,8 +127,8 @@ __device__ bool any_hit_from(
 {
     float t, u, v;
     int face = -1;
-    return walk_lbvh(orig, dir, nodes, leafTriIndices, nfaces, vertices, faces,
-        1e-4f, FLT_MAX, true, ignore_face, t, face, u, v);
+    return walk_lbvh<true>(orig, dir, nodes, leafTriIndices, nfaces, vertices, faces,
+        1e-4f, ignore_face, t, face, u, v);
 }
 
 // + helper: build tangent basis for a given normal
