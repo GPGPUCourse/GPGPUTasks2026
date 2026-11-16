@@ -1,11 +1,11 @@
 #include <libbase/stats.h>
 #include <libutils/misc.h>
 
-#include <libbase/timer.h>
 #include <libbase/fast_random.h>
-#include <libimages/debug_io.h>
+#include <libbase/timer.h>
 #include <libgpu/vulkan/engine.h>
 #include <libgpu/vulkan/tests/test_utils.h>
+#include <libimages/debug_io.h>
 
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
@@ -19,11 +19,12 @@
 #include <fstream>
 
 // Считает сколько непустых пикселей
-template<typename T>
-size_t countNonEmpty(const TypedImage<T> &image, T empty_value) {
+template <typename T>
+size_t countNonEmpty(const TypedImage<T>& image, T empty_value)
+{
     rassert(image.channels() == 1, 4523445132412, image.channels());
     size_t count = 0;
-    #pragma omp parallel for reduction(+:count)
+#pragma omp parallel for reduction(+ : count)
     for (ptrdiff_t j = 0; j < image.height(); ++j) {
         for (ptrdiff_t i = 0; i < image.width(); ++i) {
             if (image.ptr(j)[i] != empty_value) {
@@ -35,13 +36,14 @@ size_t countNonEmpty(const TypedImage<T> &image, T empty_value) {
 }
 
 // Считает сколько отличающихся пикселей (отличающихся > threshold)
-template<typename T>
-size_t countDiffs(const TypedImage<T> &a, const TypedImage<T> &b, T threshold) {
+template <typename T>
+size_t countDiffs(const TypedImage<T>& a, const TypedImage<T>& b, T threshold)
+{
     rassert(a.channels() == 1, 5634532413241, a.channels());
     rassert(a.channels() == b.channels(), 562435231453243);
     rassert(a.width() == b.width() && a.height() == b.height(), 562435231453243);
     size_t count = 0;
-    #pragma omp parallel for reduction(+:count)
+#pragma omp parallel for reduction(+ : count)
     for (ptrdiff_t j = 0; j < a.height(); ++j) {
         for (ptrdiff_t i = 0; i < a.width(); ++i) {
             if (std::abs(a.ptr(j)[i] - b.ptr(j)[i]) > threshold) {
@@ -67,7 +69,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -93,7 +95,7 @@ void run(int argc, char** argv)
     std::vector<double> gpu_lbvh_perfs_mtris_per_sec;
 
     std::cout << "Using " << AO_SAMPLES << " ray samples for ambient occlusion" << std::endl;
-    for (std::string scene_path: scenes) {
+    for (std::string scene_path : scenes) {
         std::cout << "____________________________________________________________________________________________" << std::endl;
         timer total_t;
         if (scene_path == gnome_scene_path) {
@@ -137,8 +139,8 @@ void run(int argc, char** argv)
 
         // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
         timer pcie_writing_t;
-        vertices_gpu.writeN((const float*) scene.vertices.data(), 3 * nvertices);
-        faces_gpu.writeN((const unsigned int*) scene.faces.data(), 3 * nfaces);
+        vertices_gpu.writeN((const float*)scene.vertices.data(), 3 * nvertices);
+        faces_gpu.writeN((const unsigned int*)scene.faces.data(), 3 * nfaces);
         camera_gpu.writeN(&camera, 1);
         double pcie_writing_time = pcie_writing_t.elapsed();
         double pcie_reading_time = 0.0;
@@ -228,9 +230,6 @@ void run(int argc, char** argv)
             std::vector<double> rt_times_with_cpu_lbvh;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
-
-                // TODO оттрасируйте лучи на GPU используя построенный на CPU LBVH
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
 
                 if (context.type() == gpu::Context::TypeOpenCL) {
                     ocl_rt_with_lbvh.exec(
