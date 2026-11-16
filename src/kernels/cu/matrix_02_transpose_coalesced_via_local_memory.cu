@@ -3,6 +3,7 @@
 #include <libgpu/shared_device_buffer.h>
 
 #include <libgpu/cuda/cu/common.cu>
+#include <utility>
 
 #include "helpers/rassert.cu"
 #include "../defines.h"
@@ -13,7 +14,26 @@ __global__ void matrix_transpose_coalesced_via_local_memory(
                              unsigned int w,
                              unsigned int h)
 {
-    // TODO
+    const unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
+
+    const unsigned int local_x = threadIdx.x;
+    const unsigned int local_y = threadIdx.y;
+
+    __shared__ float local_data[GROUP_SIZE_Y][GROUP_SIZE_X + 1];
+
+    if (x < w && y < h) {
+        local_data[local_y][local_x] = matrix[y * w + x];
+    }
+
+    __syncthreads();
+
+    const unsigned int new_x = blockIdx.y * blockDim.y + threadIdx.x;
+    const unsigned int new_y = blockIdx.x * blockDim.x + threadIdx.y;
+
+    if (new_x < h && new_y < w) {
+        transposed_matrix[new_y * h + new_x] = local_data[local_x][local_y];
+    }
 }
 
 namespace cuda {
