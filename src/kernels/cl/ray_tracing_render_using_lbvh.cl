@@ -13,8 +13,8 @@
 #include "geometry_helpers.cl"
 #include "random_helpers.cl"
 
-// BVH traversal: closest hit along ray
-static inline bool bvh_closest_hit(
+// A nonnegative ignoreFace selects any-hit mode for an AO ray.
+static inline int trace_bvh(
     const float3              orig,
     const float3              dir,
     __global const BVHNodeGPU* nodes,
@@ -23,17 +23,56 @@ static inline bool bvh_closest_hit(
     __global const float*     vertices,
     __global const uint*      faces,
     float                     tMin,
-    __private float*          outT, // сюда нужно записать t рассчитанный в intersect_ray_triangle(..., t, u, v)
-    __private int*            outFaceId,
-    __private float*          outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
-    __private float*          outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
+    int                       ignoreFace,
+    __private float*          outT)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
+    if (nfaces == 0)
+        return -1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    const uint leafStart = nfaces - 1;
+    // Each split consumes at least one bit of the 30-bit Morton code
+    // or the 32-bit tie breaker. Keep one sibling per level and the current node.
+    uint stack[64];
+    uint pending = 1;
+    stack[0] = 0;
+    float bestT = FLT_MAX;
+    int bestFace = -1;
 
-    return false;
+    while (pending != 0) {
+        const uint nodeIndex = stack[--pending];
+        const BVHNodeGPU node = nodes[nodeIndex];
+        float nearT, farT;
+        if (!intersect_ray_aabb(orig, dir, node.aabb, tMin, bestT, &nearT, &farT))
+            continue;
+
+        if (nodeIndex < leafStart) {
+            stack[pending++] = node.rightChildIndex;
+            stack[pending++] = node.leftChildIndex;
+            continue;
+        }
+
+        const int faceId = (int)leafTriIndices[nodeIndex - leafStart];
+        if (faceId == ignoreFace)
+            continue;
+
+        const uint3 f = loadFace(faces, (uint)faceId);
+        float t, u, v;
+        if (intersect_ray_triangle(orig, dir,
+                                   loadVertex(vertices, f.x),
+                                   loadVertex(vertices, f.y),
+                                   loadVertex(vertices, f.z),
+                                   tMin, bestT, false, &t, &u, &v)) {
+            if (ignoreFace >= 0)
+                return faceId;
+            // Increasing face IDs win exact distance ties, as in brute force.
+            if (t < bestT || (t == bestT && faceId > bestFace)) {
+                bestT = t;
+                bestFace = faceId;
+            }
+        }
+    }
+    *outT = bestT;
+    return bestFace;
 }
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
@@ -47,12 +86,9 @@ static inline bool any_hit_from(
     uint                      nfaces,
     int                       ignore_face)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
-
-    // TODO implement BVH travering (with stack, don't use recursion)
-
-    return false;
+    float t;
+    return trace_bvh(orig, dir, nodes, leafTriIndices, nfaces, vertices, faces,
+                     1e-4f, ignore_face, &t) >= 0;
 }
 
 // Helper: build tangent basis for a given normal
@@ -95,13 +131,10 @@ __kernel void ray_tracing_render_using_lbvh(
                      &ray_direction);
 
     float tMin      = 1e-6f;
-    float tBest     = FLT_MAX;
-    float uBest     = 0.0f;
-    float vBest     = 0.0f;
-    int   faceIdBest = -1;
+    float tBest = FLT_MAX;
 
     // Use BVH traversal instead of brute-force loop
-    bool hit = bvh_closest_hit(
+    const int faceIdBest = trace_bvh(
         ray_origin,
         ray_direction,
         bvhNodes,
@@ -110,10 +143,8 @@ __kernel void ray_tracing_render_using_lbvh(
         vertices,
         faces,
         tMin,
-        &tBest,
-        &faceIdBest,
-        &uBest,
-        &vBest);
+        -1,
+        &tBest);
 
     const uint idx = j * camera->K.width + i;
     framebuffer_face_id[idx] = faceIdBest;
