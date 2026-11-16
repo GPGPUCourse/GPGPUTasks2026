@@ -28,12 +28,52 @@ static inline bool bvh_closest_hit(
     __private float*          outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
     __private float*          outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
-
     // TODO implement BVH travering (with stack, don't use recursion)
 
-    return false;
+    const int leafStart = nfaces - 1;
+    int stack[64];
+    int top = 0;
+    stack[top++] = 0;
+    float bestT = *outT;
+    int bestFace = -1;
+    float bestU = 0.0f;
+    float bestV = 0.0f;
+    while (top > 0) {
+        int nodeId = stack[--top];
+        AABBGPU box = nodes[nodeId].aabb;
+        float tNear;
+        float tFar;
+        if (!intersect_ray_aabb(orig, dir, box, tMin, bestT, &tNear, &tFar)) {
+            continue;
+        }
+        if (nodeId >= leafStart) {
+            int leafId = nodeId - leafStart;
+            uint faceId = leafTriIndices[leafId];
+            uint3 f = loadFace(faces, faceId);
+            float3 a = loadVertex(vertices, f.x);
+            float3 b = loadVertex(vertices, f.y);
+            float3 c = loadVertex(vertices, f.z);
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, bestT, false, &t, &u, &v)) {
+                bestT = t;
+                bestU = u;
+                bestV = v;
+                bestFace = (int)faceId;
+            }
+        }
+        else {
+            int left = nodes[nodeId].leftChildIndex;
+            int right = nodes[nodeId].rightChildIndex;
+            stack[top++] = right;
+            stack[top++] = left;
+        }
+    }
+    *outT = bestT;
+    *outFaceId = bestFace;
+    *outU = bestU;
+    *outV = bestV;
+
+    return bestFace >= 0;
 }
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
@@ -47,11 +87,38 @@ static inline bool any_hit_from(
     uint                      nfaces,
     int                       ignore_face)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
-
     // TODO implement BVH travering (with stack, don't use recursion)
-
+    const int leafStart = nfaces - 1;
+    int stack[64];
+    int top = 0;
+    stack[top++] = 0;
+    while (top > 0) {
+        int nodeId = stack[--top];
+        AABBGPU box = nodes[nodeId].aabb;
+        float tNear;
+        float tFar;
+        if (!intersect_ray_aabb_any(orig, dir, box, &tNear, &tFar)) {
+            continue;
+        }
+        if (nodeId >= leafStart) {
+            int leafId = nodeId - leafStart;
+            uint faceId = leafTriIndices[leafId];
+            if ((int)faceId == ignore_face) continue;
+            uint3 f = loadFace(faces, faceId);
+            float3 a = loadVertex(vertices, f.x);
+            float3 b = loadVertex(vertices, f.y);
+            float3 c = loadVertex(vertices, f.z);
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, a, b, c, 1e-6f, FLT_MAX, false, &t, &u, &v)) {
+                return true;
+            }
+        } else {
+            int left = nodes[nodeId].leftChildIndex;
+            int right = nodes[nodeId].rightChildIndex;
+            stack[top++] = right;
+            stack[top++] = left;
+        }
+    }
     return false;
 }
 
