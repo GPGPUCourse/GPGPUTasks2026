@@ -13,7 +13,79 @@
 #include "geometry_helpers.cl"
 #include "random_helpers.cl"
 
-// BVH traversal: closest hit along ray
+// Each level of the binary radix tree consumes at least one bit
+// of the Morton code or the index used to break equal-code ties.
+#define LBVH_STACK_CAPACITY 64
+
+static inline bool trace_lbvh(
+    const float3              orig,
+    const float3              dir,
+    __global const BVHNodeGPU* nodes,
+    __global const uint*      leafTriIndices,
+    uint                      nfaces,
+    __global const float*     vertices,
+    __global const uint*      faces,
+    float                     tMin,
+    bool                      anyHit,
+    int                       ignoreFace,
+    __private float*          outT,
+    __private int*            outFaceId,
+    __private float*          outU,
+    __private float*          outV)
+{
+    if (nfaces == 0u)
+        return false;
+
+    const uint leafStart = nfaces - 1u;
+    uint stack[LBVH_STACK_CAPACITY];
+    int stackSize = 0;
+    stack[stackSize++] = 0u;
+
+    float tBest = FLT_MAX;
+    int bestFace = -1;
+    while (stackSize > 0) {
+        const uint nodeIndex = stack[--stackSize];
+        const BVHNodeGPU node = nodes[nodeIndex];
+
+        float tNear, tFar;
+        if (!intersect_ray_aabb(orig, dir, node.aabb, tMin, tBest, &tNear, &tFar))
+            continue;
+
+        if (nodeIndex < leafStart) {
+            stack[stackSize++] = node.rightChildIndex;
+            stack[stackSize++] = node.leftChildIndex;
+            continue;
+        }
+
+        const int faceId = (int)leafTriIndices[nodeIndex - leafStart];
+        if (faceId == ignoreFace)
+            continue;
+
+        const uint3 face = loadFace(faces, (uint)faceId);
+        const float3 a = loadVertex(vertices, face.x);
+        const float3 b = loadVertex(vertices, face.y);
+        const float3 c = loadVertex(vertices, face.z);
+        float t, u, v;
+        if (!intersect_ray_triangle(orig, dir, a, b, c, tMin, tBest, false, &t, &u, &v))
+            continue;
+
+        if (anyHit)
+            return true;
+
+        // Brute force visits faces in ascending ID order and accepts equal t.
+        if (t < tBest || faceId > bestFace) {
+            tBest = t;
+            bestFace = faceId;
+            *outT = t;
+            *outFaceId = faceId;
+            *outU = u;
+            *outV = v;
+        }
+    }
+
+    return bestFace >= 0;
+}
+
 static inline bool bvh_closest_hit(
     const float3              orig,
     const float3              dir,
@@ -23,20 +95,15 @@ static inline bool bvh_closest_hit(
     __global const float*     vertices,
     __global const uint*      faces,
     float                     tMin,
-    __private float*          outT, // сюда нужно записать t рассчитанный в intersect_ray_triangle(..., t, u, v)
+    __private float*          outT,
     __private int*            outFaceId,
-    __private float*          outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
-    __private float*          outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
+    __private float*          outU,
+    __private float*          outV)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
-
-    // TODO implement BVH travering (with stack, don't use recursion)
-
-    return false;
+    return trace_lbvh(orig, dir, nodes, leafTriIndices, nfaces, vertices, faces,
+                      tMin, false, -1, outT, outFaceId, outU, outV);
 }
 
-// Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
 static inline bool any_hit_from(
     const float3              orig,
     const float3              dir,
@@ -47,12 +114,8 @@ static inline bool any_hit_from(
     uint                      nfaces,
     int                       ignore_face)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
-
-    // TODO implement BVH travering (with stack, don't use recursion)
-
-    return false;
+    return trace_lbvh(orig, dir, nodes, leafTriIndices, nfaces, vertices, faces,
+                      1e-4f, true, ignore_face, 0, 0, 0, 0);
 }
 
 // Helper: build tangent basis for a given normal
