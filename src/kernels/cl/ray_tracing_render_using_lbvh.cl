@@ -13,6 +13,16 @@
 #include "geometry_helpers.cl"
 #include "random_helpers.cl"
 
+#define MAX_STACK_SIZE 60 // 30 для миллиарда треугольников, умножить на 2
+
+static inline bool check_overlap(
+    const float3              orig,
+    const float3              dir,
+                      AABBGPU aabb
+) {
+    // TODO
+}
+
 // BVH traversal: closest hit along ray
 static inline bool bvh_closest_hit( // Находит пересечение луча с первым к нему треугольником из всех треугольников BVH
     const float3              orig, // начало луча
@@ -31,7 +41,36 @@ static inline bool bvh_closest_hit( // Находит пересечение л�
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    __global const BVHNodeGPU* stack[MAX_STACK_SIZE];
+    stack[0] = NULL;
+    uint stack_size = 1;
+    __global const BVHNodeGPU* node = &nodes[rootIndex];
+    do {
+        __global const BVHNodeGPU* childL = &nodes[node->leftChildIndex];
+        __global const BVHNodeGPU* childR = &nodes[node->rightChildIndex];
+        bool overlapL = check_overlap(orig, dir, childL->aabb);
+        bool overlapR = check_overlap(orig, dir, childR->aabb);
+
+        // Проверяем, лист ли мы
+        bool isLeaf = nodeIndex >= leafStart;
+        if (amILeaf) {
+            if (overlapL) {
+                // нашли треугольник, TODO проверить ближайшесть пересечения к orig
+            }
+            if (overlapR) {
+                // нашли треугольник, TODO проверить ближайшесть пересечения к orig
+            }
+        }
+
+        if (!overlapL && !overlapR) {
+            node = stack[--stack_size];
+        } else {
+            node = overlapL ? childL : childR;
+            if (overlapL && overlapR) {
+                stack[stack_size++] = childR;
+            }
+        }
+    } while (node != NULL);
 
     return false;
 }
