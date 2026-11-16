@@ -15,14 +15,6 @@
 
 #define MAX_STACK_SIZE 60 // 30 для миллиарда треугольников, умножить на 2
 
-static inline bool check_overlap(
-    const float3              orig,
-    const float3              dir,
-                      AABBGPU aabb
-) {
-    // TODO
-}
-
 // BVH traversal: closest hit along ray
 static inline bool bvh_closest_hit( // Находит пересечение луча с первым к нему треугольником из всех треугольников BVH
     const float3              orig, // начало луча
@@ -45,11 +37,15 @@ static inline bool bvh_closest_hit( // Находит пересечение л�
     stack[0] = NULL;
     uint stack_size = 1;
     __global const BVHNodeGPU* node = &nodes[rootIndex];
+    bool found = false;
     do {
+        uint nodeId = (uint)(node - nodes);
+
         __global const BVHNodeGPU* childL = &nodes[node->leftChildIndex];
         __global const BVHNodeGPU* childR = &nodes[node->rightChildIndex];
-        bool overlapL = check_overlap(orig, dir, childL->aabb);
-        bool overlapR = check_overlap(orig, dir, childR->aabb);
+        float tNearL, tFarL, tNearR, tFarR;
+        bool overlapL = intersect_ray_aabb(orig, dir, childL->aabb, tMin, *outT, &tNearL, &tFarL);
+        bool overlapR = intersect_ray_aabb(orig, dir, childR->aabb, tMin, *outT, &tNearR, &tFarR);
 
         // Проверяем, лист ли мы
         bool isLeaf = nodeIndex >= leafStart;
