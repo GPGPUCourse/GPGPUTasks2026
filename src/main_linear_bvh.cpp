@@ -14,6 +14,7 @@
 #include "io/scene_reader.h"
 
 #include "cpu_helpers/build_bvh_cpu.h"
+#include "libbase/string_utils.h"
 
 #include <filesystem>
 #include <fstream>
@@ -122,6 +123,7 @@ void run(int argc, char** argv)
         // Аллоцируем фрейм-буферы (то есть картинки в которые сохранится результат рендеринга)
         gpu::gpu_mem_32i framebuffer_face_id_gpu(width * height);
         gpu::gpu_mem_32f framebuffer_ambient_occlusion_gpu(width * height);
+        gpu::gpu_mem_32f framebuffer_denoised_gpu(width * height);
 
         // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
         timer pcie_writing_t;
@@ -130,6 +132,7 @@ void run(int argc, char** argv)
         camera_gpu.writeN(&camera, 1);
         double pcie_writing_time = pcie_writing_t.elapsed();
         double pcie_reading_time = 0.0;
+        double gpu_denoising_time;
 
         // Перед каждой отрисовкой мы будем зачищать результирующие framebuffers этими значениями
         const int NO_FACE_ID = -1;
@@ -139,7 +142,7 @@ void run(int argc, char** argv)
         double brute_force_total_time = 0.0;
         image32i brute_force_framebuffer_face_ids;
         image32f brute_force_framebuffer_ambient_occlusion;
-        const bool has_brute_force = (nfaces < 1000);
+        const bool has_brute_force = (nfaces < 100);
         if (has_brute_force) {
             std::vector<double> brute_force_times;
             for (int iter = 0; iter < niters; ++iter) {
@@ -226,16 +229,31 @@ void run(int argc, char** argv)
             std::cout << "GPU with CPU LBVH ray tracing performance: " << mrays_per_sec << " MRays/s" << std::endl;
             gpu_rt_perf_mrays_per_sec.push_back(mrays_per_sec);
 
+            timer gpu_denoising_t;
+            if (context.type() == gpu::Context::TypeCUDA) {
+                cuda::denoise(
+                    gpu::WorkSize(16, 16, width, height),
+                    framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu, framebuffer_denoised_gpu,
+                    camera_gpu);
+            } else {
+                rassert(false, 654724541234123);
+            }
+            gpu_denoising_time += gpu_denoising_t.elapsed();
+
             timer pcie_reading_t;
             image32i cpu_lbvh_framebuffer_face_ids(width, height, 1);
             image32f cpu_lbvh_framebuffer_ambient_occlusion(width, height, 1);
+            image32f cpu_lbvh_framebuffer_denoised(width, height, 1);
             framebuffer_face_id_gpu.readN(cpu_lbvh_framebuffer_face_ids.ptr(), width * height);
             framebuffer_ambient_occlusion_gpu.readN(cpu_lbvh_framebuffer_ambient_occlusion.ptr(), width * height);
+            framebuffer_denoised_gpu.readN(cpu_lbvh_framebuffer_denoised.ptr(), width * height);
             pcie_reading_time += pcie_reading_t.elapsed();
 
             timer cpu_lbvh_images_saving_t;
             debug_io::dumpImage(results_dir + "/framebuffer_face_ids_with_cpu_lbvh.bmp", debug_io::randomMapping(cpu_lbvh_framebuffer_face_ids, NO_FACE_ID));
             debug_io::dumpImage(results_dir + "/framebuffer_ambient_occlusion_with_cpu_lbvh.bmp", debug_io::depthMapping(cpu_lbvh_framebuffer_ambient_occlusion));
+            debug_io::dumpImage(results_dir + "/framebuffer_ambient_occlusion_with_cpu_lbvh_denoised.bmp", debug_io::depthMapping(cpu_lbvh_framebuffer_denoised));
+
             images_saving_time += cpu_lbvh_images_saving_t.elapsed();
             if (has_brute_force) {
                 unsigned int count_ao_errors = countDiffs(brute_force_framebuffer_ambient_occlusion, cpu_lbvh_framebuffer_ambient_occlusion, 0.01f);
@@ -313,6 +331,7 @@ void run(int argc, char** argv)
         }
         std::cout << to_percent(cpu_lbvh_time, total_time) << " CPU LBVH + ";
         std::cout << to_percent(rt_times_with_cpu_lbvh_sum, total_time) << " GPU with CPU LBVH + ";
+        std::cout << to_percent(gpu_denoising_time, total_time) << " GPU denoising + ";
         std::cout << to_percent(gpu_lbvh_time_sum, total_time) << " GPU LBVH + ";
         std::cout << to_percent(rt_times_with_gpu_lbvh_sum, total_time) << " GPU with GPU LBVH + ";
         std::cout << to_percent(images_saving_time, total_time) << " images IO + ";
