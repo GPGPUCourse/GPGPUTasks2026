@@ -1,3 +1,6 @@
+#ifdef __clang__
+#include <__clang_cuda_runtime_wrapper.h>
+#endif
 #include <libgpu/context.h>
 #include <libgpu/work_size.h>
 #include <libgpu/shared_device_buffer.h>
@@ -29,10 +32,66 @@ __device__ bool bvh_closest_hit(
     float& outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
     const int rootIndex = 0;
+    const int stack_depth = 34;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    int dfs_stack[stack_depth];
+    int stack_head = 0;
 
+    int curr_node_num = rootIndex;
+
+    int min_face_num = -1;
+    float min_t = FLT_MAX;
+    float min_u;
+    float min_v;
+
+    while(stack_head > 0  || curr_node_num >= 0){
+        if(curr_node_num < 0){
+            stack_head--;
+            curr_node_num = dfs_stack[stack_head];
+            dfs_stack[stack_head] = -1;
+        }
+        else if(curr_node_num < leafStart){
+            BVHNodeGPU node = nodes[curr_node_num];
+            float t_near, t_far;
+            if(intersect_ray_aabb_any(orig, dir, node.aabb, t_near, t_far)){
+                curr_node_num = node.leftChildIndex;
+                curassert(stack_head < stack_depth, 2103893874);
+                dfs_stack[stack_head] = node.rightChildIndex;
+                stack_head++;
+            }
+            else{
+                curr_node_num = -1;
+            }
+        }
+        else{
+            float curr_t, curr_u, curr_v;
+            int curr_face_num = leafTriIndices[curr_node_num - leafStart];
+            uint3 face = loadFace(faces, curr_face_num);
+            float3 v0, v1, v2;
+            v0 = loadVertex(vertices, face.x);
+            v1 = loadVertex(vertices, face.y);
+            v2 = loadVertex(vertices, face.z);
+            if(intersect_ray_triangle_any(orig, dir, v0, v1, v2, false, curr_t, curr_u, curr_v)){
+                if(curr_t < min_t){
+                    min_face_num = curr_face_num;
+                    min_t = curr_t;
+                    min_u = curr_u;
+                    min_v = curr_v;
+                }
+            }
+
+            curr_node_num = -1;
+        }
+    }
+
+    if(min_face_num >= 0){
+        outT = min_t;
+        outU = min_u;
+        outV = min_v;
+        outFaceId = min_face_num;
+        return true;
+    }
     return false; // no intersections found
 }
 
@@ -49,10 +108,52 @@ __device__ bool any_hit_from(
     int ignore_face)
 {
     const int rootIndex = 0;
+    const int stack_depth = 34;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    int dfs_stack[stack_depth];
+    int stack_head = 0;
 
+    int curr_node_num = rootIndex;
+
+    while(stack_head > 0  || curr_node_num >= 0){
+        if(curr_node_num < 0){
+            stack_head--;
+            curr_node_num = dfs_stack[stack_head];
+            dfs_stack[stack_head] = -1;
+        }
+        else if(curr_node_num < leafStart){
+            BVHNodeGPU node = nodes[curr_node_num];
+            float t_near, t_far;
+            if(intersect_ray_aabb_any(orig, dir, node.aabb, t_near, t_far)){
+                curr_node_num = node.leftChildIndex;
+                curassert(stack_head < stack_depth, 2103893874);
+                dfs_stack[stack_head] = node.rightChildIndex;
+                stack_head++;
+            }
+            else{
+                curr_node_num = -1;
+            }
+        }
+        else{
+            float curr_t, curr_u, curr_v;
+            int curr_face_num = leafTriIndices[curr_node_num - leafStart];
+            if(curr_face_num == ignore_face){
+                curr_node_num = -1;
+                continue;
+            }
+            uint3 face = loadFace(faces, curr_face_num);
+            float3 v0, v1, v2;
+            v0 = loadVertex(vertices, face.x);
+            v1 = loadVertex(vertices, face.y);
+            v2 = loadVertex(vertices, face.z);
+            if(intersect_ray_triangle_any(orig, dir, v0, v1, v2, false, curr_t, curr_u, curr_v)){
+                return true;
+            }
+
+            curr_node_num = -1;
+        }
+    }
     return false; // no intersections found
 }
 

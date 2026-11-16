@@ -21,6 +21,12 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     gpu::gpu_mem_32f &framebuffer_ambient_occlusion,
     gpu::shared_device_buffer_typed<CameraViewGPU> camera,
     unsigned int nfaces);
+void denoise(
+                               const gpu::WorkSize &workSize,
+                            const gpu::gpu_mem_32i &framebuffer_face_id,
+                            const gpu::gpu_mem_32f &framebuffer_ambient_occlusion,
+                                  gpu::gpu_mem_32f &framebuffer_denoised,
+    gpu::shared_device_buffer_typed<CameraViewGPU> &camera);
 }
 
 namespace ocl {
