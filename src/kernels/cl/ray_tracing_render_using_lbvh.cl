@@ -14,7 +14,7 @@
 #include "random_helpers.cl"
 
 // A nonnegative ignoreFace selects any-hit mode for an AO ray.
-static inline bool trace_bvh(
+static inline int trace_bvh(
     const float3              orig,
     const float3              dir,
     __global const BVHNodeGPU* nodes,
@@ -24,80 +24,55 @@ static inline bool trace_bvh(
     __global const uint*      faces,
     float                     tMin,
     int                       ignoreFace,
-    __private float*          outT,
-    __private int*            outFaceId,
-    __private float*          outU,
-    __private float*          outV)
+    __private float*          outT)
 {
     if (nfaces == 0)
-        return false;
+        return -1;
 
     const uint leafStart = nfaces - 1;
     // Each split consumes at least one bit of the 30-bit Morton code
-    // or the 32-bit tie breaker. Keep at most one sibling per level.
+    // or the 32-bit tie breaker. Keep one sibling per level and the current node.
     uint stack[64];
-    uint pending = 0;
-    uint nodeIndex = 0;
-    float bestT = *outT;
+    uint pending = 1;
+    stack[0] = 0;
+    float bestT = FLT_MAX;
     int bestFace = -1;
 
-    float nearT, farT;
-    if (!intersect_ray_aabb(orig, dir, nodes[0].aabb, tMin, bestT, &nearT, &farT))
-        return false;
+    while (pending != 0) {
+        const uint nodeIndex = stack[--pending];
+        const BVHNodeGPU node = nodes[nodeIndex];
+        float nearT, farT;
+        if (!intersect_ray_aabb(orig, dir, node.aabb, tMin, bestT, &nearT, &farT))
+            continue;
 
-    for (;;) {
-        if (nodeIndex >= leafStart) {
-            const int faceId = (int)leafTriIndices[nodeIndex - leafStart];
-            if (faceId != ignoreFace) {
-                const uint3 f = loadFace(faces, (uint)faceId);
-                float t, u, v;
-                if (intersect_ray_triangle(orig, dir,
-                                           loadVertex(vertices, f.x),
-                                           loadVertex(vertices, f.y),
-                                           loadVertex(vertices, f.z),
-                                           tMin, bestT, false, &t, &u, &v)) {
-                    if (ignoreFace >= 0)
-                        return true;
-                    // Increasing face IDs win exact distance ties, as in brute force.
-                    if (bestFace < 0 || t < bestT || faceId > bestFace) {
-                        bestT = t;
-                        bestFace = faceId;
-                        *outU = u;
-                        *outV = v;
-                    }
-                }
-            }
-        } else {
-            const uint left = nodes[nodeIndex].leftChildIndex;
-            const uint right = nodes[nodeIndex].rightChildIndex;
-            float leftNear, rightNear;
-            const bool hitLeft = intersect_ray_aabb(orig, dir, nodes[left].aabb,
-                                                    tMin, bestT, &leftNear, &farT);
-            const bool hitRight = intersect_ray_aabb(orig, dir, nodes[right].aabb,
-                                                     tMin, bestT, &rightNear, &farT);
-            if (hitLeft && hitRight) {
-                const bool leftFirst = leftNear <= rightNear;
-                stack[pending++] = leftFirst ? right : left;
-                nodeIndex = leftFirst ? left : right;
-                continue;
-            }
-            if (hitLeft || hitRight) {
-                nodeIndex = hitLeft ? left : right;
-                continue;
-            }
+        if (nodeIndex < leafStart) {
+            stack[pending++] = node.rightChildIndex;
+            stack[pending++] = node.leftChildIndex;
+            continue;
         }
 
-        // A closer triangle may have shortened the ray since a node was queued.
-        do {
-            if (pending == 0) {
-                *outT = bestT;
-                *outFaceId = bestFace;
-                return bestFace >= 0;
+        const int faceId = (int)leafTriIndices[nodeIndex - leafStart];
+        if (faceId == ignoreFace)
+            continue;
+
+        const uint3 f = loadFace(faces, (uint)faceId);
+        float t, u, v;
+        if (intersect_ray_triangle(orig, dir,
+                                   loadVertex(vertices, f.x),
+                                   loadVertex(vertices, f.y),
+                                   loadVertex(vertices, f.z),
+                                   tMin, bestT, false, &t, &u, &v)) {
+            if (ignoreFace >= 0)
+                return faceId;
+            // Increasing face IDs win exact distance ties, as in brute force.
+            if (t < bestT || (t == bestT && faceId > bestFace)) {
+                bestT = t;
+                bestFace = faceId;
             }
-            nodeIndex = stack[--pending];
-        } while (!intersect_ray_aabb(orig, dir, nodes[nodeIndex].aabb,
-                                    tMin, bestT, &nearT, &farT));
+        }
     }
+    *outT = bestT;
+    return bestFace;
 }
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
@@ -111,10 +86,9 @@ static inline bool any_hit_from(
     uint                      nfaces,
     int                       ignore_face)
 {
-    float t = FLT_MAX, u, v;
-    int faceId;
+    float t;
     return trace_bvh(orig, dir, nodes, leafTriIndices, nfaces, vertices, faces,
-                     1e-4f, ignore_face, &t, &faceId, &u, &v);
+                     1e-4f, ignore_face, &t) >= 0;
 }
 
 // Helper: build tangent basis for a given normal
@@ -157,13 +131,10 @@ __kernel void ray_tracing_render_using_lbvh(
                      &ray_direction);
 
     float tMin      = 1e-6f;
-    float tBest     = FLT_MAX;
-    float uBest     = 0.0f;
-    float vBest     = 0.0f;
-    int   faceIdBest = -1;
+    float tBest = FLT_MAX;
 
     // Use BVH traversal instead of brute-force loop
-    trace_bvh(
+    const int faceIdBest = trace_bvh(
         ray_origin,
         ray_direction,
         bvhNodes,
@@ -173,10 +144,7 @@ __kernel void ray_tracing_render_using_lbvh(
         faces,
         tMin,
         -1,
-        &tBest,
-        &faceIdBest,
-        &uBest,
-        &vBest);
+        &tBest);
 
     const uint idx = j * camera->K.width + i;
     framebuffer_face_id[idx] = faceIdBest;
