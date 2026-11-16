@@ -32,8 +32,41 @@ static inline bool bvh_closest_hit(
     const int leafStart = (int)nfaces - 1;
 
     // TODO implement BVH travering (with stack, don't use recursion)
+    int stack[64];
+    int stack_size = 0;
+    stack[stack_size++] = rootIndex;
+    bool hit = false;
 
-    return false;
+    while (stack_size > 0) {
+        int node_index = stack[--stack_size];
+        BVHNodeGPU node = nodes[node_index];
+        float tNear, tFar;
+        if (!intersect_ray_aabb(orig, dir, node.aabb, tMin, *outT, &tNear, &tFar)) {
+            continue;
+        }
+
+        if (node_index >= leafStart) {
+            uint face_id = leafTriIndices[node_index - leafStart];
+            uint3 face = loadFace(faces, face_id);
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir,
+                                       loadVertex(vertices, face.x),
+                                       loadVertex(vertices, face.y),
+                                       loadVertex(vertices, face.z),
+                                       tMin, *outT, false, &t, &u, &v)) {
+                *outT = t;
+                *outFaceId = (int)face_id;
+                *outU = u;
+                *outV = v;
+                hit = true;
+            }
+        } else {
+            stack[stack_size++] = (int)node.rightChildIndex;
+            stack[stack_size++] = (int)node.leftChildIndex;
+        }
+    }
+
+    return hit;
 }
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
@@ -51,6 +84,38 @@ static inline bool any_hit_from(
     const int leafStart = (int)nfaces - 1;
 
     // TODO implement BVH travering (with stack, don't use recursion)
+    int stack[64];
+    int stack_size = 0;
+    stack[stack_size++] = rootIndex;
+    const float tMin = 1e-4f;
+
+    while (stack_size > 0) {
+        int node_index = stack[--stack_size];
+        BVHNodeGPU node = nodes[node_index];
+        float tNear, tFar;
+        if (!intersect_ray_aabb(orig, dir, node.aabb, tMin, FLT_MAX, &tNear, &tFar)) {
+            continue;
+        }
+
+        if (node_index >= leafStart) {
+            uint face_id = leafTriIndices[node_index - leafStart];
+            if ((int)face_id == ignore_face) {
+                continue;
+            }
+            uint3 face = loadFace(faces, face_id);
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir,
+                                       loadVertex(vertices, face.x),
+                                       loadVertex(vertices, face.y),
+                                       loadVertex(vertices, face.z),
+                                       tMin, FLT_MAX, false, &t, &u, &v)) {
+                return true;
+            }
+        } else {
+            stack[stack_size++] = (int)node.rightChildIndex;
+            stack[stack_size++] = (int)node.leftChildIndex;
+        }
+    }
 
     return false;
 }

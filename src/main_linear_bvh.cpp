@@ -158,7 +158,7 @@ void run(int argc, char** argv)
                 timer t;
 
                 if (context.type() == gpu::Context::TypeOpenCL) {
-                    ocl_rt_brute_force.exec(
+                    ocl_rt_brute_force.execSubdivided(
                         gpu::WorkSize(16, 16, width, height),
                         vertices_gpu, faces_gpu,
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
@@ -230,10 +230,9 @@ void run(int argc, char** argv)
                 timer t;
 
                 // TODO оттрасируйте лучи на GPU используя построенный на CPU LBVH
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
 
                 if (context.type() == gpu::Context::TypeOpenCL) {
-                    ocl_rt_with_lbvh.exec(
+                    ocl_rt_with_lbvh.execSubdivided(
                         gpu::WorkSize(16, 16, width, height),
                         vertices_gpu, faces_gpu,
                         lbvh_nodes_gpu.clmem(), leaf_faces_indices_gpu.clmem(),
