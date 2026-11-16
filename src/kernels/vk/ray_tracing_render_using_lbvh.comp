@@ -287,7 +287,7 @@ bool bvh_closest_hit(vec3 orig,
             bool triTest = intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tMax, false, t, u, v);
             if (triTest && t <= closest) {
                 closest = t;
-                tMax = t;
+                //tMax = t;
                 intersects = true;
                 outFaceId = int(faceId);
                 outT = t;
