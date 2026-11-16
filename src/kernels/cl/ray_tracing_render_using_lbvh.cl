@@ -40,23 +40,32 @@ static inline bool bvh_closest_hit( // Находит пересечение л�
     bool found = false;
     do {
         uint nodeId = (uint)(node - nodes);
+        if (nodeId >= leafStart) {
+            uint faceId = leafTriIndices[nodeId - leafStart];
+            uint3 face = loadFace(faces, faceId);
+            float3 a = loadVertex(vertices, face.x);
+            float3 b = loadVertex(vertices, face.y);
+            float3 c = loadVertex(vertices, face.z);
+
+            float t, u, v;
+            bool intersect_res = intersect_ray_triangle(orig, dir, a, b, c, tMin, *outT, false, &t, &u, &v);
+            if (intersect_res) {
+                found = true;
+                *outT = t;
+                *outFaceId = (int)faceId;
+                *outU = u;
+                *outV = v;
+            }
+
+            node = stack[--stack_size];
+            continue;
+        }
 
         __global const BVHNodeGPU* childL = &nodes[node->leftChildIndex];
         __global const BVHNodeGPU* childR = &nodes[node->rightChildIndex];
         float tNearL, tFarL, tNearR, tFarR;
         bool overlapL = intersect_ray_aabb(orig, dir, childL->aabb, tMin, *outT, &tNearL, &tFarL);
         bool overlapR = intersect_ray_aabb(orig, dir, childR->aabb, tMin, *outT, &tNearR, &tFarR);
-
-        // Проверяем, лист ли мы
-        bool isLeaf = nodeIndex >= leafStart;
-        if (amILeaf) {
-            if (overlapL) {
-                // нашли треугольник, TODO проверить ближайшесть пересечения к orig
-            }
-            if (overlapR) {
-                // нашли треугольник, TODO проверить ближайшесть пересечения к orig
-            }
-        }
 
         if (!overlapL && !overlapR) {
             node = stack[--stack_size];
@@ -68,7 +77,7 @@ static inline bool bvh_closest_hit( // Находит пересечение л�
         }
     } while (node != NULL);
 
-    return false;
+    return found;
 }
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
