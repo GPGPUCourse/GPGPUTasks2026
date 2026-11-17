@@ -247,6 +247,8 @@ float random01(inout uint s)
     return float(s >> 8u) * (1.0 / 16777216.0);
 }
 
+#define MAX_STACK 128
+
 // BVH traversal: closest hit along ray
 bool bvh_closest_hit(vec3 orig,
                      vec3 dir,
@@ -259,9 +261,58 @@ bool bvh_closest_hit(vec3 orig,
     int rootIndex = 0;
     int leafStart = int(params.nfaces) - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    float tBest = FLT_MAX_GLSL;
+    float uBest = 0.0;
+    float vBest = 0.0;
+    int faceBest = -1;
 
-    return false; // no intersections found
+    uint stack[MAX_STACK];
+    uint stack_top = 0;
+    stack[stack_top++] = uint(rootIndex);
+
+    while (stack_top > 0) {
+        uint idx = stack[--stack_top];
+        if (idx < leafStart) {
+            float left_near, left_far;
+            float right_near, right_far;
+            uint left = bvhNodes[idx].leftChildIndex, right = bvhNodes[idx].rightChildIndex;
+            bool add_left = intersect_ray_aabb(orig, dir, bvhNodes[left].aabb, tMin, tBest, left_near, left_far);
+            bool add_right = intersect_ray_aabb(orig, dir, bvhNodes[right].aabb, tMin, tBest, right_near, right_far);
+            if (add_left && add_right) {
+                if (left_far < right_far) {
+                    stack[stack_top++] = left;
+                    stack[stack_top++] = right;
+                } else {
+                    stack[stack_top++] = right;
+                    stack[stack_top++] = left;
+                }
+            } else if (add_left) {
+                stack[stack_top++] = left;
+            } else if (add_right) {
+                stack[stack_top++] = right;
+            }
+        } else {
+            float t, u, v;
+            uint fi = uint(leafTriIndices[idx - leafStart]);
+            uvec3 face = loadFace(fi);
+            vec3 v0 = loadVertex(face.x);
+            vec3 v1 = loadVertex(face.y);
+            vec3 v2 = loadVertex(face.z);
+            if (intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tBest, false, t, u, v)) {
+                tBest = t;
+                faceBest = int(fi);
+                uBest = u;
+                vBest = v;
+            }
+        }
+    }
+
+    outT = tBest;
+    outFaceId = faceBest;
+    outU = uBest;
+    outV = vBest;
+
+    return faceBest != -1;
 }
 
 // BVH traversal: any hit (for AO rays)
@@ -273,9 +324,61 @@ bool any_hit_from(vec3 orig,
     int rootIndex = 0;
     int leafStart = int(params.nfaces) - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    uint stack[MAX_STACK];
+    uint stack_top = 0;
+    stack[stack_top++] = uint(rootIndex);
 
-    return false; // no intersections found
+    const float tMin = 1e-4;
+    float tBest = FLT_MAX_GLSL;
+
+    {
+        float hit_near, hit_far;
+        if (!intersect_ray_aabb(orig, dir, bvhNodes[rootIndex].aabb, tMin, tBest, hit_near, hit_far)) {
+            return false;
+        }
+    }
+
+    bool found = false;
+
+    while (stack_top > 0) {
+        uint idx = stack[--stack_top];
+        if (idx < leafStart) {
+            float left_near, left_far;
+            float right_near, right_far;
+            uint left = bvhNodes[idx].leftChildIndex, right = bvhNodes[idx].rightChildIndex;
+            bool add_left = intersect_ray_aabb(orig, dir, bvhNodes[left].aabb, tMin, tBest, left_near, left_far);
+            bool add_right = intersect_ray_aabb(orig, dir, bvhNodes[right].aabb, tMin, tBest, right_near, right_far);
+            if (add_left && add_right) {
+                if (left_far < right_far) {
+                    stack[stack_top++] = left;
+                    stack[stack_top++] = right;
+                } else {
+                    stack[stack_top++] = right;
+                    stack[stack_top++] = left;
+                }
+            } else if (add_left) {
+                stack[stack_top++] = left;
+            } else if (add_right) {
+                stack[stack_top++] = right;
+            }
+        } else {
+            uint fi = uint(leafTriIndices[idx - leafStart]);
+            if (fi == ignore_face) {
+                continue;
+            }
+            float hit_near, hit_far;
+            float t, u, v;
+            uvec3 face = loadFace(fi);
+            vec3 v0 = loadVertex(face.x);
+            vec3 v1 = loadVertex(face.y);
+            vec3 v2 = loadVertex(face.z);
+            if (intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tBest, false, t, u, v)) {
+                return true;
+            }
+        }
+    }
+
+    return false;
 }
 
 void make_basis(vec3 n, out vec3 t, out vec3 b)
