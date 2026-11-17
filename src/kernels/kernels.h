@@ -28,6 +28,10 @@ const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getRTBruteForce();
 const ProgramBinaries& getRTWithLBVH();
+
+// Программы с несколькими кернелами - создавайте KernelSource(program, "kernel_name")
+const ProgramBinaries& getRadixSortPairs();
+const ProgramBinaries& getLBVHBuild();
 }
 
 namespace avk2 {
