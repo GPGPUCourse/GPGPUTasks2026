@@ -71,7 +71,11 @@ static inline bool bvh_closest_hit(
             const float3 b = loadVertex(vertices, f.y);
             const float3 c = loadVertex(vertices, f.z);
             float t, u, v;
-            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, tBest, false, &t, &u, &v)) {
+            // При равном t (совпадающие/копланарные треугольники) побеждает больший индекс - как в brute force,
+            // где перебор идёт по возрастанию индекса и t <= tBest перезаписывает. Так результат не зависит
+            // от порядка обхода, то есть от того, как именно построено дерево.
+            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, tBest, false, &t, &u, &v)
+                && (t < tBest || (int)fi > faceBest)) {
                 tBest    = t;
                 faceBest = (int)fi;
                 uBest    = u;
