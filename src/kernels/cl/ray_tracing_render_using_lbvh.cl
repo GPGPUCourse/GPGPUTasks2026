@@ -13,7 +13,25 @@
 #include "geometry_helpers.cl"
 #include "random_helpers.cl"
 
+// Каждый внутренний узел LBVH (Karras) делит диапазон по биту ключа (code, index) с номером commonPrefix,
+// и у детей этот номер строго больше. Ключ - 30 бит Morton-кода + 32 бита индекса, поэтому глубина <= 62.
+// При обходе в глубину стек растёт максимум на 1 за уровень -> нужно <= 63 слотов, 64 хватает всегда.
+#define BVH_STACK_SIZE 64
+
+static inline bool is_leaf(int node, int leafStart)
+{
+    // Внутренние узлы [0 .. N-2], листья [N-1 .. 2N-2]. При N == 1 корень 0 сам является листом.
+    return node >= leafStart;
+}
+
 // BVH traversal: closest hit along ray
+// Ищет ближайшее пересечение луча со сценой обходом BVH в глубину с явным стеком (без рекурсии):
+//   - достаём узел из стека; лист -> пересекаем луч с его треугольником, при попадании уменьшаем tBest;
+//   - внутренний узел -> проверяем боксы детей на отрезке [tMin, tBest] и кладём в стек попавших,
+//     ближнего последним, чтобы он обрабатывался первым.
+// Поддеревья, чей бокс целиком дальше уже найденного пересечения, отсекаются - отсюда ускорение
+// с O(N) треугольников на луч до примерно O(log N).
+// Возвращает true и заполняет outT/outFaceId/outU/outV, если пересечение найдено.
 static inline bool bvh_closest_hit(
     const float3              orig,
     const float3              dir,
@@ -31,12 +49,84 @@ static inline bool bvh_closest_hit(
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    float tBest = *outT; // обычно FLT_MAX: отсекаем всё, что дальше уже найденного пересечения
+    int   faceBest = -1;
+    float uBest = 0.0f, vBest = 0.0f;
 
-    return false;
+    float tNear, tFar;
+    if (!intersect_ray_aabb(orig, dir, nodes[rootIndex].aabb, tMin, tBest, &tNear, &tFar))
+        return false;
+
+    int stack[BVH_STACK_SIZE];
+    int sp = 0;
+    stack[sp++] = rootIndex;
+
+    while (sp > 0) {
+        const int node = stack[--sp];
+
+        if (is_leaf(node, leafStart)) {
+            const uint fi = leafTriIndices[node - leafStart];
+            const uint3  f = loadFace(faces, fi);
+            const float3 a = loadVertex(vertices, f.x);
+            const float3 b = loadVertex(vertices, f.y);
+            const float3 c = loadVertex(vertices, f.z);
+            float t, u, v;
+            // При равном t (совпадающие/копланарные треугольники) побеждает больший индекс - как в brute force,
+            // где перебор идёт по возрастанию индекса и t <= tBest перезаписывает. Так результат не зависит
+            // от порядка обхода, то есть от того, как именно построено дерево.
+            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, tBest, false, &t, &u, &v)
+                && (t < tBest || (int)fi > faceBest)) {
+                tBest    = t;
+                faceBest = (int)fi;
+                uBest    = u;
+                vBest    = v;
+            }
+            continue;
+        }
+
+        // Внутренний узел: его AABB уже проверен перед push, проверяем боксы детей.
+        // tMax = tBest - поддеревья целиком дальше найденного пересечения пропускаются.
+        const int left  = (int)nodes[node].leftChildIndex;
+        const int right = (int)nodes[node].rightChildIndex;
+
+        float tl, tr;
+        const bool hitL = intersect_ray_aabb(orig, dir, nodes[left].aabb,  tMin, tBest, &tl, &tFar);
+        const bool hitR = intersect_ray_aabb(orig, dir, nodes[right].aabb, tMin, tBest, &tr, &tFar);
+
+        // Ближнего ребёнка кладём последним, чтобы снять его первым: раньше найдём близкое
+        // пересечение и сильнее отсечём дальнее поддерево.
+        if (hitL && hitR) {
+            rassert(sp + 2 <= BVH_STACK_SIZE, 734512341);
+            if (tl < tr) {
+                stack[sp++] = right;
+                stack[sp++] = left;
+            } else {
+                stack[sp++] = left;
+                stack[sp++] = right;
+            }
+        } else if (hitL) {
+            rassert(sp + 1 <= BVH_STACK_SIZE, 734512342);
+            stack[sp++] = left;
+        } else if (hitR) {
+            rassert(sp + 1 <= BVH_STACK_SIZE, 734512343);
+            stack[sp++] = right;
+        }
+    }
+
+    if (faceBest < 0)
+        return false;
+
+    *outT      = tBest;
+    *outFaceId = faceBest;
+    *outU      = uBest;
+    *outV      = vBest;
+    return true;
 }
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
+// Тот же обход стеком, но ближайшее пересечение не нужно: AO важно только, закрыт ли луч хоть чем-то.
+// Поэтому порядок детей не важен, tMax не сужается, и при первом пересечении сразу возвращаем true.
+// ignore_face - треугольник, из которого выпущен луч, чтобы он не "затенял" сам себя.
 static inline bool any_hit_from(
     const float3              orig,
     const float3              dir,
@@ -50,7 +140,47 @@ static inline bool any_hit_from(
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    // Те же параметры, что у brute force версии any_hit_from
+    const float tMin = 1e-4f;
+    const float tMax = FLT_MAX;
+
+    float tNear, tFar;
+    if (!intersect_ray_aabb(orig, dir, nodes[rootIndex].aabb, tMin, tMax, &tNear, &tFar))
+        return false;
+
+    int stack[BVH_STACK_SIZE];
+    int sp = 0;
+    stack[sp++] = rootIndex;
+
+    while (sp > 0) {
+        const int node = stack[--sp];
+
+        if (is_leaf(node, leafStart)) {
+            const uint fi = leafTriIndices[node - leafStart];
+            if ((int)fi == ignore_face)
+                continue;
+            const uint3  f = loadFace(faces, fi);
+            const float3 a = loadVertex(vertices, f.x);
+            const float3 b = loadVertex(vertices, f.y);
+            const float3 c = loadVertex(vertices, f.z);
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, tMax, false, &t, &u, &v))
+                return true; // для AO достаточно любого пересечения
+            continue;
+        }
+
+        const int left  = (int)nodes[node].leftChildIndex;
+        const int right = (int)nodes[node].rightChildIndex;
+
+        if (intersect_ray_aabb(orig, dir, nodes[left].aabb, tMin, tMax, &tNear, &tFar)) {
+            rassert(sp + 1 <= BVH_STACK_SIZE, 834512341);
+            stack[sp++] = left;
+        }
+        if (intersect_ray_aabb(orig, dir, nodes[right].aabb, tMin, tMax, &tNear, &tFar)) {
+            rassert(sp + 1 <= BVH_STACK_SIZE, 834512342);
+            stack[sp++] = right;
+        }
+    }
 
     return false;
 }

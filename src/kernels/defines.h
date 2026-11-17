@@ -7,6 +7,11 @@
 
 #define AO_SAMPLES   8
 
+// LSD radix sort (из task05) для сортировки пар (Morton-код, индекс треугольника)
+#define RADIX_BITS   4
+#define NUM_BUCKETS  (1 << RADIX_BITS)
+#define RADIX_MASK   (NUM_BUCKETS - 1)
+
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
 
 #endif // pragma once

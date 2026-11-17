@@ -3,6 +3,8 @@
 #include "cl/generated_kernels/aplusb.h"
 #include "cl/generated_kernels/ray_tracing_render_brute_force.h"
 #include "cl/generated_kernels/ray_tracing_render_using_lbvh.h"
+#include "cl/generated_kernels/radix_sort_pairs.h"
+#include "cl/generated_kernels/lbvh_build.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/ray_tracing_render_brute_force_comp.h"
@@ -54,6 +56,16 @@ const ProgramBinaries& getRTBruteForce()
 const ProgramBinaries& getRTWithLBVH()
 {
     return opencl_binaries_ray_tracing_render_using_lbvh;
+}
+
+const ProgramBinaries& getRadixSortPairs()
+{
+    return opencl_binaries_radix_sort_pairs;
+}
+
+const ProgramBinaries& getLBVHBuild()
+{
+    return opencl_binaries_lbvh_build;
 }
 } // namespace ocl
 
