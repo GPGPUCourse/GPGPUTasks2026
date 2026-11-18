@@ -8,5 +8,7 @@
 #define AO_SAMPLES   8
 
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
+#define DEBUG_OUTPUT 0
+#define DEBUG_OUTPUT_SIZE 64
 
 #endif // pragma once

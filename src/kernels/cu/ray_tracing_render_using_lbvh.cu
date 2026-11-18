@@ -31,9 +31,77 @@ __device__ bool bvh_closest_hit(
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    bool hit = false;
+    float tResult = 100000000000.f;
 
-    return false; // no intersections found
+    float tHitNearL, tHitFarL;
+    float tHitNearR, tHitFarR;
+
+    Stack<const BVHNodeGPU*, 32> stack;
+
+    const BVHNodeGPU* node = &nodes[rootIndex];
+
+    do {
+        const BVHNodeGPU* childL = &nodes[node->leftChildIndex];
+        const BVHNodeGPU* childR = &nodes[node->rightChildIndex];
+
+        bool overlapL = intersect_ray_aabb(orig, dir, childL->aabb, tMin, tResult, tHitNearL, tHitFarL);
+        bool overlapR = intersect_ray_aabb(orig, dir, childR->aabb, tMin, tResult, tHitNearR, tHitFarR);
+        if (overlapL && node->leftChildIndex >= leafStart) {
+            // Это был лист, нужно проверить треугольник
+            int tri_index = leafTriIndices[node->leftChildIndex - leafStart];
+            uint3 faceVerIndices = loadFace(faces, tri_index);
+            float3 v0 = loadVertex(vertices, faceVerIndices.x);
+            float3 v1 = loadVertex(vertices, faceVerIndices.y);
+            float3 v2 = loadVertex(vertices, faceVerIndices.z);
+
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tResult, false, t, u, v)) {
+                if (t < tResult) {
+                    hit = true;
+                    tResult = t;
+                    outT = t;
+                    outU = u;
+                    outV = v;
+                    outFaceId = tri_index;
+                }
+            }
+        }
+        if (overlapR && node->rightChildIndex >= leafStart) {
+            // Это был лист, нужно проверить треугольник
+            int tri_index = leafTriIndices[node->rightChildIndex - leafStart];
+            uint3 faceVerIndices = loadFace(faces, tri_index);
+            float3 v0 = loadVertex(vertices, faceVerIndices.x);
+            float3 v1 = loadVertex(vertices, faceVerIndices.y);
+            float3 v2 = loadVertex(vertices, faceVerIndices.z);
+
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tResult, false, t, u, v)) {
+                if (t < tResult) {
+                    hit = true;
+                    tResult = t;
+                    outT = t;
+                    outU = u;
+                    outV = v;
+                    outFaceId = tri_index;
+                }
+            }
+        }
+
+        bool traverseL = overlapL && node->leftChildIndex < leafStart;
+        bool traverseR = overlapR && node->rightChildIndex < leafStart;
+
+        if (!traverseL && !traverseR) {
+            node = stack.pop();
+        } else {
+            node = traverseL ? childL : childR;
+            if (traverseL && traverseR) {
+                stack.push(childR);
+            }
+        }
+    } while (node != nullptr);
+
+    return hit;
 }
 
 // BVH traversal: any hit (for AO rays)
@@ -51,9 +119,72 @@ __device__ bool any_hit_from(
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    float tResult = 1000000000.f;
 
-    return false; // no intersections found
+    float tHitNear = 10000.0f;
+    float tHitFar = 10000.0f;
+
+    Stack<const BVHNodeGPU*, 32> stack;
+
+    const BVHNodeGPU* node = &nodes[rootIndex];
+
+    do {
+        const BVHNodeGPU* childL = &nodes[node->leftChildIndex];
+        const BVHNodeGPU* childR = &nodes[node->rightChildIndex];
+
+        bool overlapL = intersect_ray_aabb(orig, dir, childL->aabb, 0, tResult, tHitNear, tHitFar);
+        if (overlapL && node->leftChildIndex >= leafStart) {
+            // Это был лист, нужно проверить треугольник
+            int tri_index = leafTriIndices[node->leftChildIndex - leafStart];
+            if (tri_index != ignore_face) {
+                uint3 faceVerIndices = loadFace(faces, tri_index);
+                float3 v0 = loadVertex(vertices, faceVerIndices.x);
+                float3 v1 = loadVertex(vertices, faceVerIndices.y);
+                float3 v2 = loadVertex(vertices, faceVerIndices.z);
+
+                float t, u, v;
+                if (intersect_ray_triangle(orig, dir, v0, v1, v2, 0, tResult, false, t, u, v)) {
+                    if (t < tResult) {
+                        return true;
+                    }
+                }
+            }
+
+        }
+
+        bool overlapR = intersect_ray_aabb(orig, dir, childR->aabb, 0, tResult, tHitNear, tHitFar);
+        if (overlapR && node->rightChildIndex >= leafStart) {
+            // Это был лист, нужно проверить треугольник
+            int tri_index = leafTriIndices[node->rightChildIndex - leafStart];
+            if (tri_index != ignore_face) {
+                uint3 faceVerIndices = loadFace(faces, tri_index);
+                float3 v0 = loadVertex(vertices, faceVerIndices.x);
+                float3 v1 = loadVertex(vertices, faceVerIndices.y);
+                float3 v2 = loadVertex(vertices, faceVerIndices.z);
+
+                float t, u, v;
+                if (intersect_ray_triangle(orig, dir, v0, v1, v2, 0, tResult, false, t, u, v)) {
+                    if (t < tResult) {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        bool traverseL = overlapL && node->leftChildIndex < leafStart;
+        bool traverseR = overlapR && node->rightChildIndex < leafStart;
+
+        if (!traverseL && !traverseR) {
+            node = stack.pop();
+        } else {
+            node = traverseL ? childL : childR;
+            if (traverseL && traverseR) {
+                stack.push(childR);
+            }
+        }
+    } while (node != nullptr);
+
+    return false;
 }
 
 // + helper: build tangent basis for a given normal
