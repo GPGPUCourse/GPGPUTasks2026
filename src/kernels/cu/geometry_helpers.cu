@@ -27,6 +27,13 @@ __device__ inline float  length_f3(const float3& v) {
     return sqrtf(v.x*v.x + v.y*v.y + v.z*v.z);
 }
 
+__device__ float2 minmax3(float a, float b, float c) {
+    return {
+        fminf(a, fminf(b, c)),
+        fmaxf(a, fmaxf(b, c))
+    };
+}
+
 // dot/cross for float3
 static __device__ __forceinline__ float dot3(const float3 a, const float3 b) {
     return a.x*b.x + a.y*b.y + a.z*b.z;

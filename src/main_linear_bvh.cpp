@@ -62,7 +62,7 @@ void run(int argc, char** argv)
     //   - Если аргумент запуска есть и он от 0 до N-1 - вернет устройство под указанным номером
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
-    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA); // TODO Also try vulkan
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -79,6 +79,8 @@ void run(int argc, char** argv)
     const std::string gnome_scene_path = "data/gnome/gnome.ply";
     std::vector<std::string> scenes = {
         gnome_scene_path,
+        // "data/cube/cube.ply",
+        // "data/susanne/susanne.ply",
         "data/powerplant/powerplant.obj",
         "data/san-miguel/san-miguel.obj",
     };
@@ -280,16 +282,23 @@ void run(int argc, char** argv)
         double gpu_lbvh_time_sum = 0.0;
         double rt_times_with_gpu_lbvh_sum = 0.0;
 
-        // TODO постройте LBVH на GPU
-        // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
+        bool gpu_lbvg_gpu_rt_done = true;
 
-        if (gpu_lbvg_gpu_rt_done) {
+        if (gpu_lbvg_gpu_rt_done && context.type() == gpu::Context::TypeCUDA) {
             std::vector<double> gpu_lbvh_times;
+            gpu::shared_device_buffer_typed<BVHNodeGPU> lbvh_nodes_gpu(2 * nfaces - 1);
+            gpu::gpu_mem_32u leaf_faces_indices_gpu(nfaces);
+
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO постройте LBVH на GPU
+                cuda::build_lbvh(
+                        vertices_gpu,
+                        faces_gpu,
+                        lbvh_nodes_gpu,
+                        leaf_faces_indices_gpu,
+                        nfaces
+                );
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -308,7 +317,12 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                cuda::ray_tracing_render_using_lbvh(
+                        gpu::WorkSize(16, 16, width, height),
+                        vertices_gpu, faces_gpu,
+                        lbvh_nodes_gpu, leaf_faces_indices_gpu,
+                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                        camera_gpu, nfaces);
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }
