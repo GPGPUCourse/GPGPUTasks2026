@@ -2,6 +2,8 @@
 #define my_defines_vk
 
 #define GROUP_SIZE   256
+#define RADIX_BITS   4
+#define RADIX_BUCKETS (1 << RADIX_BITS)
 #define GROUP_SIZE_X 16
 #define GROUP_SIZE_Y 16
 
