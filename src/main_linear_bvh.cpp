@@ -285,16 +285,35 @@ void run(int argc, char** argv)
         double gpu_lbvh_time_sum = 0.0;
         double rt_times_with_gpu_lbvh_sum = 0.0;
 
-        // TODO постройте LBVH на GPU
-        // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
+        if (context.type() == gpu::Context::TypeCUDA) {
+            const size_t node_count = (size_t) nfaces * 2 - 1;
+            gpu::gpu_mem_32f centroids_gpu((size_t) nfaces * 3);
+            gpu::shared_device_buffer_typed<AABBGPU> triangle_boxes_gpu(nfaces);
+            gpu::shared_device_buffer_typed<AABBGPU> centroid_bounds_gpu(1);
+            gpu::gpu_mem_32u morton_codes_gpu(nfaces);
+            gpu::gpu_mem_32u triangle_indices_gpu(nfaces);
+            gpu::gpu_mem_32u sorted_codes_gpu(nfaces);
+            gpu::gpu_mem_32u sorted_indices_gpu(nfaces);
+            gpu::shared_device_buffer_typed<BVHNodeGPU> gpu_lbvh_nodes(node_count);
+            gpu::gpu_mem_32u parents_gpu(node_count);
+            gpu::gpu_mem_32u arrivals_gpu(nfaces - 1);
+            gpu::shared_device_buffer sort_workspace;
 
-        if (gpu_lbvg_gpu_rt_done) {
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO постройте LBVH на GPU
+                cuda::lbvh_triangle_geometry(vertices_gpu, faces_gpu, nfaces,
+                                             centroids_gpu, triangle_boxes_gpu, centroid_bounds_gpu);
+                cuda::lbvh_morton_codes(centroids_gpu, centroid_bounds_gpu, nfaces,
+                                        morton_codes_gpu, triangle_indices_gpu);
+                cuda::lbvh_sort_morton_codes(morton_codes_gpu, triangle_indices_gpu, nfaces,
+                                            sorted_codes_gpu, sorted_indices_gpu, sort_workspace);
+                if (nfaces > 1)
+                    cuda::lbvh_build_internal_nodes(sorted_codes_gpu, nfaces, gpu_lbvh_nodes, parents_gpu);
+                cuda::lbvh_initialize_leaves(sorted_indices_gpu, triangle_boxes_gpu, nfaces,
+                                            gpu_lbvh_nodes, parents_gpu);
+                cuda::lbvh_build_boxes(gpu_lbvh_nodes, parents_gpu, arrivals_gpu, nfaces);
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -313,7 +332,12 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                cuda::ray_tracing_render_using_lbvh(
+                    gpu::WorkSize(16, 16, width, height),
+                    vertices_gpu, faces_gpu,
+                    gpu_lbvh_nodes, sorted_indices_gpu,
+                    framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                    camera_gpu, nfaces);
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }
