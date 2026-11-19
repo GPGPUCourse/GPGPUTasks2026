@@ -78,9 +78,6 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_rt_brute_force(ocl::getRTBruteForce());
     ocl::KernelSource ocl_rt_with_lbvh(ocl::getRTWithLBVH());
 
-    avk2::KernelSource vk_rt_brute_force(avk2::getRTBruteForce());
-    avk2::KernelSource vk_rt_with_lbvh(avk2::getRTWithLBVH());
-
     const std::string gnome_scene_path = "data/gnome/gnome.ply";
     std::vector<std::string> scenes = {
         gnome_scene_path,
@@ -157,28 +154,11 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                if (context.type() == gpu::Context::TypeOpenCL) {
-                    ocl_rt_brute_force.exec(
-                        gpu::WorkSize(16, 16, width, height),
-                        vertices_gpu, faces_gpu,
-                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu.clmem(), nfaces);
-                } else if (context.type() == gpu::Context::TypeCUDA) {
-                    cuda::ray_tracing_render_brute_force(
-                        gpu::WorkSize(16, 16, width, height),
-                        vertices_gpu, faces_gpu,
-                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu, nfaces);
-                } else if (context.type() == gpu::Context::TypeVulkan) {
-                    vk_rt_brute_force.exec(
-                        nfaces,
-                        gpu::WorkSize(16, 16, width, height),
-                        vertices_gpu, faces_gpu,
-                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu);
-                } else {
-                    rassert(false, 654724541234123);
-                }
+                ocl_rt_brute_force.exec(
+                    gpu::WorkSize(16, 16, width, height),
+                    vertices_gpu, faces_gpu,
+                    framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                    camera_gpu.clmem(), nfaces);
 
                 brute_force_times.push_back(t.elapsed());
             }
@@ -230,33 +210,14 @@ void run(int argc, char** argv)
                 timer t;
 
                 // TODO оттрасируйте лучи на GPU используя построенный на CPU LBVH
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                // throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
 
-                if (context.type() == gpu::Context::TypeOpenCL) {
-                    ocl_rt_with_lbvh.exec(
-                        gpu::WorkSize(16, 16, width, height),
-                        vertices_gpu, faces_gpu,
-                        lbvh_nodes_gpu.clmem(), leaf_faces_indices_gpu.clmem(),
-                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu.clmem(), nfaces);
-                } else if (context.type() == gpu::Context::TypeCUDA) {
-                    cuda::ray_tracing_render_using_lbvh(
-                        gpu::WorkSize(16, 16, width, height),
-                        vertices_gpu, faces_gpu,
-                        lbvh_nodes_gpu, leaf_faces_indices_gpu,
-                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu, nfaces);
-                } else if (context.type() == gpu::Context::TypeVulkan) {
-                    vk_rt_with_lbvh.exec(
-                        nfaces,
-                        gpu::WorkSize(16, 16, width, height),
-                        vertices_gpu, faces_gpu,
-                        lbvh_nodes_gpu, leaf_faces_indices_gpu,
-                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu);
-                } else {
-                    rassert(false, 654724541234123);
-                }
+                ocl_rt_with_lbvh.exec(
+                    gpu::WorkSize(16, 16, width, height),
+                    vertices_gpu, faces_gpu,
+                    lbvh_nodes_gpu.clmem(), leaf_faces_indices_gpu.clmem(),
+                    framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                    camera_gpu.clmem(), nfaces);
 
                 rt_times_with_cpu_lbvh.push_back(t.elapsed());
             }
