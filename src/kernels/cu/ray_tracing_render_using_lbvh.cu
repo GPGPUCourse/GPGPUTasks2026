@@ -176,7 +176,9 @@ __global__ void ray_tracing_render_using_lbvh(
     int* framebuffer_face_id,
     float* framebuffer_ambient_occlusion,
     CameraViewGPU *camera,
-    unsigned int nfaces
+    unsigned int nfaces,
+    float* framebuffer_depth,
+    float* framebuffer_normals
 )
 {
     const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -212,6 +214,13 @@ __global__ void ray_tracing_render_using_lbvh(
 
     const unsigned int idx = j * camera->K.width + i;
     framebuffer_face_id[idx] = faceIdBest;
+    if (framebuffer_depth)
+        framebuffer_depth[idx] = faceIdBest >= 0 ? tBest : -1.0f;
+    if (framebuffer_normals && faceIdBest < 0) {
+        framebuffer_normals[3 * idx] = 0.0f;
+        framebuffer_normals[3 * idx + 1] = 0.0f;
+        framebuffer_normals[3 * idx + 2] = 0.0f;
+    }
 
     float ao = 1.0f; // background stays white
     if (faceIdBest >= 0) {
@@ -227,6 +236,12 @@ __global__ void ray_tracing_render_using_lbvh(
         // ensure hemisphere is "outside" relative to the camera ray
         if (n.x*ray_direction.x + n.y*ray_direction.y + n.z*ray_direction.z > 0.0f)
             n = make_float3(-n.x, -n.y, -n.z);
+
+        if (framebuffer_normals) {
+            framebuffer_normals[3 * idx] = n.x;
+            framebuffer_normals[3 * idx + 1] = n.y;
+            framebuffer_normals[3 * idx + 2] = n.z;
+        }
 
         float3 P  = {ray_origin.x + tBest*ray_direction.x,
             ray_origin.y + tBest*ray_direction.y,
@@ -247,7 +262,6 @@ __global__ void ray_tracing_render_using_lbvh(
         } tBestUnion;
         tBestUnion.f32 = tBest;
         uint32_t rng = 0x9E3779B9u ^ idx ^ tBestUnion.u32;
-
         int hits = 0;
         for (int s = 0; s < AO_SAMPLES; ++s) {
             // uniform hemisphere sampling (solid angle)
@@ -284,7 +298,7 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     gpu::gpu_mem_32i &framebuffer_face_id,
     gpu::gpu_mem_32f &framebuffer_ambient_occlusion,
     gpu::shared_device_buffer_typed<CameraViewGPU> camera,
-    unsigned int nfaces)
+    unsigned int nfaces, gpu::gpu_mem_32f *depth, gpu::gpu_mem_32f *normals)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
@@ -294,7 +308,7 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
         bvhNodes.cuptr(), leafTriIndices.cuptr(),
         framebuffer_face_id.cuptr(), framebuffer_ambient_occlusion.cuptr(),
         camera.cuptr(),
-        nfaces
+        nfaces, depth ? depth->cuptr() : nullptr, normals ? normals->cuptr() : nullptr
         );
     CUDA_CHECK_KERNEL(stream);
 }

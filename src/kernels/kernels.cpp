@@ -76,11 +76,21 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     gpu::gpu_mem_32i &framebuffer_face_id,
     gpu::gpu_mem_32f &framebuffer_ambient_occlusion,
     gpu::shared_device_buffer_typed<CameraViewGPU> camera,
-    unsigned int nfaces)
+    unsigned int nfaces, gpu::gpu_mem_32f *depth, gpu::gpu_mem_32f *normals)
 {
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
+
+void denoise_ambient_occlusion(
+    const gpu::gpu_mem_32f &ao, const gpu::gpu_mem_32f &depth,
+    const gpu::gpu_mem_32f &normals, gpu::gpu_mem_32f &output,
+    unsigned int width, unsigned int height, unsigned int radius,
+    float spatialSigma, float depthSigma, float normalSigma)
+{
+    rassert(false, 835175875);
+}
+
 } // namespace cuda
 #endif
 
