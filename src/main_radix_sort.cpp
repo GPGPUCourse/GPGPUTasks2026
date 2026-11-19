@@ -11,7 +11,9 @@
 
 #include "debug.h" // TODO очень советую использовать debug::prettyBits(...) для отладки
 
-#include <fstream>
+#ifdef CUDA_SUPPORT
+#include <libgpu/cuda/utils.h>
+#endif
 
 void run(int argc, char** argv)
 {
@@ -28,25 +30,13 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
     //          если же вас это не останавливает - профилировщик (nsight-systems) при запуске на NVIDIA тоже работает (хоть и менее мощный чем nsight-compute)
     //          кроме того есть debugPrintfEXT(...) для вывода в консоль с видеокарты
     //          кроме того используемая библиотека поддерживает rassert-проверки (своеобразные инварианты с уникальным числом) на видеокарте для Vulkan
-
-    ocl::KernelSource ocl_fillBufferWithZeros(ocl::getFillBufferWithZeros());
-    ocl::KernelSource ocl_radixSort01LocalCounting(ocl::getRadixSort01LocalCounting());
-    ocl::KernelSource ocl_radixSort02GlobalPrefixesScanSumReduction(ocl::getRadixSort02GlobalPrefixesScanSumReduction());
-    ocl::KernelSource ocl_radixSort03GlobalPrefixesScanAccumulation(ocl::getRadixSort03GlobalPrefixesScanAccumulation());
-    ocl::KernelSource ocl_radixSort04Scatter(ocl::getRadixSort04Scatter());
-
-    avk2::KernelSource vk_fillBufferWithZeros(avk2::getFillBufferWithZeros());
-    avk2::KernelSource vk_radixSort01LocalCounting(avk2::getRadixSort01LocalCounting());
-    avk2::KernelSource vk_radixSort02GlobalPrefixesScanSumReduction(avk2::getRadixSort02GlobalPrefixesScanSumReduction());
-    avk2::KernelSource vk_radixSort03GlobalPrefixesScanAccumulation(avk2::getRadixSort03GlobalPrefixesScanAccumulation());
-    avk2::KernelSource vk_radixSort04Scatter(avk2::getRadixSort04Scatter());
 
     FastRandom r;
 
@@ -88,56 +78,60 @@ void run(int argc, char** argv)
 
     // Аллоцируем буферы в VRAM
     gpu::gpu_mem_32u input_gpu(n);
-    gpu::gpu_mem_32u buffer1_gpu(n), buffer2_gpu(n), buffer3_gpu(n), buffer4_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
+    gpu::gpu_mem_32u buffer_gpu(n); // TODO это просто шаблонка, можете переименовать эти буферы, сделать другого размера/типа, удалить часть, добавить новые
     gpu::gpu_mem_32u buffer_output_gpu(n);
+    std::vector<gpu::gpu_mem_32u> levels;
+    levels.emplace_back(RADIX_BUCKETS * div_ceil(size_t(n), size_t(GROUP_SIZE)));
+    while (levels.back().number() > GROUP_SIZE) {
+        levels.emplace_back(div_ceil(levels.back().number(), size_t(GROUP_SIZE)));
+    }
 
     // Прогружаем входные данные по PCI-E шине: CPU RAM -> GPU VRAM
     input_gpu.writeN(as.data(), n);
     // Советую занулить (или еще лучше - заполнить какой-то уникальной константой, например 255) все буферы
     // В некоторых случаях это ускоряет отладку, но обратите внимание, что fill реализован через копию множества нулей по PCI-E, то есть он очень медленный
     // Если вам нужно занулять буферы в процессе вычислений - используйте кернел который это сделает (см. кернел fill_buffer_with_zeros)
-    buffer1_gpu.fill(255);
-    buffer2_gpu.fill(255);
-    buffer3_gpu.fill(255);
-    buffer4_gpu.fill(255);
+    buffer_gpu.fill(255);
     buffer_output_gpu.fill(255);
 
     // Запускаем кернел (несколько раз и с замером времени выполнения)
+    std::vector<unsigned int> gpu_sorted(n);
     std::vector<double> times;
     for (int iter = 0; iter < 10; ++iter) { // TODO при отладке запускайте одну итерацию
         timer t;
 
         // Запускаем кернел, с указанием размера рабочего пространства и передачей всех аргументов
         // Если хотите - можете удалить ветвление здесь и оставить только тот код который соответствует вашему выбору API
-        if (context.type() == gpu::Context::TypeOpenCL) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // ocl_fillBufferWithZeros.exec();
-            // ocl_radixSort01LocalCounting.exec();
-            // ocl_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // ocl_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // ocl_radixSort04Scatter.exec();
-        } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // cuda::fill_buffer_with_zeros();
-            // cuda::radix_sort_01_local_counting();
-            // cuda::radix_sort_02_global_prefixes_scan_sum_reduction();
-            // cuda::radix_sort_03_global_prefixes_scan_accumulation();
-            // cuda::radix_sort_04_scatter();
-        } else if (context.type() == gpu::Context::TypeVulkan) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-            // vk_fillBufferWithZeros.exec();
-            // vk_radixSort01LocalCounting.exec();
-            // vk_radixSort02GlobalPrefixesScanSumReduction.exec();
-            // vk_radixSort03GlobalPrefixesScanAccumulation.exec();
-            // vk_radixSort04Scatter.exec();
-        } else {
-            rassert(false, 4531412341, context.type());
+#ifdef CUDA_SUPPORT
+        const gpu::gpu_mem_32u *source = &input_gpu;
+        gpu::gpu_mem_32u *destination = &buffer_gpu;
+        for (unsigned int shift = 0; shift < 32; shift += RADIX_BITS) {
+            cuda::radix_sort_01_local_counting(*source, levels.front(), shift);
+            for (size_t level = 0; level < levels.size(); ++level) {
+                auto *block_sums = level + 1 < levels.size() ? &levels[level + 1] : nullptr;
+                cuda::radix_sort_02_global_prefixes_scan_sum_reduction(levels[level], levels[level], block_sums);
+            }
+            for (size_t level = levels.size() - 1; level > 0; --level) {
+                cuda::radix_sort_03_global_prefixes_scan_accumulation(levels[level], levels[level - 1]);
+            }
+            cuda::radix_sort_04_scatter(*source, levels.front(), *destination, shift);
+            source = destination;
+            destination = destination == &buffer_gpu ? &buffer_output_gpu : &buffer_gpu;
         }
+        CUDA_SAFE_CALL(cudaStreamSynchronize(context.cudaStream()));
+#else
+        throw std::runtime_error(DEVICE_NOT_SUPPORT_API);
+#endif
 
         times.push_back(t.elapsed());
+
+        // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
+        buffer_output_gpu.readN(gpu_sorted.data(), n);
+
+        // Сверяем результат
+        for (size_t i = 0; i < n; ++i) {
+            rassert(sorted[i] == gpu_sorted[i], 566324523452323, sorted[i], gpu_sorted[i], i);
+        }
     }
     std::cout << "GPU radix-sort times (in seconds) - " << stats::valuesStatsLine(times) << std::endl;
 
@@ -145,19 +139,12 @@ void run(int argc, char** argv)
     double memory_size_gb = sizeof(unsigned int) * 2 * n / 1024.0 / 1024.0 / 1024.0;
     std::cout << "GPU radix-sort median effective VRAM bandwidth: " << memory_size_gb / stats::median(times) << " GB/s (" << n / 1e6 / stats::median(times) << " uint millions/s)" << std::endl;
 
-    // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
-    std::vector<unsigned int> gpu_sorted = buffer_output_gpu.readVector();
-
-    // Сверяем результат
-    for (size_t i = 0; i < n; ++i) {
-        rassert(sorted[i] == gpu_sorted[i], 566324523452323, sorted[i], gpu_sorted[i], i);
-    }
-
     // Проверяем что входные данные остались нетронуты (ведь мы их переиспользуем от итерации к итерации)
     std::vector<unsigned int> input_values = input_gpu.readVector();
     for (size_t i = 0; i < n; ++i) {
         rassert(input_values[i] == as[i], 6573452432, input_values[i], as[i]);
     }
+    std::cout << "PASS: GPU radix sort matched std::sort for all " << n << " keys in all 10 iterations, input unchanged" << std::endl;
 }
 
 int main(int argc, char** argv)
