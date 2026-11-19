@@ -28,12 +28,71 @@ __device__ bool bvh_closest_hit(
     float& outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
     float& outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
+    if (nfaces == 0)
+        return false;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    const unsigned int rootIndex = 0;
+    const unsigned int leafStart = (int)nfaces - 1;
+    outT = FLT_MAX;
+    bool foundHit = false;
 
-    return false; // no intersections found
+    const unsigned int stack_maxsize = 65;
+    unsigned int st[stack_maxsize];
+    unsigned int st_index = 0;
+    st[st_index] = rootIndex;
+    ++st_index;
+
+    while (st_index > 0) {
+        unsigned int v = st[st_index - 1];
+        --st_index;
+
+        if (v >= leafStart) {
+            unsigned int faceId = leafTriIndices[v - (nfaces - 1)];
+            uint3 face = loadFace(faces, faceId);
+
+            float3 v0 = loadVertex(vertices, face.x);
+            float3 v1 = loadVertex(vertices, face.y);
+            float3 v2 = loadVertex(vertices, face.z);
+
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, outT, false, t, u, v)) {
+                outT = t, outU = u, outV = v, outFaceId = faceId;
+                foundHit = true;
+            }
+            continue;
+        }
+
+        unsigned int left  = nodes[v].leftChildIndex;
+        float left_tHitNear, left_tHitFar;
+        bool left_ok = intersect_ray_aabb(orig, dir, nodes[left].aabb, tMin, outT, left_tHitNear, left_tHitFar);
+
+        unsigned int right = nodes[v].rightChildIndex;
+        float right_tHitNear, right_tHitFar;
+        bool right_ok = intersect_ray_aabb(orig, dir, nodes[right].aabb, tMin, outT, right_tHitNear, right_tHitFar);
+        if (left_ok && right_ok) {
+            if (left_tHitNear < right_tHitNear) {
+                curassert(st_index < stack_maxsize, 187537185);
+                st[st_index] = right, ++st_index;
+                curassert(st_index < stack_maxsize, 187537185);
+                st[st_index] = left, ++st_index;
+            }
+            else {
+                curassert(st_index < stack_maxsize, 187537185);
+                st[st_index] = left, ++st_index;
+                curassert(st_index < stack_maxsize, 187537185);
+                st[st_index] = right, ++st_index;
+            }
+        }
+        else if (left_ok) {
+            curassert(st_index < stack_maxsize, 187537185);
+            st[st_index] = left, ++st_index;
+        }
+        else if (right_ok) {
+            curassert(st_index < stack_maxsize, 187537185);
+            st[st_index] = right, ++st_index;
+        }
+    }
+    return foundHit;
 }
 
 // BVH traversal: any hit (for AO rays)
@@ -48,12 +107,57 @@ __device__ bool any_hit_from(
     unsigned int nfaces,
     int ignore_face)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
+    if (nfaces == 0)
+        return false;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    const unsigned int rootIndex = 0;
+    const unsigned int leafStart = (int)nfaces - 1;
+    const float tMin = 1e-4f, tMax = FLT_MAX;
+    const unsigned int stack_maxsize = 65;
+    unsigned int st[stack_maxsize];
+    unsigned int st_index = 0;
+    st[st_index] = rootIndex;
+    ++st_index;
 
-    return false; // no intersections found
+    while (st_index > 0) {
+        unsigned int v = st[st_index - 1];
+        --st_index;
+
+        if (v >= leafStart) {
+            unsigned int faceId = leafTriIndices[v - (nfaces - 1)];
+            if (faceId == ignore_face)
+                continue;
+            uint3 face = loadFace(faces, faceId);
+
+            float3 v0 = loadVertex(vertices, face.x);
+            float3 v1 = loadVertex(vertices, face.y);
+            float3 v2 = loadVertex(vertices, face.z);
+
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tMax, false, t, u, v))
+                return true;
+
+            continue;
+        }
+
+        unsigned int left  = nodes[v].leftChildIndex;
+        float left_tHitNear, left_tHitFar;
+        bool left_ok = intersect_ray_aabb(orig, dir, nodes[left].aabb, tMin, tMax, left_tHitNear, left_tHitFar);
+
+        unsigned int right = nodes[v].rightChildIndex;
+        float right_tHitNear, right_tHitFar;
+        bool right_ok = intersect_ray_aabb(orig, dir, nodes[right].aabb, tMin, tMax, right_tHitNear, right_tHitFar);
+
+        if (left_ok) {
+            curassert(st_index < stack_maxsize, 187537185);
+            st[st_index] = left, ++st_index;
+        }
+        if (right_ok) {
+            curassert(st_index < stack_maxsize, 187537185);
+            st[st_index] = right, ++st_index;
+        }
+    }
+    return false;
 }
 
 // + helper: build tangent basis for a given normal
@@ -72,7 +176,9 @@ __global__ void ray_tracing_render_using_lbvh(
     int* framebuffer_face_id,
     float* framebuffer_ambient_occlusion,
     CameraViewGPU *camera,
-    unsigned int nfaces
+    unsigned int nfaces,
+    float* framebuffer_depth,
+    float* framebuffer_normals
 )
 {
     const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -108,6 +214,13 @@ __global__ void ray_tracing_render_using_lbvh(
 
     const unsigned int idx = j * camera->K.width + i;
     framebuffer_face_id[idx] = faceIdBest;
+    if (framebuffer_depth)
+        framebuffer_depth[idx] = faceIdBest >= 0 ? tBest : -1.0f;
+    if (framebuffer_normals && faceIdBest < 0) {
+        framebuffer_normals[3 * idx] = 0.0f;
+        framebuffer_normals[3 * idx + 1] = 0.0f;
+        framebuffer_normals[3 * idx + 2] = 0.0f;
+    }
 
     float ao = 1.0f; // background stays white
     if (faceIdBest >= 0) {
@@ -123,6 +236,12 @@ __global__ void ray_tracing_render_using_lbvh(
         // ensure hemisphere is "outside" relative to the camera ray
         if (n.x*ray_direction.x + n.y*ray_direction.y + n.z*ray_direction.z > 0.0f)
             n = make_float3(-n.x, -n.y, -n.z);
+
+        if (framebuffer_normals) {
+            framebuffer_normals[3 * idx] = n.x;
+            framebuffer_normals[3 * idx + 1] = n.y;
+            framebuffer_normals[3 * idx + 2] = n.z;
+        }
 
         float3 P  = {ray_origin.x + tBest*ray_direction.x,
             ray_origin.y + tBest*ray_direction.y,
@@ -143,7 +262,6 @@ __global__ void ray_tracing_render_using_lbvh(
         } tBestUnion;
         tBestUnion.f32 = tBest;
         uint32_t rng = 0x9E3779B9u ^ idx ^ tBestUnion.u32;
-
         int hits = 0;
         for (int s = 0; s < AO_SAMPLES; ++s) {
             // uniform hemisphere sampling (solid angle)
@@ -180,7 +298,7 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     gpu::gpu_mem_32i &framebuffer_face_id,
     gpu::gpu_mem_32f &framebuffer_ambient_occlusion,
     gpu::shared_device_buffer_typed<CameraViewGPU> camera,
-    unsigned int nfaces)
+    unsigned int nfaces, gpu::gpu_mem_32f *depth, gpu::gpu_mem_32f *normals)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
@@ -190,7 +308,7 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
         bvhNodes.cuptr(), leafTriIndices.cuptr(),
         framebuffer_face_id.cuptr(), framebuffer_ambient_occlusion.cuptr(),
         camera.cuptr(),
-        nfaces
+        nfaces, depth ? depth->cuptr() : nullptr, normals ? normals->cuptr() : nullptr
         );
     CUDA_CHECK_KERNEL(stream);
 }
