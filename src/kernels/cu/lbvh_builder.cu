@@ -239,6 +239,48 @@ __global__ void prepareArrays(const Prim *prims, uint32_t* sortedCodes, uint32_t
   outLeafTriIndices[i] = prims[i].triIndex;
 }
 
+__global__ void buildBVHNodes(const Prim *prims, const uint32_t *sortedCodes, BVHNodeGPU *outNodes, int N) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= 2*N-1) return;
+
+  if (i >= N) {
+    size_t leafIndex = i;
+    BVHNodeGPU &leaf = outNodes[leafIndex];
+
+    leaf.aabb = prims[i-(N-1)].aabb;
+    leaf.leftChildIndex = -1u;
+    leaf.rightChildIndex = -1u;
+  } else {
+    int first, last;
+    determine_range(sortedCodes, static_cast<int>(N), i, first, last);
+    int split = find_split(sortedCodes, N, first, last);
+
+    // Left child
+    int leftIndex;
+    if (split == first) {
+      // Range [first, split] has one primitive -> leaf
+      leftIndex = static_cast<int>((N - 1) + split);
+    } else {
+      // Internal node
+      leftIndex = split;
+    }
+
+    // Right child
+    int rightIndex;
+    if (split + 1 == last) {
+      // Range [split+1, last] has one primitive -> leaf
+      rightIndex = static_cast<int>((N - 1) + split + 1);
+    } else {
+      // Internal node
+      rightIndex = split + 1;
+    }
+
+    BVHNodeGPU &node = outNodes[static_cast<size_t>(i)];
+    node.leftChildIndex = leftIndex;
+    node.rightChildIndex = rightIndex;
+  }
+}
+
 } // namespace
 
 namespace cuda {
@@ -294,47 +336,9 @@ void buildLBVH_GPU(const gpu::WorkSize &workSize,
       prims.cuptr(), sortedCodes.cuptr(), outLeafTriIndices.cuptr(), N);
 
   // // 5) Initialize leaf nodes [N-1 .. 2*N-2]
-  // const GPUC_UINT INVALID = numeric_limits<GPUC_UINT>::max();
-
-  // for (size_t i = 0; i < N; ++i) {
-  //   size_t leafIndex = (N - 1) + i;
-  //   BVHNodeGPU &leaf = outNodes[leafIndex];
-
-  //   leaf.aabb = prims[i].aabb;
-  //   leaf.leftChildIndex = INVALID;
-  //   leaf.rightChildIndex = INVALID;
-  // }
-
   // // 6) Build internal nodes [0 .. N-2]
-  // for (int i = 0; i < static_cast<int>(N) - 1; ++i) {
-  //   int first, last;
-  //   determine_range(sortedCodes, static_cast<int>(N), i, first, last);
-  //   int split = find_split(sortedCodes, first, last);
-
-  //   // Left child
-  //   int leftIndex;
-  //   if (split == first) {
-  //     // Range [first, split] has one primitive -> leaf
-  //     leftIndex = static_cast<int>((N - 1) + split);
-  //   } else {
-  //     // Internal node
-  //     leftIndex = split;
-  //   }
-
-  //   // Right child
-  //   int rightIndex;
-  //   if (split + 1 == last) {
-  //     // Range [split+1, last] has one primitive -> leaf
-  //     rightIndex = static_cast<int>((N - 1) + split + 1);
-  //   } else {
-  //     // Internal node
-  //     rightIndex = split + 1;
-  //   }
-
-  //   BVHNodeGPU &node = outNodes[static_cast<size_t>(i)];
-  //   node.leftChildIndex = static_cast<GPUC_UINT>(leftIndex);
-  //   node.rightChildIndex = static_cast<GPUC_UINT>(rightIndex);
-  // }
+  ::buildBVHNodes<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+      prims.cuptr(), sortedCodes.cuptr(), outNodes.cuptr(), N);
 
   // // 7.1) Enumerating bottom-up traversal order for internal nodes to build AABB
   // vector<int> traversalOrder = {0}; // starting with root node
