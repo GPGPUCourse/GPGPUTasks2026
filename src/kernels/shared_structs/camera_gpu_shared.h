@@ -73,6 +73,11 @@ GPU_STRUCT_BEGIN(CameraViewGPU)
     GPUC_UINT           magic_bits_guard;
 GPU_STRUCT_END(CameraViewGPU)
 
+GPU_STRUCT_BEGIN(PixelInfoGPU)
+    float t;
+    GPUC_UINT normalCompressed;
+GPU_STRUCT_END(PixelInfoGPU)
+
 /* ---------------- Host-only layout checks ---------------- */
 #if !defined(__OPENCL_VERSION__)
   /* These static_asserts are ignored in OpenCL C.

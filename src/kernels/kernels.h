@@ -4,7 +4,6 @@
 
 #include "shared_structs/camera_gpu_shared.h"
 #include "shared_structs/bvh_node_gpu_shared.h"
-
 namespace cuda {
 void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n);
 
@@ -13,14 +12,36 @@ void ray_tracing_render_brute_force(const gpu::WorkSize &workSize,
     gpu::gpu_mem_32i &framebuffer_face_id,
     gpu::gpu_mem_32f &framebuffer_ambient_occlusion,
     gpu::shared_device_buffer_typed<CameraViewGPU> camera,
-    unsigned int nfaces);
+    unsigned int nfaces,
+    bool enableDenoising,
+    gpu::shared_device_buffer_typed<PixelInfoGPU> *framebuffer_pixel_info,
+    gpu::shared_device_buffer_typed<float> *framebuffer_ambient_occlusion_temp);
 void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
     const gpu::shared_device_buffer_typed<BVHNodeGPU> &bvhNodes, const gpu::gpu_mem_32u &leafTriIndices,
     gpu::gpu_mem_32i &framebuffer_face_id,
     gpu::gpu_mem_32f &framebuffer_ambient_occlusion,
     gpu::shared_device_buffer_typed<CameraViewGPU> camera,
-    unsigned int nfaces);
+    unsigned int nfaces, 
+    bool enableDenoising,
+    gpu::shared_device_buffer_typed<PixelInfoGPU> *framebuffer_pixel_info, 
+    gpu::shared_device_buffer_typed<float> *framebuffer_ambient_occlusion_temp);
+
+struct LBVHBuilderScratchData {
+  LBVHBuilderScratchData(int N);
+  gpu::gpu_mem_any prims;
+  gpu::shared_device_buffer_typed<float3> cMin;
+  gpu::shared_device_buffer_typed<float3> cMax;
+  gpu::shared_device_buffer_typed<uint32_t> sortedCodes;
+  gpu::shared_device_buffer_typed<uint32_t> parents;
+  gpu::shared_device_buffer_typed<uint32_t> visitCounters;
+};
+
+void buildLBVH_GPU(const gpu::gpu_mem_32f &vertices,
+                   const gpu::gpu_mem_32u &faces, uint32_t N,
+                   gpu::shared_device_buffer_typed<BVHNodeGPU> &outNodes,
+                   gpu::gpu_mem_32u &outLeafTriIndices,
+                   LBVHBuilderScratchData &scratchData);
 }
 
 namespace ocl {

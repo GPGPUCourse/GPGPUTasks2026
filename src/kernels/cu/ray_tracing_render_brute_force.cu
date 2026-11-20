@@ -11,6 +11,7 @@
 #include "camera_helpers.cu"
 #include "geometry_helpers.cu"
 #include "random_helpers.cu"
+#include "ao_denoising.cuh"
 
 // Cast a single ray and report if ANY triangle is hit
 __device__ bool any_hit_from(const float3& orig, const float3& dir,
@@ -47,7 +48,9 @@ __global__ void ray_tracing_render_brute_force(
     int* framebuffer_face_id,
     float* framebuffer_ambient_occlusion,  // already passed from host
     CameraViewGPU *camera,
-    unsigned int nfaces
+    unsigned int nfaces,
+    PixelInfoGPU* framebuffer_pixel_info,
+    bool writePixelInfo
 )
 {
     const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -82,6 +85,12 @@ __global__ void ray_tracing_render_brute_force(
     framebuffer_face_id[idx] = faceIdBest;
 
     float ao = 1.0f; // background stays white
+    if (writePixelInfo && faceIdBest < 0) {
+        PixelInfoGPU backgroundInfo;
+        backgroundInfo.t = 0.f;
+        backgroundInfo.normalCompressed = 0u;
+        framebuffer_pixel_info[idx] = backgroundInfo;
+    }
     if (faceIdBest >= 0) {
         uint3 f = loadFace(faces, faceIdBest);
         float3 a = loadVertex(vertices, f.x);
@@ -91,6 +100,13 @@ __global__ void ray_tracing_render_brute_force(
         float3 e1 = {b.x - a.x, b.y - a.y, b.z - a.z};
         float3 e2 = {c.x - a.x, c.y - a.y, c.z - a.z};
         float3 n  = normalize_f3(cross_f3(e1, e2));
+
+        if (writePixelInfo) {
+            PixelInfoGPU pixelInfo;
+            pixelInfo.t = tBest;
+            pixelInfo.normalCompressed = ao_denoising::compressNormal(n);
+            framebuffer_pixel_info[idx] = pixelInfo;
+        }
 
         // ensure hemisphere is "outside" relative to the camera ray
         if (n.x*ray_direction.x + n.y*ray_direction.y + n.z*ray_direction.z > 0.0f)
@@ -148,7 +164,10 @@ void ray_tracing_render_brute_force(const gpu::WorkSize &workSize,
     gpu::gpu_mem_32i &framebuffer_face_id,
     gpu::gpu_mem_32f &framebuffer_ambient_occlusion,
     gpu::shared_device_buffer_typed<CameraViewGPU> camera,
-    unsigned int nfaces)
+    unsigned int nfaces,
+    bool enableDenoising,
+    gpu::shared_device_buffer_typed<PixelInfoGPU> *framebuffer_pixel_info,
+    gpu::shared_device_buffer_typed<float> *framebuffer_ambient_occlusion_temp)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
@@ -157,8 +176,12 @@ void ray_tracing_render_brute_force(const gpu::WorkSize &workSize,
         vertices.cuptr(), faces.cuptr(),
         framebuffer_face_id.cuptr(), framebuffer_ambient_occlusion.cuptr(),
         camera.cuptr(),
-        nfaces
-        );
+        nfaces, framebuffer_pixel_info->cuptr(), enableDenoising);
+    if (enableDenoising) {
+        ao_denoising::denoiseAO(workSize, camera.cuptr(), framebuffer_ambient_occlusion.cuptr(),
+                               framebuffer_ambient_occlusion_temp->cuptr(),
+                               framebuffer_pixel_info->cuptr(), stream);
+    }
     CUDA_CHECK_KERNEL(stream);
 }
 } // namespace cuda

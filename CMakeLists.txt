@@ -82,7 +82,8 @@ endforeach()
 set(VULKAN_SOURCES
         src/kernels/vk/aplusb.comp
         src/kernels/vk/ray_tracing_render_brute_force.comp
-        src/kernels/vk/ray_tracing_render_using_lbvh.comp)
+        src/kernels/vk/ray_tracing_render_using_lbvh.comp
+        src/kernels/vk/ray_tracing_render_using_ray_query.comp)
 
 set(VULKAN_DEFINES)
 foreach(VK_FILE IN LISTS VULKAN_SOURCES)
@@ -92,6 +93,10 @@ endforeach()
 if (GPU_CUDA_SUPPORT)
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
+    find_path(THRUST_INCLUDE_DIR thrust/sort.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS}
+        PATH_SUFFIXES cccl
+        REQUIRED)
 
     # Компиляция CUDA происходит NVCC компилятором, все файлы с расширением .cu компилируются два раза:
     # 1) один раз обычным компилятором - для HOST-side кода, компилируются только те функции которые не помечены специально что они для видеокарты (или помечены что они и для видеокарты и для HOST-side кода)
@@ -100,12 +105,21 @@ if (GPU_CUDA_SUPPORT)
     set(CUDA_SOURCES
             src/kernels/cu/aplusb.cu
             src/kernels/cu/ray_tracing_render_brute_force.cu
-            src/kernels/cu/ray_tracing_render_using_lbvh.cu)
+            src/kernels/cu/ray_tracing_render_using_lbvh.cu
+            src/kernels/cu/lbvh_builder.cu)
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
-    target_include_directories(${PROJECT_NAME}_core PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    target_compile_options(${PROJECT_NAME}_core PRIVATE
+        $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
+    if (MSVC)
+        target_compile_options(${PROJECT_NAME}_core PRIVATE
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:__cplusplus>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>)
+    endif ()
+    target_include_directories(${PROJECT_NAME}_core PRIVATE
+        ${CUDAToolkit_INCLUDE_DIRS} ${THRUST_INCLUDE_DIR})
 else ()
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${HEADERS})
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})

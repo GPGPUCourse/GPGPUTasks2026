@@ -1,0 +1,232 @@
+#version 460
+#extension GL_EXT_ray_query : require
+
+#include <libgpu/vulkan/vk/common.vk>
+
+#include "../defines.h"
+#include "../shared_structs/camera_gpu_shared.h"
+
+layout (std430, set = 0, binding = 0) readonly buffer VerticesIn
+{
+    float vertices[];
+};
+
+layout (std430, set = 0, binding = 1) readonly buffer FacesIn
+{
+    uint faces[];
+};
+
+layout (set = 0, binding = 2) uniform accelerationStructureEXT scene;
+
+layout (std430, set = 0, binding = 3) writeonly buffer FramebufferFaceIdOut
+{
+    int framebuffer_face_id[];
+};
+
+layout (std430, set = 0, binding = 4) writeonly buffer FramebufferAOOut
+{
+    float framebuffer_ambient_occlusion[];
+};
+
+layout (std430, set = 0, binding = 5) readonly buffer CameraBuffer
+{
+    CameraViewGPU camera;
+};
+
+layout (local_size_x = GROUP_SIZE_X, local_size_y = GROUP_SIZE_Y) in;
+
+const float FLT_MAX_GLSL = 3.402823466e+38;
+
+vec3 normalize3(vec3 v)
+{
+    float inv = inversesqrt(dot(v, v));
+    return v * inv;
+}
+
+void make_primary_ray(in CameraViewGPU cam, float u, float v,
+                      out vec3 ray_o, out vec3 ray_d)
+{
+    float x_cam = (u - cam.K.cx) / cam.K.fx;
+    float y_cam = -(v - cam.K.cy) / cam.K.fy;
+    float z_cam = -1.0;
+
+    float dx = cam.E.R[0] * x_cam + cam.E.R[3] * y_cam + cam.E.R[6] * z_cam;
+    float dy = cam.E.R[1] * x_cam + cam.E.R[4] * y_cam + cam.E.R[7] * z_cam;
+    float dz = cam.E.R[2] * x_cam + cam.E.R[5] * y_cam + cam.E.R[8] * z_cam;
+
+    ray_o = vec3(cam.E.C[0], cam.E.C[1], cam.E.C[2]);
+    ray_d = normalize3(vec3(dx, dy, dz));
+}
+
+vec3 loadVertex(uint vi)
+{
+    uint base = 3u * vi;
+    return vec3(
+        vertices[base + 0u],
+        vertices[base + 1u],
+        vertices[base + 2u]
+    );
+}
+
+uvec3 loadFace(uint fi)
+{
+    uint base = 3u * fi;
+    return uvec3(
+        faces[base + 0u],
+        faces[base + 1u],
+        faces[base + 2u]
+    );
+}
+
+vec3 cross_f3(vec3 a, vec3 b)
+{
+    return cross(a, b);
+}
+
+vec3 normalize_f3(vec3 v)
+{
+    float inv = inversesqrt(dot(v, v) + 1e-20);
+    return v * inv;
+}
+
+float length_f3(vec3 v)
+{
+    return length(v);
+}
+
+float random01(inout uint s)
+{
+    s = s * 1664525u + 1013904223u;
+    return float(s >> 8u) * (1.0 / 16777216.0);
+}
+
+bool ray_query_closest_hit(vec3 origin, vec3 direction, float t_min,
+                           out float hit_t, out int face_id)
+{
+    hit_t = FLT_MAX_GLSL;
+    face_id = -1;
+
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, scene, gl_RayFlagsOpaqueEXT, 0xFF,
+                          origin, t_min, direction, FLT_MAX_GLSL);
+    while (rayQueryProceedEXT(query)) {}
+
+    if (rayQueryGetIntersectionTypeEXT(query, true) !=
+        gl_RayQueryCommittedIntersectionTriangleEXT)
+        return false;
+
+    hit_t = rayQueryGetIntersectionTEXT(query, true);
+    face_id = rayQueryGetIntersectionPrimitiveIndexEXT(query, true);
+    return true;
+}
+
+bool any_hit_from(vec3 origin, vec3 direction, int ignore_face)
+{
+    rayQueryEXT query;
+    rayQueryInitializeEXT(query, scene,
+                          gl_RayFlagsNoOpaqueEXT | gl_RayFlagsTerminateOnFirstHitEXT,
+                          0xFF, origin, 1e-6, direction, FLT_MAX_GLSL);
+    while (rayQueryProceedEXT(query))
+    {
+        if (rayQueryGetIntersectionTypeEXT(query, false) ==
+                gl_RayQueryCandidateIntersectionTriangleEXT &&
+            rayQueryGetIntersectionPrimitiveIndexEXT(query, false) != ignore_face)
+            rayQueryConfirmIntersectionEXT(query);
+    }
+
+    return rayQueryGetIntersectionTypeEXT(query, true) ==
+        gl_RayQueryCommittedIntersectionTriangleEXT;
+}
+
+void make_basis(vec3 n, out vec3 t, out vec3 b)
+{
+    vec3 up = (abs(n.z) < 0.999) ? vec3(0.0, 0.0, 1.0)
+                                 : vec3(0.0, 1.0, 0.0);
+    t = normalize_f3(cross_f3(up, n));
+    b = cross_f3(n, t);
+}
+
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    uint j = gl_GlobalInvocationID.y;
+
+    if (i >= uint(camera.K.width) || j >= uint(camera.K.height))
+        return;
+
+    vec3 ray_origin;
+    vec3 ray_direction;
+    make_primary_ray(camera,
+                     float(i) + 0.5,
+                     float(j) + 0.5,
+                     ray_origin, ray_direction);
+
+    float tMin  = 1e-6;
+    float tBest = FLT_MAX_GLSL;
+    int faceIdBest = -1;
+
+    bool hit = ray_query_closest_hit(
+        ray_origin, ray_direction, tMin, tBest, faceIdBest);
+
+    uint idx = j * uint(camera.K.width) + i;
+    framebuffer_face_id[idx] = faceIdBest;
+
+    float ao = 1.0; // background stays white
+
+    if (hit)
+    {
+        uvec3 f = loadFace(uint(faceIdBest));
+        vec3 a = loadVertex(f.x);
+        vec3 b = loadVertex(f.y);
+        vec3 c = loadVertex(f.z);
+
+        vec3 e1 = b - a;
+        vec3 e2 = c - a;
+        vec3 n  = normalize_f3(cross_f3(e1, e2));
+
+        // ensure hemisphere is "outside" relative to the camera ray
+        if (dot(n, ray_direction) > 0.0)
+            n = -n;
+
+        vec3 P = ray_origin + tBest * ray_direction;
+
+        float scale = max(max(length_f3(e1), length_f3(e2)),
+                          length_f3(c - a));
+        float eps   = 1e-3 * max(1.0, scale);
+        vec3 Po     = P + n * eps;
+
+        vec3 T, B;
+        make_basis(n, T, B);
+
+        uint tBestBits = floatBitsToUint(tBest);
+        uint rng = 0x9E3779B9u ^ idx ^ tBestBits;
+
+        int hits = 0;
+        for (int s = 0; s < AO_SAMPLES; ++s)
+        {
+            float u1 = random01(rng);
+            float u2 = random01(rng);
+
+            float z  = u1;
+            float phi = 6.28318530718 * u2;
+            float r  = sqrt(max(0.0, 1.0 - z * z));
+
+            vec3 d_local = vec3(r * cos(phi),
+                                r * sin(phi),
+                                z);
+
+            vec3 d = vec3(
+                T.x * d_local.x + B.x * d_local.y + n.x * d_local.z,
+                T.y * d_local.x + B.y * d_local.y + n.y * d_local.z,
+                T.z * d_local.x + B.z * d_local.y + n.z * d_local.z
+            );
+
+            if (any_hit_from(Po, d, faceIdBest))
+                ++hits;
+        }
+
+        ao = 1.0 - float(hits) / float(AO_SAMPLES);
+    }
+
+    framebuffer_ambient_occlusion[idx] = ao;
+}

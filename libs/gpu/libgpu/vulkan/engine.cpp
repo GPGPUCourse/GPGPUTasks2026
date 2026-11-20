@@ -405,6 +405,64 @@ public:
                     pNextFeature = &subgroup_size_control_features;
                 }
 
+		vk::PhysicalDeviceBufferDeviceAddressFeatures address_features;
+		vk::PhysicalDeviceAccelerationStructureFeaturesKHR acceleration_features;
+		vk::PhysicalDeviceRayTracingPipelineFeaturesKHR ray_tracing_features;
+		vk::PhysicalDeviceRayQueryFeaturesKHR ray_query_features;
+		bool ray_tracing_pipeline_enabled = false;
+		bool ray_query_enabled = false;
+		if (device_info_.supportsExtension(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME) &&
+			device_info_.supportsExtension(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME)) {
+			auto supported_features = physical_device_->getFeatures2<
+				vk::PhysicalDeviceFeatures2,
+				vk::PhysicalDeviceBufferDeviceAddressFeatures,
+				vk::PhysicalDeviceAccelerationStructureFeaturesKHR>();
+			const bool acceleration_structure_supported =
+				supported_features.get<vk::PhysicalDeviceBufferDeviceAddressFeatures>().bufferDeviceAddress &&
+				supported_features.get<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>().accelerationStructure;
+			if (acceleration_structure_supported &&
+				device_info_.supportsExtension(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME)) {
+				auto pipeline_features = physical_device_->getFeatures2<
+					vk::PhysicalDeviceFeatures2,
+					vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>();
+				ray_tracing_pipeline_enabled = pipeline_features.get<
+					vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>().rayTracingPipeline;
+			}
+			if (acceleration_structure_supported &&
+				device_info_.supportsExtension(VK_KHR_RAY_QUERY_EXTENSION_NAME)) {
+				auto query_features = physical_device_->getFeatures2<
+					vk::PhysicalDeviceFeatures2,
+					vk::PhysicalDeviceRayQueryFeaturesKHR>();
+				ray_query_enabled = query_features.get<
+					vk::PhysicalDeviceRayQueryFeaturesKHR>().rayQuery;
+			}
+		}
+		ray_tracing_enabled_ = ray_tracing_pipeline_enabled || ray_query_enabled;
+		if (ray_tracing_enabled_) {
+			device_enabled_extensions.push_back(VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME);
+			device_enabled_extensions.push_back(VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME);
+
+			address_features.setBufferDeviceAddress(true);
+			address_features.setPNext(pNextFeature);
+			pNextFeature = &address_features;
+
+			acceleration_features.setAccelerationStructure(true);
+			acceleration_features.setPNext(pNextFeature);
+			pNextFeature = &acceleration_features;
+		}
+		if (ray_tracing_pipeline_enabled) {
+			device_enabled_extensions.push_back(VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME);
+			ray_tracing_features.setRayTracingPipeline(true);
+			ray_tracing_features.setPNext(pNextFeature);
+			pNextFeature = &ray_tracing_features;
+		}
+		if (ray_query_enabled) {
+			device_enabled_extensions.push_back(VK_KHR_RAY_QUERY_EXTENSION_NAME);
+			ray_query_features.setRayQuery(true);
+			ray_query_features.setPNext(pNextFeature);
+			pNextFeature = &ray_query_features;
+		}
+
 		vk::DeviceCreateInfo device_create_info({}, queue_create_info, {}, device_enabled_extensions, nullptr, pNextFeature);
 		device_ = std::make_shared<vk::raii::Device>(physical_device_->createDevice(device_create_info));
 
@@ -414,6 +472,9 @@ public:
 		vulkanFunctions.vkGetDeviceProcAddr = physical_device_->getDispatcher()->vkGetDeviceProcAddr;
 		VmaAllocatorCreateInfo allocatorCreateInfo = {};
 		allocatorCreateInfo.flags = 0;
+		if (ray_tracing_enabled_) {
+			allocatorCreateInfo.flags |= VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT;
+		}
 		if (device_info_.supportsFreeMemoryRequest()) {
 			allocatorCreateInfo.flags |= VMA_ALLOCATOR_CREATE_EXT_MEMORY_BUDGET_BIT;
 		}
@@ -428,7 +489,8 @@ public:
 
 		queue_ = std::make_shared<vk::raii::Queue>(device_->getQueue(*queue_family_index, 0));
 
-		vk::CommandPoolCreateInfo command_pool_create_info({}, *queue_family_index);
+		vk::CommandPoolCreateInfo command_pool_create_info(
+			vk::CommandPoolCreateFlagBits::eResetCommandBuffer, *queue_family_index);
 		command_pool_ = std::make_shared<vk::raii::CommandPool>(device_->createCommandPool(command_pool_create_info));
 
 		std::vector<vk::DescriptorPoolSize> pool_size_per_type;
@@ -454,6 +516,8 @@ public:
 		physical_device_.reset();
 		instance_context_.reset();
 	}
+
+	bool ray_tracing_enabled_ = false;
 
 	avk2::Device								device_info_;
 
@@ -612,6 +676,11 @@ avk2::raii::BufferData* avk2::VulkanEngine::createBuffer(size_t size)
 	usage_flags |= vk::BufferUsageFlagBits::eTransferSrc; // required for usage as SRC in copyBuffer(SRC, dst) - i.e. for shared_device_buffer::read
 	usage_flags |= vk::BufferUsageFlagBits::eVertexBuffer;// required for usage as vertices buffer - i.e. can be used via vkCmdBindVertexBuffers
 	usage_flags |= vk::BufferUsageFlagBits::eIndexBuffer; // required for usage as indices (i.e. faces) buffer - i.e. can be used via vkCmdBindIndexBuffer
+	if (avk2_context_->ray_tracing_enabled_) {
+		usage_flags |= vk::BufferUsageFlagBits::eAccelerationStructureBuildInputReadOnlyKHR;
+		usage_flags |= vk::BufferUsageFlagBits::eAccelerationStructureStorageKHR;
+		usage_flags |= vk::BufferUsageFlagBits::eShaderDeviceAddress;
+	}
 	vk::BufferCreateInfo raii_buffer_create_info{vk::BufferCreateFlags(), size, usage_flags, vk::SharingMode::eExclusive, 1, &getQueueFamilyIndex()};
 	VkBufferCreateInfo buffer_create_info = raii_buffer_create_info;
 
@@ -1072,6 +1141,20 @@ void avk2::VulkanEngine::clearFences()
 avk2::VersionedBinary::VersionedBinary(const char *data, const size_t size)
 		: data_(data), size_(size)
 {}
+
+vk::raii::ShaderModule avk2::createShaderModule(
+    const vk::raii::Device &device, const VersionedBinary &binary)
+{
+    rassert(binary.data() != nullptr && binary.size() > 0 &&
+        binary.size() % sizeof(uint32_t) == 0, 781463592701);
+
+    std::vector<uint32_t> code(binary.size() / sizeof(uint32_t));
+    memcpy(code.data(), binary.data(), binary.size());
+
+    vk::ShaderModuleCreateInfo create_info;
+    create_info.setCode(code);
+    return device.createShaderModule(create_info);
+}
 
 avk2::ProgramBinaries::ProgramBinaries(std::vector<const VersionedBinary*> binaries, std::string program_name)
 {
