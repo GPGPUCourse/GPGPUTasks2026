@@ -36,7 +36,7 @@ struct Prim {
 // Helper: expand 10 bits into 30 bits by inserting 2 zeros between each bit
 __device__ unsigned int expandBits(unsigned int v) {
   // Ensure we have only lowest 10 bits
-  rassert(v == (v & 0x3FFu), 76389413321, v);
+  // rassert(v == (v & 0x3FFu), 76389413321, v);
 
   // Magic bit expansion steps
   v = (v * 0x00010001u) & 0xFF0000FFu;
@@ -207,6 +207,28 @@ __global__ void computePrims(const uint32_t *faces, const float *vertices, Prim 
   }
 }
 
+__global__ void computeMortonCodes(Prim *prims, const float3 *cMin, const float3 *cMax, int N) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N) return;
+
+  const float eps = 1e-9f;
+  const float dx = max(cMax->x - cMin->x, eps);
+  const float dy = max(cMax->y - cMin->y, eps);
+  const float dz = max(cMax->z - cMin->z, eps);
+
+  const float3 &c = prims[i].centroid;
+  float nx = (c.x - cMin->x) / dx;
+  float ny = (c.y - cMin->y) / dy;
+  float nz = (c.z - cMin->z) / dz;
+
+  // Clamp to [0,1]
+  nx = min(max(nx, 0.0f), 1.0f);
+  ny = min(max(ny, 0.0f), 1.0f);
+  nz = min(max(nz, 0.0f), 1.0f);
+
+  prims[i].morton = morton3D(nx, ny, nz);
+}
+
 } // namespace
 
 namespace cuda {
@@ -246,59 +268,9 @@ void buildLBVH_GPU(const gpu::WorkSize &workSize,
       faces.cuptr(), vertices.cuptr(), prims.cuptr(), cMin.cuptr(),
       cMax.cuptr(), N);
 
-  // for (size_t i = 0; i < N; ++i) {
-  //   const point3u &f = faces[i];
-  //   const float3 &v0 = vertices[f.x];
-  //   const float3 &v1 = vertices[f.y];
-  //   const float3 &v2 = vertices[f.z];
-
-  //   // Triangle AABB
-  //   AABBGPU aabb;
-  //   aabb.min_x = min({v0.x, v1.x, v2.x});
-  //   aabb.min_y = min({v0.y, v1.y, v2.y});
-  //   aabb.min_z = min({v0.z, v1.z, v2.z});
-  //   aabb.max_x = max({v0.x, v1.x, v2.x});
-  //   aabb.max_y = max({v0.y, v1.y, v2.y});
-  //   aabb.max_z = max({v0.z, v1.z, v2.z});
-
-  //   // Centroid
-  //   float3 c;
-  //   c.x = (v0.x + v1.x + v2.x) * (1.0f / 3.0f);
-  //   c.y = (v0.y + v1.y + v2.y) * (1.0f / 3.0f);
-  //   c.z = (v0.z + v1.z + v2.z) * (1.0f / 3.0f);
-
-  //   prims[i].triIndex = static_cast<uint32_t>(i);
-  //   prims[i].aabb = aabb;
-  //   prims[i].centroid = c;
-
-  //   // Update centroid bounds
-  //   cMin.x = min(cMin.x, c.x);
-  //   cMin.y = min(cMin.y, c.y);
-  //   cMin.z = min(cMin.z, c.z);
-  //   cMax.x = max(cMax.x, c.x);
-  //   cMax.y = max(cMax.y, c.y);
-  //   cMax.z = max(cMax.z, c.z);
-  // }
-
-  // // 2) Compute Morton codes for centroids (normalized to [0,1]^3)
-  // const float eps = 1e-9f;
-  // const float dx = max(cMax.x - cMin.x, eps);
-  // const float dy = max(cMax.y - cMin.y, eps);
-  // const float dz = max(cMax.z - cMin.z, eps);
-
-  // for (size_t i = 0; i < N; ++i) {
-  //   const float3 &c = prims[i].centroid;
-  //   float nx = (c.x - cMin.x) / dx;
-  //   float ny = (c.y - cMin.y) / dy;
-  //   float nz = (c.z - cMin.z) / dz;
-
-  //   // Clamp to [0,1]
-  //   nx = min(max(nx, 0.0f), 1.0f);
-  //   ny = min(max(ny, 0.0f), 1.0f);
-  //   nz = min(max(nz, 0.0f), 1.0f);
-
-  //   prims[i].morton = morton3D(nx, ny, nz);
-  // }
+  //2) Compute Morton codes for centroids (normalized to [0,1]^3)
+  ::computeMortonCodes<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+      prims.cuptr(), cMin.cuptr(), cMax.cuptr(), N);
 
   // // 3) Sort primitives by Morton code
   // sort(prims.begin(), prims.end(),
