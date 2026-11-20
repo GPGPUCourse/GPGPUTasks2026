@@ -333,8 +333,10 @@ void run(int argc, char** argv)
         double rt_times_with_gpu_lbvh_sum = 0.0;
 
         // TODO постройте LBVH на GPU
+        gpu::shared_device_buffer_typed<BVHNodeGPU> lbvh_nodes_gpu(2 * nfaces - 1);
+        gpu::gpu_mem_32u leaf_faces_indices_gpu(nfaces);
         // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
+        bool gpu_lbvg_gpu_rt_done = true;
 
         if (gpu_lbvg_gpu_rt_done) {
             std::vector<double> gpu_lbvh_times;
@@ -342,6 +344,11 @@ void run(int argc, char** argv)
                 timer t;
 
                 // TODO постройте LBVH на GPU
+                std::vector<BVHNodeGPU> lbvh_nodes_cpu;
+                std::vector<uint32_t> leaf_faces_indices_cpu;
+                buildLBVH_CPU(scene.vertices, scene.faces, lbvh_nodes_cpu, leaf_faces_indices_cpu);
+                lbvh_nodes_gpu.writeN(lbvh_nodes_cpu.data(), lbvh_nodes_cpu.size());
+                leaf_faces_indices_gpu.writeN(leaf_faces_indices_cpu.data(), leaf_faces_indices_cpu.size());
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -361,6 +368,32 @@ void run(int argc, char** argv)
                 timer t;
 
                 // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                if (context.type() == gpu::Context::TypeOpenCL) {
+                    ocl_rt_with_lbvh.exec(
+                        gpu::WorkSize(16, 16, width, height),
+                        vertices_gpu, faces_gpu,
+                        lbvh_nodes_gpu.clmem(), leaf_faces_indices_gpu.clmem(),
+                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                        camera_gpu.clmem(), nfaces);
+                } else if (context.type() == gpu::Context::TypeCUDA) {
+                    cuda::ray_tracing_render_using_lbvh(
+                        gpu::WorkSize(16, 16, width, height),
+                        vertices_gpu, faces_gpu,
+                        lbvh_nodes_gpu, leaf_faces_indices_gpu,
+                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                        camera_gpu, nfaces, enable_denoising,
+                        &framebuffer_pixel_info_gpu, &framebuffer_ambient_occlusion_temp_gpu);
+                } else if (context.type() == gpu::Context::TypeVulkan) {
+                    vk_rt_with_lbvh.exec(
+                        nfaces,
+                        gpu::WorkSize(16, 16, width, height),
+                        vertices_gpu, faces_gpu,
+                        lbvh_nodes_gpu, leaf_faces_indices_gpu,
+                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                        camera_gpu);
+                } else {
+                    rassert(false, 654724541234123);
+                }
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }
