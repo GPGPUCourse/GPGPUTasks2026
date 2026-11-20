@@ -239,7 +239,7 @@ __global__ void prepareArrays(const Prim *prims, uint32_t* sortedCodes, uint32_t
   outLeafTriIndices[i] = prims[i].triIndex;
 }
 
-__global__ void buildBVHNodes(const Prim *prims, const uint32_t *sortedCodes, BVHNodeGPU *outNodes, int N) {
+__global__ void buildBVHNodes(const Prim *prims, const uint32_t *sortedCodes, BVHNodeGPU *outNodes, uint32_t *parents, int N) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= 2*N-1) return;
 
@@ -278,6 +278,8 @@ __global__ void buildBVHNodes(const Prim *prims, const uint32_t *sortedCodes, BV
     BVHNodeGPU &node = outNodes[static_cast<size_t>(i)];
     node.leftChildIndex = leftIndex;
     node.rightChildIndex = rightIndex;
+    parents[leftIndex] = i;
+    parents[rightIndex] = i;
   }
 }
 
@@ -303,9 +305,11 @@ void buildLBVH_GPU(const gpu::WorkSize &workSize,
   static gpu::shared_device_buffer_typed<float3> cMin(1);
   static gpu::shared_device_buffer_typed<float3> cMax(1);
   static gpu::shared_device_buffer_typed<uint32_t> sortedCodes;
+  static gpu::shared_device_buffer_typed<uint32_t> parents;
 
   if (prims.size() < N) prims.resize(N);
   if (sortedCodes.size() < N) sortedCodes.resize(N);
+  if (parents.size() < 2*N-1) sortedCodes.resize(2*N-1);
 
   cMin.fill({+std::numeric_limits<float>::infinity(),
                +std::numeric_limits<float>::infinity(),
@@ -338,7 +342,7 @@ void buildLBVH_GPU(const gpu::WorkSize &workSize,
   // // 5) Initialize leaf nodes [N-1 .. 2*N-2]
   // // 6) Build internal nodes [0 .. N-2]
   ::buildBVHNodes<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-      prims.cuptr(), sortedCodes.cuptr(), outNodes.cuptr(), N);
+      prims.cuptr(), sortedCodes.cuptr(), outNodes.cuptr(), parents.cuptr(), N);
 
   // // 7.1) Enumerating bottom-up traversal order for internal nodes to build AABB
   // vector<int> traversalOrder = {0}; // starting with root node
