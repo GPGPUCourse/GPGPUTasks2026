@@ -93,9 +93,10 @@ endforeach()
 if (GPU_CUDA_SUPPORT)
     enable_language(CUDA)
     find_package(CUDAToolkit REQUIRED)
-    find_package(Thrust CONFIG REQUIRED
-        HINTS "${CUDAToolkit_LIBRARY_ROOT}/lib/cmake/thrust")
-    thrust_create_target(ThrustCUDA HOST CPP DEVICE CUDA)
+    find_path(THRUST_INCLUDE_DIR thrust/sort.h
+        HINTS ${CUDAToolkit_INCLUDE_DIRS}
+        PATH_SUFFIXES cccl
+        REQUIRED)
 
     # Компиляция CUDA происходит NVCC компилятором, все файлы с расширением .cu компилируются два раза:
     # 1) один раз обычным компилятором - для HOST-side кода, компилируются только те функции которые не помечены специально что они для видеокарты (или помечены что они и для видеокарты и для HOST-side кода)
@@ -109,10 +110,16 @@ if (GPU_CUDA_SUPPORT)
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
-    target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES} ThrustCUDA)
+    target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
     target_compile_options(${PROJECT_NAME}_core PRIVATE
         $<$<COMPILE_LANGUAGE:CUDA>:--extended-lambda>)
-    target_include_directories(${PROJECT_NAME}_core PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
+    if (MSVC)
+        target_compile_options(${PROJECT_NAME}_core PRIVATE
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:__cplusplus>
+            $<$<COMPILE_LANGUAGE:CUDA>:-Xcompiler=/Zc:preprocessor>)
+    endif ()
+    target_include_directories(${PROJECT_NAME}_core PRIVATE
+        ${CUDAToolkit_INCLUDE_DIRS} ${THRUST_INCLUDE_DIR})
 else ()
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${HEADERS})
     target_link_libraries(${PROJECT_NAME}_core ${LIBRARIES})
