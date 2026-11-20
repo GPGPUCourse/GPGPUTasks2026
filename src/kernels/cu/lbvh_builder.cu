@@ -283,6 +283,35 @@ __global__ void buildBVHNodes(const Prim *prims, const uint32_t *sortedCodes, BV
   }
 }
 
+__global__ void computeAABBS(BVHNodeGPU *outNodes, uint32_t *visitCounters, const uint32_t *parents, int N) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N) return;
+  i += N-1;
+
+  while(i != 0) {
+    uint32_t parent = parents[i];
+    uint32_t visits = atomicInc(&visitCounters[parent], 1);
+    if (visits == 1) {
+      return;
+    }
+
+    BVHNodeGPU &parent_node = outNodes[parent];
+    AABBGPU &parent_aabb = parent_node.aabb;
+
+    AABBGPU left_aabb = outNodes[parent_node.leftChildIndex].aabb;
+    AABBGPU right_aabb = outNodes[parent_node.rightChildIndex].aabb;
+
+    parent_aabb.min_x = min(left_aabb.min_x, right_aabb.min_x);
+    parent_aabb.min_y = min(left_aabb.min_y, right_aabb.min_y);
+    parent_aabb.min_z = min(left_aabb.min_z, right_aabb.min_z);
+    parent_aabb.max_x = max(left_aabb.max_x, right_aabb.max_x);
+    parent_aabb.max_y = max(left_aabb.max_y, right_aabb.max_y);
+    parent_aabb.max_z = max(left_aabb.max_z, right_aabb.max_z);
+
+    i = parent;
+  }
+}
+
 } // namespace
 
 namespace cuda {
@@ -306,10 +335,12 @@ void buildLBVH_GPU(const gpu::WorkSize &workSize,
   static gpu::shared_device_buffer_typed<float3> cMax(1);
   static gpu::shared_device_buffer_typed<uint32_t> sortedCodes;
   static gpu::shared_device_buffer_typed<uint32_t> parents;
+  static gpu::shared_device_buffer_typed<uint32_t> visitCounters;
 
   if (prims.size() < N) prims.resize(N);
   if (sortedCodes.size() < N) sortedCodes.resize(N);
   if (parents.size() < 2*N-1) sortedCodes.resize(2*N-1);
+  if (visitCounters.size() < 2*N-1) visitCounters.resize(2*N-1);
 
   cMin.fill({+std::numeric_limits<float>::infinity(),
                +std::numeric_limits<float>::infinity(),
@@ -317,7 +348,7 @@ void buildLBVH_GPU(const gpu::WorkSize &workSize,
   cMax.fill({-std::numeric_limits<float>::infinity(),
               -std::numeric_limits<float>::infinity(),
               -std::numeric_limits<float>::infinity()});
-
+  cudaMemsetAsync(visitCounters.cuptr(), 0, 2*N-1);
 
   // 1) Compute per-triangle AABB and centroids
   ::computePrims<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
@@ -345,44 +376,9 @@ void buildLBVH_GPU(const gpu::WorkSize &workSize,
       prims.cuptr(), sortedCodes.cuptr(), outNodes.cuptr(), parents.cuptr(), N);
 
   // // 7.1) Enumerating bottom-up traversal order for internal nodes to build AABB
-  // vector<int> traversalOrder = {0}; // starting with root node
-  // set<int> alreadyVisited;
-  // size_t next = 0;
-  // while (next < traversalOrder.size()) {
-  //   int i = traversalOrder[next++];
-  //   rassert(alreadyVisited.count(i) == 0, 452341233412, i, next);
-  //   alreadyVisited.insert(i);
-  //   BVHNodeGPU &node = outNodes[static_cast<size_t>(i)];
-  //   if (node.leftChildIndex != INVALID &&
-  //       node.leftChildIndex < N - 1) { // ensuring it is not a leaf
-  //     traversalOrder.push_back(node.leftChildIndex);
-  //   }
-  //   if (node.rightChildIndex != INVALID && node.rightChildIndex < N - 1) {
-  //     traversalOrder.push_back(node.rightChildIndex);
-  //   }
-  // }
-  // rassert(traversalOrder.size() == N - 1, 354623412341, traversalOrder.size(),
-  //         N);
-
   // // 7.2) AABB propagation for internal nodes in the bottom-up traversal order
-  // for (int j = traversalOrder.size() - 1; j >= 0; --j) {
-  //   int i = traversalOrder[j];
-  //   rassert(i < outNodes.size(), 45123413211);
-  //   BVHNodeGPU &node = outNodes[static_cast<size_t>(i)];
-  //   const BVHNodeGPU &left = outNodes[static_cast<size_t>(node.leftChildIndex)];
-  //   const BVHNodeGPU &right =
-  //       outNodes[static_cast<size_t>(node.rightChildIndex)];
-
-  //   AABBGPU aabb;
-  //   aabb.min_x = min(left.aabb.min_x, right.aabb.min_x);
-  //   aabb.min_y = min(left.aabb.min_y, right.aabb.min_y);
-  //   aabb.min_z = min(left.aabb.min_z, right.aabb.min_z);
-  //   aabb.max_x = max(left.aabb.max_x, right.aabb.max_x);
-  //   aabb.max_y = max(left.aabb.max_y, right.aabb.max_y);
-  //   aabb.max_z = max(left.aabb.max_z, right.aabb.max_z);
-
-  //   node.aabb = aabb;
-  // }
+  ::computeAABBS<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+      outNodes.cuptr(), visitCounters.cuptr(), parents.cuptr(), N);
 }
 
 }
