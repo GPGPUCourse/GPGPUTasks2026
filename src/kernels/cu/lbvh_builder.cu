@@ -243,7 +243,7 @@ __global__ void buildBVHNodes(const Prim *prims, const uint32_t *sortedCodes, BV
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= 2*N-1) return;
 
-  if (i >= N) {
+  if (i >= N-1) {
     size_t leafIndex = i;
     BVHNodeGPU &leaf = outNodes[leafIndex];
 
@@ -291,7 +291,7 @@ __global__ void computeAABBS(BVHNodeGPU *outNodes, uint32_t *visitCounters, cons
   while(i != 0) {
     uint32_t parent = parents[i];
     uint32_t visits = atomicInc(&visitCounters[parent], 1);
-    if (visits == 1) {
+    if (visits == 0) {
       return;
     }
 
@@ -316,12 +316,30 @@ __global__ void computeAABBS(BVHNodeGPU *outNodes, uint32_t *visitCounters, cons
 
 namespace cuda {
 
-void buildLBVH_GPU(const gpu::WorkSize &workSize,
-                   const gpu::gpu_mem_32f &vertices,
-                   const gpu::gpu_mem_32u &faces,
-                   uint32_t N,
+struct LBVHBuilderScratchData {
+  LBVHBuilderScratchData(int N);
+  gpu::gpu_mem_any prims;
+  gpu::shared_device_buffer_typed<float3> cMin;
+  gpu::shared_device_buffer_typed<float3> cMax;
+  gpu::shared_device_buffer_typed<uint32_t> sortedCodes;
+  gpu::shared_device_buffer_typed<uint32_t> parents;
+  gpu::shared_device_buffer_typed<uint32_t> visitCounters;
+};
+
+LBVHBuilderScratchData::LBVHBuilderScratchData(int N) {
+  prims.resize(N * sizeof(Prim));
+  sortedCodes.resizeN(N);
+  cMin.resizeN(1);
+  cMax.resizeN(1);
+  parents.resizeN(2 * N - 1);
+  visitCounters.resizeN(2 * N - 1);
+}
+
+void buildLBVH_GPU(const gpu::gpu_mem_32f &vertices,
+                   const gpu::gpu_mem_32u &faces, uint32_t N,
                    gpu::shared_device_buffer_typed<BVHNodeGPU> &outNodes,
-                   gpu::gpu_mem_32u &outLeafTriIndices) {
+                   gpu::gpu_mem_32u &outLeafTriIndices,
+                   LBVHBuilderScratchData &scratchData) {
   if (N == 0) {
     return;
   }
@@ -330,17 +348,7 @@ void buildLBVH_GPU(const gpu::WorkSize &workSize,
   rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
   cudaStream_t stream = context.cudaStream();
 
-  static gpu::shared_device_buffer_typed<Prim> prims;
-  static gpu::shared_device_buffer_typed<float3> cMin(1);
-  static gpu::shared_device_buffer_typed<float3> cMax(1);
-  static gpu::shared_device_buffer_typed<uint32_t> sortedCodes;
-  static gpu::shared_device_buffer_typed<uint32_t> parents;
-  static gpu::shared_device_buffer_typed<uint32_t> visitCounters;
-
-  if (prims.size() < N) prims.resize(N);
-  if (sortedCodes.size() < N) sortedCodes.resize(N);
-  if (parents.size() < 2*N-1) sortedCodes.resize(2*N-1);
-  if (visitCounters.size() < 2*N-1) visitCounters.resize(2*N-1);
+  auto &[prims, cMin, cMax, sortedCodes, parents, visitCounters] = scratchData;
 
   cMin.fill({+std::numeric_limits<float>::infinity(),
                +std::numeric_limits<float>::infinity(),
@@ -348,37 +356,40 @@ void buildLBVH_GPU(const gpu::WorkSize &workSize,
   cMax.fill({-std::numeric_limits<float>::infinity(),
               -std::numeric_limits<float>::infinity(),
               -std::numeric_limits<float>::infinity()});
-  cudaMemsetAsync(visitCounters.cuptr(), 0, 2*N-1);
+  cudaMemsetAsync(visitCounters.cuptr(), 0, (2*N-1)*sizeof(uint32_t), stream);
+
+  gpu::WorkSize wsN(GROUP_SIZE, N);
+  gpu::WorkSize ws2N(GROUP_SIZE, 2*N-1);
 
   // 1) Compute per-triangle AABB and centroids
-  ::computePrims<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-      faces.cuptr(), vertices.cuptr(), prims.cuptr(), cMin.cuptr(),
+  ::computePrims<<<wsN.cuGridSize(), wsN.cuBlockSize(), 0, stream>>>(
+      faces.cuptr(), vertices.cuptr(), (Prim*)prims.cuptr(), cMin.cuptr(),
       cMax.cuptr(), N);
 
   //2) Compute Morton codes for centroids (normalized to [0,1]^3)
-  ::computeMortonCodes<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-      prims.cuptr(), cMin.cuptr(), cMax.cuptr(), N);
+  ::computeMortonCodes<<<wsN.cuGridSize(), wsN.cuBlockSize(), 0, stream>>>(
+      (Prim*)prims.cuptr(), cMin.cuptr(), cMax.cuptr(), N);
 
   // 3) Sort primitives by Morton code
-  thrust::stable_sort(thrust::cuda::par.on(stream), prims.cuptr(),
-                      prims.cuptr() + N,
+  thrust::stable_sort(thrust::cuda::par.on(stream), (Prim*)prims.cuptr(),
+                      (Prim*)prims.cuptr() + N,
                       [] __device__(const Prim &a, const Prim &b) {
                         return a.morton < b.morton;
                       });
 
   // // 4) Prepare arrays
-  ::prepareArrays<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-      prims.cuptr(), sortedCodes.cuptr(), outLeafTriIndices.cuptr(), N);
+  ::prepareArrays<<<wsN.cuGridSize(), wsN.cuBlockSize(), 0, stream>>>(
+      (Prim*)prims.cuptr(), sortedCodes.cuptr(), outLeafTriIndices.cuptr(), N);
 
   // // 5) Initialize leaf nodes [N-1 .. 2*N-2]
   // // 6) Build internal nodes [0 .. N-2]
-  ::buildBVHNodes<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
-      prims.cuptr(), sortedCodes.cuptr(), outNodes.cuptr(), parents.cuptr(), N);
+  ::buildBVHNodes<<<ws2N.cuGridSize(), ws2N.cuBlockSize(), 0, stream>>>(
+      (Prim*)prims.cuptr(), sortedCodes.cuptr(), outNodes.cuptr(), parents.cuptr(), N);
 
   // // 7.1) Enumerating bottom-up traversal order for internal nodes to build AABB
   // // 7.2) AABB propagation for internal nodes in the bottom-up traversal order
-  ::computeAABBS<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+  ::computeAABBS<<<wsN.cuGridSize(), wsN.cuBlockSize(), 0, stream>>>(
       outNodes.cuptr(), visitCounters.cuptr(), parents.cuptr(), N);
 }
 
-}
+} // namespace cuda

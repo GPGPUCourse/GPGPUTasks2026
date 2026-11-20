@@ -340,15 +340,20 @@ void run(int argc, char** argv)
 
         if (gpu_lbvg_gpu_rt_done) {
             std::vector<double> gpu_lbvh_times;
+            cuda::LBVHBuilderScratchData scratch(nfaces);
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
                 // TODO постройте LBVH на GPU
-                std::vector<BVHNodeGPU> lbvh_nodes_cpu;
-                std::vector<uint32_t> leaf_faces_indices_cpu;
-                buildLBVH_CPU(scene.vertices, scene.faces, lbvh_nodes_cpu, leaf_faces_indices_cpu);
-                lbvh_nodes_gpu.writeN(lbvh_nodes_cpu.data(), lbvh_nodes_cpu.size());
-                leaf_faces_indices_gpu.writeN(leaf_faces_indices_cpu.data(), leaf_faces_indices_cpu.size());
+                if (context.type() != gpu::Context::Type::TypeCUDA) {
+                  std::vector<BVHNodeGPU> lbvh_nodes_cpu;
+                  std::vector<uint32_t> leaf_faces_indices_cpu;
+                  buildLBVH_CPU(scene.vertices, scene.faces, lbvh_nodes_cpu, leaf_faces_indices_cpu);
+                  lbvh_nodes_gpu.writeN(lbvh_nodes_cpu.data(), lbvh_nodes_cpu.size());
+                  leaf_faces_indices_gpu.writeN(leaf_faces_indices_cpu.data(), leaf_faces_indices_cpu.size());
+                } else {
+                  cuda::buildLBVH_GPU(vertices_gpu, faces_gpu, nfaces, lbvh_nodes_gpu, leaf_faces_indices_gpu, scratch);
+                }
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
