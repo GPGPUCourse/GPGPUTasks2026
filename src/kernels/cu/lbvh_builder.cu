@@ -17,6 +17,9 @@
 
 #include <libbase/point.h>
 
+#include <thrust/sort.h>
+#include <thrust/system/cuda/execution_policy.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
@@ -272,9 +275,12 @@ void buildLBVH_GPU(const gpu::WorkSize &workSize,
   ::computeMortonCodes<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
       prims.cuptr(), cMin.cuptr(), cMax.cuptr(), N);
 
-  // // 3) Sort primitives by Morton code
-  // sort(prims.begin(), prims.end(),
-  //           [](const Prim &a, const Prim &b) { return a.morton < b.morton; });
+  // 3) Sort primitives by Morton code
+  thrust::stable_sort(thrust::cuda::par.on(stream), prims.cuptr(),
+                      prims.cuptr() + N,
+                      [] __device__(const Prim &a, const Prim &b) {
+                        return a.morton < b.morton;
+                      });
 
   // // 4) Prepare arrays
   // const size_t numNodes = 2 * N - 1;
