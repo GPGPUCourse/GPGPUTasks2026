@@ -232,6 +232,13 @@ __global__ void computeMortonCodes(Prim *prims, const float3 *cMin, const float3
   prims[i].morton = morton3D(nx, ny, nz);
 }
 
+__global__ void prepareArrays(const Prim *prims, uint32_t* sortedCodes, uint32_t* outLeafTriIndices, int N) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N) return;
+  sortedCodes[i] = prims[i].morton;
+  outLeafTriIndices[i] = prims[i].triIndex;
+}
+
 } // namespace
 
 namespace cuda {
@@ -283,15 +290,8 @@ void buildLBVH_GPU(const gpu::WorkSize &workSize,
                       });
 
   // // 4) Prepare arrays
-  // const size_t numNodes = 2 * N - 1;
-  // outNodes.resize(numNodes);
-  // outLeafTriIndices.resize(N);
-
-  // vector<uint32_t> sortedCodes(N);
-  // for (size_t i = 0; i < N; ++i) {
-  //   sortedCodes[i] = prims[i].morton;
-  //   outLeafTriIndices[i] = prims[i].triIndex;
-  // }
+  ::prepareArrays<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+      prims.cuptr(), sortedCodes.cuptr(), outLeafTriIndices.cuptr(), N);
 
   // // 5) Initialize leaf nodes [N-1 .. 2*N-2]
   // const GPUC_UINT INVALID = numeric_limits<GPUC_UINT>::max();
