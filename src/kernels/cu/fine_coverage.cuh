@@ -4,20 +4,19 @@ static_assert(TILE_SIZE == 8 && SUBPIXEL == 256);
 using Coverage = unsigned long long;
 constexpr Coverage COLUMN_BITS = 0x0101010101010101ull;
 
-// Two four-column masks, 12 first heights [-3,8], 3 rise bits, 2 orientation bits.
-constexpr unsigned EDGE_LUT_HALF = 12 * 8 * 4;
+// Four-column masks, 12 first heights [-3,8], 3 rise bits, 2 orientation bits.
+constexpr unsigned EDGE_LUT_SIZE = 12 * 8 * 4;
 struct EdgeLut {
-    Coverage masks[2 * EDGE_LUT_HALF];
+    Coverage masks[EDGE_LUT_SIZE];
 };
 
 constexpr EdgeLut makeEdgeLut()
 {
     EdgeLut table{};
-    for (unsigned i = 0; i < 2 * EDGE_LUT_HALF; ++i) {
-        const int firstX = i >= EDGE_LUT_HALF ? 4 : 0;
-        int height = int((i % EDGE_LUT_HALF) >> 5) - 3;
+    for (unsigned i = 0; i < EDGE_LUT_SIZE; ++i) {
+        int height = int(i >> 5) - 3;
         for (int col = 0; col < 4; ++col) {
-            const int x = (i & 1) ? 7 - firstX - col : firstX + col;
+            const int x = (i & 1) ? 7 - col : col;
             for (int y = height > 0 ? height : 0; y < 8; ++y) {
                 const int pixel = (i & 2) ? y + 8 * x : x + 8 * y;
                 table.masks[i] |= 1ull << pixel;
@@ -31,7 +30,7 @@ constexpr EdgeLut makeEdgeLut()
 // Compile-time generated, then staged cooperatively in shared memory by Fine.
 __device__ const EdgeLut edgeLut = makeEdgeLut();
 
-__device__ Coverage edgeMask(ScreenVertex a, ScreenVertex b, int sampleX, int sampleY, const Coverage *lut)
+__device__ Coverage edgeMask(ScreenPoint a, ScreenPoint b, int sampleX, int sampleY, const Coverage *lut)
 {
     // Subtract 1 on exclusive edges to make the integer test uniformly >= 0.
     // Drops the low 8 bits after that bias: all lattice steps are multiples of 256.
@@ -76,26 +75,25 @@ __device__ Coverage edgeMask(ScreenVertex a, ScreenVertex b, int sampleX, int sa
     // three rises in a half, and neither half samples a row outside [0,7].
     const unsigned first = ((max(-3, height) + 3) << 5) | ((rises & 7u) << 2) | orientation;
     const unsigned second = ((min(8, max(-3, height4)) + 3) << 5) | ((rises >> 4) << 2) | orientation;
-    const Coverage mask = lut[first] | lut[EDGE_LUT_HALF + second];
+    // Translate the second half along the (possibly reflected/transposed) column axis.
+    const Coverage half = lut[second];
+    const int shift = swapXY ? 32 : 4;
+    const Coverage mask = lut[first] | (reflectX ? half >> shift : half << shift);
     return complement ? ~mask : mask;
 }
 
 __device__ Coverage triangleMask(const SetupTriangle &tri, int x, int y, const Coverage *lut)
 {
-    const auto box = pixelBounds(tri.a, tri.b, tri.c);
-    const int w = box.x1 - box.x0, h = box.y1 - box.y0;
-    if (w + h == 2) {
-        // Setup already verified coverage, and Coarse assigned it to this tile only.
-        return 1ull << ((box.x0 - x) + (box.y0 - y) * 8);
-    }
-    if (w + h == 3) {
-        // Two candidate centers can straddle a tile boundary. Test only those in this tile.
-        const auto sampleBit = [&](int px, int py) -> Coverage {
-            const unsigned localX = px - x, localY = py - y;
-            return localX < 8 && localY < 8 && coversSample(tri.a, tri.b, tri.c, px, py)
-                ? 1ull << (localX + 8 * localY) : 0ull;
+    const unsigned info = tri.colorAndSamples;
+    if (info & FINE_MICRO) {
+        const int localX = firstRow(tri.a.x) - int((info >> 24) & 3) - x;
+        const int localY = firstRow(tri.a.y) - int((info >> 26) & 3) - y;
+        const auto sampleBit = [](unsigned px, unsigned py) -> Coverage {
+            return px < 8 && py < 8 ? 1ull << (px + 8 * py) : 0ull;
         };
-        return sampleBit(box.x0, box.y0) | sampleBit(box.x1 - 1, box.y1 - 1);
+        const bool nextX = info & (1u << 29), nextY = info & (1u << 30);
+        const Coverage first = (info & (1u << 28)) ? sampleBit(localX, localY) : 0ull;
+        return first | ((nextX || nextY) ? sampleBit(localX + nextX, localY + nextY) : 0ull);
     }
 
     const int sx = x * SUBPIXEL + HALF_PIXEL, sy = y * SUBPIXEL + HALF_PIXEL;
@@ -107,7 +105,16 @@ __device__ Coverage triangleMask(const SetupTriangle &tri, int x, int y, const C
 
 __device__ unsigned nthPixel(Coverage mask, unsigned n)
 {
-    const unsigned lo = unsigned(mask);
-    const unsigned countLo = __popc(lo);
-    return n < countLo ? __fns(lo, 0, n + 1) : 32 + __fns(unsigned(mask >> 32), 0, n - countLo + 1);
+    // A triangle intersects each scanline in one run, including at viewport edges.
+    // Locate the row by popcount; within that row the bit index is just an addition.
+    unsigned word = unsigned(mask);
+    const unsigned low = __popc(word);
+    const bool upper = n >= low;
+    unsigned base = upper ? 32 : 0;
+    if (upper) { n -= low; word = unsigned(mask >> 32); }
+    const unsigned firstTwoRows = __popc(word & 0xffffu);
+    if (n >= firstTwoRows) { n -= firstTwoRows; word >>= 16; base += 16; }
+    const unsigned firstRow = __popc(word & 0xffu);
+    if (n >= firstRow) { n -= firstRow; word >>= 8; base += 8; }
+    return base + (__ffs(word) - 1) + n;
 }

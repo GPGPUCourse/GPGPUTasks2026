@@ -14,10 +14,18 @@ constexpr unsigned BIN_REFS_PER_PART = 4096;
 constexpr int COARSE_NARROW_MAX_SIDE = 32768;
 using PixelKey = unsigned long long;
 
-struct SetupTriangle {
-    ScreenVertex a, b, c; // positive winding in the framebuffer coordinate system
-    uint32_t color;
+struct ScreenPoint {
+    int x, y;
+    __device__ ScreenPoint(ScreenVertex p) : x(p.x), y(p.y) {}
 };
+
+struct SetupTriangle {
+    ScreenPoint a, b, c; // positive winding in the framebuffer coordinate system
+    float z, dzdx, dzdy;  // depth at a and plane slopes, reused by every tile
+    uint32_t colorAndSamples; // low 24 bits are RGB; high byte may encode one or two covered samples
+};
+static_assert(sizeof(SetupTriangle) == 40);
+constexpr unsigned FINE_MICRO = 0x80000000u;
 
 struct Range {
     unsigned begin, count;
@@ -52,21 +60,21 @@ struct PixelBounds {
     int x0, y0, x1, y1; // half-open bounds, in pixel coordinates
 };
 
-__device__ PixelBounds pixelBounds(ScreenVertex a, ScreenVertex b, ScreenVertex c)
+__device__ PixelBounds pixelBounds(ScreenPoint a, ScreenPoint b, ScreenPoint c)
 {
     return {firstRow(min(a.x, min(b.x, c.x))), firstRow(min(a.y, min(b.y, c.y))),
             firstRow(max(a.x, max(b.x, c.x))), firstRow(max(a.y, max(b.y, c.y)))};
 }
 
-__device__ int64_t edgeValue(ScreenVertex a, ScreenVertex b, int x, int y)
+__device__ int64_t edgeValue(ScreenPoint a, ScreenPoint b, int x, int y)
 {
     return int64_t(b.x - a.x) * (y - a.y) - int64_t(b.y - a.y) * (x - a.x);
 }
 
-__device__ bool coversSample(ScreenVertex a, ScreenVertex b, ScreenVertex c, int x, int y)
+__device__ bool coversSample(ScreenPoint a, ScreenPoint b, ScreenPoint c, int x, int y)
 {
     const int sampleX = x * SUBPIXEL + HALF_PIXEL, sampleY = y * SUBPIXEL + HALF_PIXEL;
-    const auto edge = [=](ScreenVertex u, ScreenVertex v) {
+    const auto edge = [=](ScreenPoint u, ScreenPoint v) {
         const int64_t e = edgeValue(u, v, sampleX, sampleY);
         return e > 0 || (e == 0 && (v.y < u.y || (v.y == u.y && v.x > u.x)));
     };
@@ -85,8 +93,18 @@ struct EmitTriangle {
         if (area == 0) return;
         if (area < 0) { const auto tmp = b; b = c; c = tmp; }
         const int dx = bounds.x1 - bounds.x0, dy = bounds.y1 - bounds.y0;
-        if (dx + dy <= 3 && !coversSample(a, b, c, bounds.x0, bounds.y0) &&
-            (dx + dy == 2 || !coversSample(a, b, c, bounds.x1 - 1, bounds.y1 - 1))) return;
+        unsigned sampleInfo = 0;
+        if (dx + dy <= 3) {
+            const bool first = coversSample(a, b, c, bounds.x0, bounds.y0);
+            const bool second = dx + dy == 3 && coversSample(a, b, c, bounds.x1 - 1, bounds.y1 - 1);
+            if (!first && !second) return;
+            // Recover the first candidate from a's rounded position (offsets 0..2).
+            // Bits 28..30 say which candidates survive and the direction to the second.
+            const unsigned xOffset = firstRow(a.x) - bounds.x0, yOffset = firstRow(a.y) - bounds.y0;
+            sampleInfo = FINE_MICRO | (xOffset << 24) | (yOffset << 26) |
+                         (unsigned(first) << 28) | (unsigned(second && dx == 2) << 29) |
+                         (unsigned(second && dy == 2) << 30);
+        }
 
         const uint32_t color = shadeFragment(v0, v1, v2);
         // Compact surviving triangles, using one allocation per participating group of lanes.
@@ -97,8 +115,14 @@ struct EmitTriangle {
         if (lane == leader) base = atomicAdd(&buffers.counters->numTriangles, __popc(lanes));
         base = __shfl_sync(lanes, base, leader);
         const unsigned index = base + __popc(lanes & ((1u << lane) - 1u));
-        if (index < buffers.triangleCapacity) buffers.triangles[index] = {a, b, c, color};
-        else if (index == buffers.triangleCapacity) atomicExch(&buffers.counters->overflow, 1u);
+        if (index < buffers.triangleCapacity) {
+            const float positiveArea = float(area < 0 ? -area : area);
+            const float dzdx = ((b.z - a.z) * (c.y - a.y) - (c.z - a.z) * (b.y - a.y)) / positiveArea;
+            const float dzdy = ((b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z)) / positiveArea;
+            buffers.triangles[index] = {a, b, c, a.z, dzdx, dzdy, color | sampleInfo};
+        } else if (index == buffers.triangleCapacity) {
+            atomicExch(&buffers.counters->overflow, 1u);
+        }
     }
 };
 
@@ -139,7 +163,7 @@ __global__ void triangleSetup(const float *vertices, const unsigned *faces, Proj
 
 // Find the largest edge value on a rectangle of sample centers. Including edge ties here
 // is conservative: the top-left rule is applied by Fine, not by the queue builders.
-__device__ bool edgeMayCover(ScreenVertex a, ScreenVertex b, int x, int y, int size)
+__device__ bool edgeMayCover(ScreenPoint a, ScreenPoint b, int x, int y, int size)
 {
     const int sampleX = (x + (b.y < a.y ? size - 1 : 0)) * SUBPIXEL + HALF_PIXEL;
     const int sampleY = (y + (b.x > a.x ? size - 1 : 0)) * SUBPIXEL + HALF_PIXEL;
@@ -229,7 +253,7 @@ struct CoarseEdge {
     Value corner;
     int dx, dy;
 
-    __device__ CoarseEdge(ScreenVertex a, ScreenVertex b, int binX, int binY)
+    __device__ CoarseEdge(ScreenPoint a, ScreenPoint b, int binX, int binY)
         : dx(a.y - b.y), dy(b.x - a.x)
     {
         constexpr int span = (TILE_SIZE - 1) * SUBPIXEL;
@@ -389,19 +413,34 @@ struct FineTriangle {
 
 __device__ void setupFragmentPlane(FineTriangle &out, const SetupTriangle &tri, int x0, int y0)
 {
-    const auto a = tri.a, b = tri.b, c = tri.c;
-    const float area = float(edgeValue(a, b, c.x, c.y));
-    out.dzdx = ((b.z - a.z) * (c.y - a.y) - (c.z - a.z) * (b.y - a.y)) / area;
-    out.dzdy = ((b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z)) / area;
-    out.x = x0 * SUBPIXEL + HALF_PIXEL - a.x;
-    out.y = y0 * SUBPIXEL + HALF_PIXEL - a.y;
-    out.z = a.z;
-    out.color = tri.color;
+    out.dzdx = tri.dzdx;
+    out.dzdy = tri.dzdy;
+    out.x = x0 * SUBPIXEL + HALF_PIXEL - tri.a.x;
+    out.y = y0 * SUBPIXEL + HALF_PIXEL - tri.a.y;
+    out.z = tri.z;
+    out.color = tri.colorAndSamples & 0x00ffffffu;
+}
+
+__device__ void shadePixel(const FineTriangle &info, unsigned pixel, PixelKey *pixels)
+{
+    const int x = int(pixel & 7), y = int(pixel >> 3);
+    const float rowDepth = fmaf(info.dzdy, float(info.y + y * SUBPIXEL), info.z);
+    const float z = clamp01(fmaf(info.dzdx, float(info.x + x * SUBPIXEL), rowDepth));
+    atomicMin(pixels + pixel, (PixelKey(__float_as_uint(z)) << 32) | info.color);
 }
 
 __device__ void shadeBatch(FineTriangle triangle, unsigned lane, FineTriangle *batch, PixelKey *pixels)
 {
-    const unsigned count = __popcll(triangle.coverage);
+    unsigned count = __popcll(triangle.coverage);
+    // One or two fragments are cheaper to shade in the source lane than to regroup.
+    if (count && count <= 2) {
+        shadePixel(triangle, __ffsll(triangle.coverage) - 1, pixels);
+        if (count == 2) {
+            const Coverage second = triangle.coverage & (triangle.coverage - 1);
+            shadePixel(triangle, __ffsll(second) - 1, pixels);
+        }
+        count = 0;
+    }
     const unsigned nonempty = __ballot_sync(FULL_WARP, count != 0);
     if (!nonempty) return;
     unsigned end = count;
@@ -412,7 +451,9 @@ __device__ void shadeBatch(FineTriangle triangle, unsigned lane, FineTriangle *b
     }
     const unsigned total = __shfl_sync(FULL_WARP, end, WARP_SIZE - 1);
     triangle.first = end - count;
-    if (count) batch[lane] = triangle;
+    // Compact the triangle records so the fragment's rank is also its shared index.
+    const unsigned earlier = (1u << lane) - 1;
+    if (count) batch[__popc(nonempty & earlier)] = triangle;
     __syncwarp();
 
     // Each bit marks a triangle's first fragment in the current group of 32.
@@ -429,13 +470,9 @@ __device__ void shadeBatch(FineTriangle triangle, unsigned lane, FineTriangle *b
         for (int step = 16; step > 0; step >>= 1) starts |= __shfl_xor_sync(FULL_WARP, starts, step);
 #endif
         if (base + lane < total) {
-            const unsigned owner = __fns(nonempty, 0, started + __popc(starts & throughLane));
+            const unsigned owner = started + __popc(starts & throughLane) - 1;
             const FineTriangle info = batch[owner];
-            const unsigned pixel = nthPixel(info.coverage, base + lane - info.first);
-            const int x = int(pixel & 7), y = int(pixel >> 3);
-            const float rowDepth = fmaf(info.dzdy, float(info.y + y * SUBPIXEL), info.z);
-            const float z = clamp01(fmaf(info.dzdx, float(info.x + x * SUBPIXEL), rowDepth));
-            atomicMin(pixels + pixel, (PixelKey(__float_as_uint(z)) << 32) | info.color);
+            shadePixel(info, nthPixel(info.coverage, base + lane - info.first), pixels);
         }
         started += __popc(starts);
     }
@@ -448,7 +485,7 @@ __global__ void fineRasterizer(RasterGrid grid, RasterBuffers buffers, uint64_t 
     __shared__ PixelKey warpPixels[FINE_WARPS][TILE_SIZE * TILE_SIZE];
     __shared__ FineTriangle warpBatch[FINE_WARPS][WARP_SIZE];
     __shared__ EdgeLut lut;
-    for (unsigned j = threadIdx.x; j < 2 * EDGE_LUT_HALF; j += FINE_THREADS) {
+    for (unsigned j = threadIdx.x; j < EDGE_LUT_SIZE; j += FINE_THREADS) {
         lut.masks[j] = edgeLut.masks[j];
     }
     __syncthreads();
