@@ -51,16 +51,15 @@ __device__ Coverage edgeMask(ScreenPoint a, ScreenPoint b, int sampleX, int samp
     if (intercept >= 7 * int64_t(rise)) return complement ? 0ull : ~0ull;
     if (intercept + 7 * int64_t(run) < 0) return complement ? ~0ull : 0ull;
 
-    // The boundary crosses the tile, so its initial height is in [-7,7].
-    // Bias by 7 and divide exactly with four compare/subtract steps.
-    uint64_t numerator = uint64_t(8 * int64_t(run) - 1 - intercept);
-    int height = -7;
-    #pragma unroll
-    for (int bit = 3; bit >= 0; --bit) {
-        const uint64_t amount = uint64_t(run) << bit;
-        if (numerator >= amount) { numerator -= amount; height += 1 << bit; }
-    }
-    unsigned remainder = unsigned(numerator);
+    // The quotient is in [0,15), so roundoff in the float estimate cannot
+    // move the integer result by more than one. Correct it in integer space.
+    const uint64_t numerator = uint64_t(8 * int64_t(run) - 1 - intercept);
+    unsigned q = __float2uint_rz(float(numerator) * __frcp_rn(float(run)));
+    int64_t r = int64_t(numerator) - int64_t(q) * run;
+    if (r < 0) { r += run; --q; }
+    else if (r >= run) { r -= run; ++q; }
+    const int height = int(q) - 7;
+    unsigned remainder = unsigned(r);
     unsigned rises = 0;
     #pragma unroll
     for (int bit = 0; bit < 7; ++bit) {

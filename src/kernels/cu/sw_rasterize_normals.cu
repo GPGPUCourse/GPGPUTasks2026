@@ -256,10 +256,11 @@ void sw_rasterize_normals(const gpu::WorkSize &work_size, const gpu::gpu_mem_32f
 struct TiledRasterizer::Impl {
     RasterGrid grid{};
     RasterBuffers buffers{};
-    unsigned faceCount, smCount;
+    unsigned faceCount, smCount, binShards;
     bool enabled = false;
     ScratchArray<SetupTriangle> triangles;
-    ScratchArray<unsigned> binRefs, tileRefs, activeTiles, tileParts;
+    ScratchArray<uint2> binRefs;
+    ScratchArray<unsigned> tileScratch, tileParts;
     ScratchArray<Range> bins, tiles;
     ScratchArray<CoarseTask> tasks;
     ScratchArray<RasterCounters> counters;
@@ -273,6 +274,8 @@ struct TiledRasterizer::Impl {
         smCount = prop.multiProcessorCount;
         constexpr int maxSide = INT_MAX / SUBPIXEL - BIN_SIZE;
         if (width <= 0 || height <= 0 || width > maxSide || height > maxSide || nfaces > UINT_MAX / 7u) return;
+        // Small scenes do not need one shard per SM. Keep enough shards for all warps in Coarse.
+        binShards = std::min(smCount, std::max(unsigned(COARSE_THREADS / WARP_SIZE), div_ceil(nfaces, unsigned(BIN_THREADS))));
         grid = {width, height, div_ceil(width, BIN_SIZE), div_ceil(height, BIN_SIZE),
                 div_ceil(width, TILE_SIZE), div_ceil(height, TILE_SIZE)};
         const size_t numBins = size_t(grid.binsX) * grid.binsY;
@@ -284,14 +287,15 @@ struct TiledRasterizer::Impl {
             std::max<size_t>(4ull * nfaces, 16ull * grid.numTiles())));
         triangles.allocate(triCapacity);
         binRefs.allocate(binCapacity);
-        tileRefs.allocate(tileCapacity);
-        activeTiles.allocate(grid.numTiles());
+        // Both phases run on one stream; Bin is done reading bounds before Coarse writes any tile refs.
+        static_assert(sizeof(uint2) == 2 * sizeof(unsigned));
+        tileScratch.allocate(std::max<size_t>(size_t(triCapacity) * 2, tileCapacity));
         tileParts.allocate(grid.numTiles());
-        bins.allocate(numBins * smCount);
+        bins.allocate(numBins * binShards);
         tiles.allocate(size_t(grid.numTiles()) * MAX_BIN_PARTS);
         tasks.allocate(numBins * MAX_BIN_PARTS);
         counters.allocate(1);
-        buffers = {triangles.ptr, binRefs.ptr, tileRefs.ptr, activeTiles.ptr, tileParts.ptr,
+        buffers = {triangles.ptr, reinterpret_cast<uint2 *>(tileScratch.ptr), binRefs.ptr, tileScratch.ptr, tileParts.ptr,
                    bins.ptr, tiles.ptr, tasks.ptr, counters.ptr, triCapacity, binCapacity, tileCapacity};
         enabled = true;
     }
@@ -306,8 +310,8 @@ TiledRasterizer::TiledRasterizer(unsigned nfaces, int width, int height)
 
 TiledRasterizer::~TiledRasterizer() = default;
 
-void TiledRasterizer::draw(const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
-                           const gpu::gpu_mem_64u &framebuffer, const ProjectionGPU &projection)
+void TiledRasterizer::drawCleared(const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
+                                  const gpu::gpu_mem_64u &framebuffer, const ProjectionGPU &projection)
 {
     if (!impl->faceCount) return;
     const auto &s = *impl;
@@ -322,12 +326,12 @@ void TiledRasterizer::draw(const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_
     CUDA_SAFE_CALL(cudaMemsetAsync(s.buffers.tileParts, 0, s.grid.numTiles() * sizeof(unsigned), stream));
     triangleSetup<<<div_ceil(s.faceCount, unsigned(BIN_THREADS)), BIN_THREADS, 0, stream>>>(
         vertices.cuptr(), faces.cuptr(), projection, s.faceCount, s.grid, s.buffers);
-    binRasterizer<<<s.smCount, BIN_THREADS, s.grid.numBins() * sizeof(unsigned), stream>>>(s.grid, s.buffers);
-    makeCoarseTasks<<<div_ceil(s.grid.numBins(), BIN_THREADS / 32), BIN_THREADS, 0, stream>>>(s.grid, s.buffers, s.smCount);
+    binRasterizer<<<s.binShards, BIN_THREADS, s.grid.numBins() * sizeof(unsigned), stream>>>(s.grid, s.buffers);
+    makeCoarseTasks<<<div_ceil(s.grid.numBins(), BIN_THREADS / 32), BIN_THREADS, 0, stream>>>(s.grid, s.buffers, s.binShards);
     if (std::max(s.grid.width, s.grid.height) <= COARSE_NARROW_MAX_SIDE) {
-        coarseRasterizer<int><<<4 * s.smCount, COARSE_THREADS, 0, stream>>>(s.grid, s.buffers, s.smCount);
+        coarseRasterizer<int><<<5 * s.smCount, COARSE_THREADS, 0, stream>>>(s.grid, s.buffers, s.binShards);
     } else {
-        coarseRasterizer<int64_t><<<2 * s.smCount, COARSE_THREADS, 0, stream>>>(s.grid, s.buffers, s.smCount);
+        coarseRasterizer<int64_t><<<2 * s.smCount, COARSE_THREADS, 0, stream>>>(s.grid, s.buffers, s.binShards);
     }
     fineRasterizer<<<12 * s.smCount, FINE_THREADS, 0, stream>>>(s.grid, s.buffers, framebuffer.cuptr());
     rasterizeOverflow<<<s.smCount, BIN_THREADS, 0, stream>>>(vertices.cuptr(), faces.cuptr(), framebuffer.cuptr(),

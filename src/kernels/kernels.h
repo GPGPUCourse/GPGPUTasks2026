@@ -22,8 +22,9 @@ class TiledRasterizer {
 public:
     TiledRasterizer(unsigned nfaces, int width, int height);
     ~TiledRasterizer();
-    void draw(const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
-              const gpu::gpu_mem_64u &framebuffer, const ProjectionGPU &projection);
+    // The framebuffer must already be cleared to ~uint64_t{0}. Untouched tiles stay clear.
+    void drawCleared(const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
+                     const gpu::gpu_mem_64u &framebuffer, const ProjectionGPU &projection);
 
     struct Stats {
         unsigned triangles, activeTiles;

@@ -315,7 +315,7 @@ void run(int argc, char** argv)
                 } else if (sw_context.type() == gpu::Context::TypeCUDA) {
                     timer t;
                     if (tiled) {
-                        tiled->draw(vertices_gpu, faces_gpu, framebuffer_normals_gpu, projection);
+                        tiled->drawCleared(vertices_gpu, faces_gpu, framebuffer_normals_gpu, projection);
                     } else {
                         cuda::sw_rasterize_normals(work_size, vertices_gpu, faces_gpu, framebuffer_normals_gpu,
                                                    projection, nfaces, params.width, params.height);
