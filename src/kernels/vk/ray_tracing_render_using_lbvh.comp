@@ -336,12 +336,10 @@ bool bvh_closest_hit(vec3 orig,
         }
     }
 
-    if (face_id != -1) {
-        outFaceId = face_id;
-        outT = t;
-        outU = u;
-        outV = v;
-    }
+    outFaceId = face_id;
+    outT = t;
+    outU = u;
+    outV = v;
 
     return face_id != -1;
 }
@@ -377,7 +375,7 @@ bool any_hit_from(vec3 orig,
 
         if (right >= leafStart && intersect_triangle(orig, dir, right - leafStart, face_id) && face_id != ignore_face) {
             return true;
-        } else if (left < leafStart) {
+        } else if (right < leafStart) {
             intersect_right = intersect_ray_aabb(orig, dir, bvhNodes[right].aabb, 0, FLT_MAX_GLSL, near_t, far_t);
         }
 
