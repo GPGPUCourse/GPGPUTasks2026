@@ -4,36 +4,34 @@ static_assert(TILE_SIZE == 8 && SUBPIXEL == 256);
 using Coverage = unsigned long long;
 constexpr Coverage COLUMN_BITS = 0x0101010101010101ull;
 
-__device__ Coverage transpose8x8(Coverage mask)
+// Two four-column masks, 12 first heights [-3,8], 3 rise bits, 2 orientation bits.
+constexpr unsigned EDGE_LUT_HALF = 12 * 8 * 4;
+struct EdgeLut {
+    Coverage masks[2 * EDGE_LUT_HALF];
+};
+
+constexpr EdgeLut makeEdgeLut()
 {
-    Coverage t = (mask ^ (mask >> 7)) & 0x00aa00aa00aa00aaull;
-    mask ^= t ^ (t << 7);
-    t = (mask ^ (mask >> 14)) & 0x0000cccc0000ccccull;
-    mask ^= t ^ (t << 14);
-    t = (mask ^ (mask >> 28)) & 0x00000000f0f0f0f0ull;
-    return mask ^ t ^ (t << 28);
+    EdgeLut table{};
+    for (unsigned i = 0; i < 2 * EDGE_LUT_HALF; ++i) {
+        const int firstX = i >= EDGE_LUT_HALF ? 4 : 0;
+        int height = int((i % EDGE_LUT_HALF) >> 5) - 3;
+        for (int col = 0; col < 4; ++col) {
+            const int x = (i & 1) ? 7 - firstX - col : firstX + col;
+            for (int y = height > 0 ? height : 0; y < 8; ++y) {
+                const int pixel = (i & 2) ? y + 8 * x : x + 8 * y;
+                table.masks[i] |= 1ull << pixel;
+            }
+            if (col < 3) height += int((i >> (2 + col)) & 1u);
+        }
+    }
+    return table;
 }
 
-// Low 3 bits: how many samples precede the first covered sample in column 0.
-// Bits 3..9: each successive column adds zero or one to this height, saturated at 8.
-__device__ Coverage decodeEdgeKey(unsigned key, bool reflectX, bool swapXY)
-{
-    unsigned height = key & 7u;
-    Coverage columns = (0xffu << height) & 0xffu;
-    #pragma unroll
-    for (int x = 1; x < 8; ++x) {
-        height += (key >> (x + 2)) & 1u;
-        columns |= Coverage((0xffu << height) & 0xffu) << (8 * x);
-    }
-    if (reflectX) {
-        const unsigned lo = __byte_perm(unsigned(columns >> 32), 0, 0x0123);
-        const unsigned hi = __byte_perm(unsigned(columns), 0, 0x0123);
-        columns = (Coverage(hi) << 32) | lo;
-    }
-    return swapXY ? columns : transpose8x8(columns);
-}
+// Compile-time generated, then staged cooperatively in shared memory by Fine.
+__device__ const EdgeLut edgeLut = makeEdgeLut();
 
-__device__ Coverage edgeMask(ScreenVertex a, ScreenVertex b, int sampleX, int sampleY)
+__device__ Coverage edgeMask(ScreenVertex a, ScreenVertex b, int sampleX, int sampleY, const Coverage *lut)
 {
     // Subtract 1 on exclusive edges to make the integer test uniformly >= 0.
     // Drops the low 8 bits after that bias: all lattice steps are multiples of 256.
@@ -64,22 +62,25 @@ __device__ Coverage edgeMask(ScreenVertex a, ScreenVertex b, int sampleX, int sa
         if (numerator >= amount) { numerator -= amount; height += 1 << bit; }
     }
     unsigned remainder = unsigned(numerator);
-    unsigned key = max(0, height);
+    unsigned rises = 0;
     #pragma unroll
-    for (int bit = 3; bit < 10; ++bit) {
+    for (int bit = 0; bit < 7; ++bit) {
         remainder += rise;
         const unsigned step = remainder >= run;
         remainder -= step * run;
-        height += int(step);
-        // Clamping to [0,8] keeps a 3-bit initial height: completely empty edges
-        // are handled above, and a rise outside this interval need not be encoded.
-        if (step && unsigned(height - 1) < 8u) key |= 1u << bit;
+        rises |= step << bit;
     }
-    const Coverage mask = decodeEdgeKey(key, reflectX, swapXY);
+    const unsigned orientation = unsigned(reflectX) | (unsigned(swapXY) << 1);
+    const int height4 = height + __popc(rises & 15u);
+    // Out-of-range initial heights give identical masks after clamping: at most
+    // three rises in a half, and neither half samples a row outside [0,7].
+    const unsigned first = ((max(-3, height) + 3) << 5) | ((rises & 7u) << 2) | orientation;
+    const unsigned second = ((min(8, max(-3, height4)) + 3) << 5) | ((rises >> 4) << 2) | orientation;
+    const Coverage mask = lut[first] | lut[EDGE_LUT_HALF + second];
     return complement ? ~mask : mask;
 }
 
-__device__ Coverage triangleMask(const SetupTriangle &tri, int x, int y)
+__device__ Coverage triangleMask(const SetupTriangle &tri, int x, int y, const Coverage *lut)
 {
     const auto box = pixelBounds(tri.a, tri.b, tri.c);
     const int w = box.x1 - box.x0, h = box.y1 - box.y0;
@@ -98,7 +99,10 @@ __device__ Coverage triangleMask(const SetupTriangle &tri, int x, int y)
     }
 
     const int sx = x * SUBPIXEL + HALF_PIXEL, sy = y * SUBPIXEL + HALF_PIXEL;
-    return edgeMask(tri.a, tri.b, sx, sy) & edgeMask(tri.b, tri.c, sx, sy) & edgeMask(tri.c, tri.a, sx, sy);
+    const Coverage ab = edgeMask(tri.a, tri.b, sx, sy, lut);
+    const Coverage bc = edgeMask(tri.b, tri.c, sx, sy, lut);
+    const Coverage ca = edgeMask(tri.c, tri.a, sx, sy, lut);
+    return ab & bc & ca;
 }
 
 __device__ unsigned nthPixel(Coverage mask, unsigned n)

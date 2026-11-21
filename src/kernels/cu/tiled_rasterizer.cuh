@@ -374,6 +374,12 @@ __global__ void fineRasterizer(RasterGrid grid, RasterBuffers buffers, uint64_t 
     if (buffers.counters->overflow) return;
     __shared__ PixelKey warpPixels[FINE_WARPS][TILE_SIZE * TILE_SIZE];
     __shared__ FineTriangle warpBatch[FINE_WARPS][WARP_SIZE];
+    __shared__ EdgeLut lut;
+    for (unsigned j = threadIdx.x; j < 2 * EDGE_LUT_HALF; j += FINE_THREADS) {
+        lut.masks[j] = edgeLut.masks[j];
+    }
+    __syncthreads();
+
     const unsigned warp = threadIdx.x / WARP_SIZE, lane = threadIdx.x % WARP_SIZE;
     auto *pixels = warpPixels[warp];
     for (unsigned i = blockIdx.x * FINE_WARPS + warp; i < buffers.counters->numActiveTiles;
@@ -410,7 +416,7 @@ __global__ void fineRasterizer(RasterGrid grid, RasterBuffers buffers, uint64_t 
             FineTriangle triangle{};
             if (lane < filled) {
                 const auto tri = buffers.triangles[triId];
-                triangle.coverage = triangleMask(tri, x0, y0) & valid;
+                triangle.coverage = triangleMask(tri, x0, y0, lut.masks) & valid;
                 if (triangle.coverage) setupFragmentPlane(triangle, tri, x0, y0);
             }
             shadeBatch(triangle, lane, warpBatch[warp], pixels);
