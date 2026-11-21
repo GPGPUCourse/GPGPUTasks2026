@@ -141,28 +141,12 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                if (context.type() == gpu::Context::TypeOpenCL) {
-                    ocl_rt_brute_force.exec(
-                        gpu::WorkSize(16, 16, width, height),
-                        vertices_gpu, faces_gpu,
-                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu.clmem(), nfaces);
-                } else if (context.type() == gpu::Context::TypeCUDA) {
-                    cuda::ray_tracing_render_brute_force(
-                        gpu::WorkSize(16, 16, width, height),
-                        vertices_gpu, faces_gpu,
-                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu, nfaces);
-                } else if (context.type() == gpu::Context::TypeVulkan) {
-                    vk_rt_brute_force.exec(
+                vk_rt_brute_force.exec(
                         nfaces,
                         gpu::WorkSize(16, 16, width, height),
                         vertices_gpu, faces_gpu,
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
                         camera_gpu);
-                } else {
-                    rassert(false, 654724541234123);
-                }
 
                 brute_force_times.push_back(t.elapsed());
             }
