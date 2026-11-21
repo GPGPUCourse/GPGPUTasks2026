@@ -2,23 +2,17 @@
 
 [Остальные задания](https://github.com/GPGPUCourse/GPGPUTasks2026/).
 
-# Задание 8. Real-time построение Linear BVH (LBVH) для трассировки лучей
+# Задание 10. Software (программная) растеризация на GPGPU (подобно [cudaraster](https://code.google.com/archive/p/cudaraster/))
 
-[![Build Status](https://github.com/GPGPUCourse/GPGPUTasks2026/actions/workflows/cmake.yml/badge.svg?branch=task08&event=push)](https://github.com/GPGPUCourse/GPGPUTasks2026/actions/workflows/cmake.yml)
+[![Build Status](https://github.com/GPGPUCourse/GPGPUTasks2026/actions/workflows/cmake.yml/badge.svg?branch=task10&event=push)](https://github.com/GPGPUCourse/GPGPUTasks2026/actions/workflows/cmake.yml)
 
-В этом задании вам предлагается выбрать API (OpenCL, CUDA или Vulkan) реализовать на GPU алгоритм построения LBVH для ускорения трассировки лучей.
+В этом задании вам предлагается выбрать API (OpenCL, CUDA или Vulkan) ускорить на GPU алгоритм растеризации - чтобы стало быстрее чем при тривиальной Брезенхем растеризации один workItem/thread на один треугольник + atomic CAS (для многопоточной конкуренции в depth-test framebuffer).
 
-Благодаря трассировке лучей мы отрендерим два frame buffer:
+Игрушечный фрагментный шейдер отрисовывает нормали в цветовой форме:
 
-1) Frame buffer с номером треугольника в каждом пикселе (удобно для тестирования и для [deffered rendering](https://learnopengl.com/Advanced-Lighting/Deferred-Shading))
+<img width="544" height="475" alt="Нормали отрисованы цветами для модели гнома" src="docs/images/gnome-normals.png" />
 
-<img width="544" height="475" alt="Номера треугольников модели гнома" src="docs/images/gnome-face-ids.png" />
-
-2) Frame buffer с Ambient Occlusion показывающим как много внешнего прямого света попадает в эту точку поверхности, например у гнома внутри сумки поэтому темно, а на бороде - светло:
-
-<img width="544" height="475" alt="Ambient Occlusion модели гнома" src="docs/images/gnome-ambient-occlusion.png" />
-
-Статья которую мы обсуждали на лекции и идеям которой мы следуем: [Maximizing Parallelism in the Construction of BVHs, Octrees, and k-d Trees, Tero Karras, 2012](https://devblogs.nvidia.com/wp-content/uploads/2012/11/karras2012hpg_paper.pdf)
+Статья которую мы обсуждали на лекции и идеям которой мы следуем: [High-Performance Software Rasterization on GPUs, Samuli Laine and Tero Karras, 2011](https://research.nvidia.com/sites/default/files/pubs/2011-08_High-Performance-Software-Rasterization/laine2011hpg_paper.pdf)
 
 ## Датасеты
 
@@ -26,37 +20,28 @@
  - [data/powerplant](data/powerplant) - детальная модель угольной электростанции - 5.984.083 вершин, 12.759.246 треугольников, нужно скачать [с яндекс.диска](https://disk.yandex.ru/d/u4ORSCvWdITAkw) или [отсюда](https://casual-effects.com/g3d/data10/research/model/powerplant/powerplant.zip)
  - [data/san-miguel](data/san-miguel) - детальная модель местечка расположенного в поместье в Сан-Мигель-де-Альенде, Мексика - 5.933.233 вершин, 9.980.699 треугольников, нужно скачать [с яндекс.диска](https://disk.yandex.ru/d/mIP8q6V9nJiBLw) или [отсюда](https://casual-effects.com/g3d/data10/research/model/San_Miguel/San_Miguel.zip)
 
-Смотрите какая красота! Это отрисованный frame buffer с ambient occlusion для powerplant:
+Это отрисованный normals frame buffer для powerplant:
 
-<img width="1614" height="951" alt="Ambient Occlusion модели электростанции" src="docs/images/powerplant-ambient-occlusion.png" />
-
-## Структура исходников проекта в папке
-
- - ```cpu_helpers/build_bvh_cpu.h``` - эталонная однопоточная CPU-реализация построения LBVH
- - ```cpu_helpers/morton_code_cpu.h``` - вспомогательная функция для построения 30-битного 3D кода Мортона для точки из единичного куба
- - ```debug/debug_bvh.h``` - не используется, использовалось для визуализации построенного BVH для отладки
- - ```debug/debug_geometry.h``` - не используется, использовалось для отладки корректности считанной геометрии (через сохранение вершин и треугольников в .ply файл)
- - ```io/camera_reader.h``` - позволяет считать ```CameraViewGPU``` из файла camera.txt - это ракурс который мы хотим отрисовать для каждой сцены, для эксперимента (но не коммитьте это) можете выбрать другой ракурс - для этого откройте модель в [MeshLab](https://www.meshlab.net/), расположите камеру как вам нравится, нажмите ```Ctrl+C```, затем откройте ```camera.txt``` файл и нажмите ```Ctrl+V```
- - ```io/scene_reader.h``` - позволяет считать ```SceneGeometry``` - геометрию датасета (множество 3D точек и треугольников на них покоящихся) из ```.ply```/```.obj```-файла
- - ```kernels/shared_structs/..._gpu_shared.h``` - ```CameraViewGPU```, ```BVHNodeGPU```, ```AABBGPU```, ```MortonCode``` - это аккуратно сделанные структуры в которых нет сложных типов вроде ```point3f```/```bool```/```unsigned short``` которые на разных API могут привести к разной выкладке (layout) объектов этой структуры (разный padding, разный alignment, разный fabric), благодаря этому есть шанс что объект на CPU выглядит так же как выглядит на GPU в OpenCL/CUDA/Vulkan (GLSL) кернелах
+<img width="807" height="475" alt="Ambient Occlusion модели электростанции" src="docs/images/powerplant-normals.png" />
 
 ## Что уже реализовано
 
-1) Уже сделано построение LBVH на CPU
-2) Уже сделана трассировка лучей на GPU с перебором всех треугольников (т.е. brute force), она запускается только для маленького датасета ```data/gnome```
+1) Уже реализован многопоточный Брезенхэм на CPU (OpenMP многопоточность с гранулярностью на уровне треугольников + atomic CAS) - ```src/kernels/cpu/sw_rasterize_normals.cpp```
+2) Уже реализована hardware (аппаратная) растеризация на GPU через Vulkan API - ```src/kernels/vk/hw_rasterize_normals.vert``` + ```hw_rasterize_normals.frag```
+3) Уже реализована software (программная) тривиальная растеризация на GPGPU - ```cu/sw_rasterize_normals.cu``` / ```cl/sw_rasterize_normals.cl``` / ```vk/sw_rasterize_normals.comp```
 
 ## Что вам предлагается сделать
 
-1) ```5 баллов``` Реализуйте трассировку лучей на GPU используя LBVH - то есть вам нужно реализовать обход BVH иерархии (без рекурсии).
-2) ```10 баллов``` Постройте LBVH на GPU. Для сортировки можно использовать любой код - в т.ч. чужой, крайне рекомендуется использовать стабильную сортировку.
-3) Оттрасируйте лучи на GPU используя построенный на GPU LBVH.
-4) Дополнительные ```5 баллов престижа``` если вы сделаете **denoising**. Подумайте - вероятно это не такая сложная задача, ведь ее можно делать на основании результатов отрисованных **framebuffers**. Например если у вас есть в каждом пикселе экрана вектор нормали к поверхности и т.п.. В таком случае в PR должны быть приложены картинки Ambient Occlusion в двух экземплярах на каждый датасет - до и после удаления шума.
-5) Дополнительные ```10 баллов престижа``` если вы добавите hardware-accelerated Ray Tracing (использующий RT cores). Учтите что сейчас на CI используется Tesla V100 - в ней нет RT cores, поэтому если вы их использовали и хотите чтобы решение прошло тестирование на GPU с RT cores - напишите мне/в чат курса.
+```10 баллов``` Ускорьте software (аппаратную) растеризацию как можно сильнее чтобы приблизиться к hardware растеризации. Пример baseline отставания на RTX 4090:
 
-Итого можно получить ```15 баллов``` + ```15 баллов престижа``` + **ПРИЗОВЫЕ**.
+```
+Using device #1: API: CUDA+OpenCL+Vulkan. GPU. NVIDIA GeForce RTX 4090 (CUDA 13000). Free memory: 21304/24058 Mb.
+[SW GPGPU] API for software GPGPU rasterization: CUDA
+...
+Total [CPU]       rasterization avg time: 110.072 ms (all 3 values: [15.8664 164.127 150.224])
+Total [HW Vulkan] rasterization avg time: 0.941814 ms (all 3 values: [0.148251 1.4442 1.23299])
+Total [SW GPGPU]  rasterization avg time: 12.3776 ms (all 3 values: [3.4139 9.04822 24.6708])
+HW->SW slowdown: x13.1423
+```
 
-При отправке PR достаточно приложить ваш локальный вывод. И если вы сделали **denoising** - 6 картинок - пара картинок до/после для каждой сцены. Если вы проявили любопытство и сделали что-то еще - расскажите об этом (вероятно тоже с картинками).
-
-**Дедлайн**: 23:59 16 ноября - трассировка лучей с обходом LBVH без рекурсии.
-
-**Дедлайн**: 23:59 23 ноября - построение LBVH в модели массового параллелизма.
+**Дедлайн**: 23:59 7 декабря.

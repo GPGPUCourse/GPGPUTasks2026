@@ -7,7 +7,7 @@
 <details><summary>Локальный вывод</summary><p>
 
 <pre>
-$ ./build/main_linear_bvh
+$ ./build/main_rasterization
 ...
 </pre>
 

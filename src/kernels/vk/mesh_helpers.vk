@@ -1,0 +1,12 @@
+// Include after declaring the vertices and faces storage buffers.
+vec3 loadVertex(uint vi)
+{
+    uint base = 3u * vi;
+    return vec3(vertices[base + 0u], vertices[base + 1u], vertices[base + 2u]);
+}
+
+uvec3 loadFace(uint fi)
+{
+    uint base = 3u * fi;
+    return uvec3(faces[base + 0u], faces[base + 1u], faces[base + 2u]);
+}

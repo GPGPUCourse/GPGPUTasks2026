@@ -1,0 +1,197 @@
+#version 450
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_shader_atomic_int64 : require
+
+#include "../defines.h"
+
+layout(local_size_x = GROUP_SIZE) in;
+layout(std430, binding = 0) readonly buffer VerticesIn { float vertices[]; };
+layout(std430, binding = 1) readonly buffer FacesIn { uint faces[]; };
+layout(std430, binding = 2) buffer FramebufferOut { uint64_t framebuffer[]; };
+layout(push_constant) uniform PushConstants {
+    vec4 rows[4];
+    uint nfaces;
+    int width, height;
+} params;
+
+#include "mesh_helpers.vk"
+#include "normal_color.vk"
+
+const int SUBPIXEL = 256;
+const int HALF_PIXEL = SUBPIXEL / 2;
+
+struct ScreenVertex {
+    int x, y;
+    float z;
+};
+
+struct EdgeWalker {
+    int first, end;
+    bool left;
+    int x, step;
+    int64_t error, stepError, divisor;
+};
+
+float projectRow(vec4 row, vec3 p)
+{
+    return fma(row.x, p.x, fma(row.y, p.y, fma(row.z, p.z, row.w)));
+}
+
+vec4 project(vec3 p)
+{
+    return vec4(projectRow(params.rows[0], p), projectRow(params.rows[1], p),
+                projectRow(params.rows[2], p), projectRow(params.rows[3], p));
+}
+
+ScreenVertex toScreen(vec4 p)
+{
+    return ScreenVertex(int(floor(clamp(0.5 * (p.x / p.w + 1.0), 0.0, 1.0) * params.width * SUBPIXEL + 0.5)),
+                        int(floor(clamp(0.5 * (p.y / p.w + 1.0), 0.0, 1.0) * params.height * SUBPIXEL + 0.5)),
+                        clamp(p.z / p.w, 0.0, 1.0));
+}
+
+int firstRow(int y)
+{
+    return (y - HALF_PIXEL + SUBPIXEL - 1) / SUBPIXEL;
+}
+
+int floorQuotient(int64_t n, int64_t d, out int64_t remainder)
+{
+    int q = int(n / d);
+    remainder = n - int64_t(q) * d;
+    if (remainder < 0) { --q; remainder += d; }
+    return q;
+}
+
+// Bresenham: represent the intersection as a quotient and a remainder, then
+// advance one row with an integer step and an error carry.
+EdgeWalker makeEdgeWalker(ScreenVertex a, ScreenVertex b)
+{
+    EdgeWalker edge;
+    edge.left = a.y > b.y;
+    if (edge.left) { ScreenVertex tmp = a; a = b; b = tmp; }
+    edge.first = firstRow(a.y);
+    edge.end = firstRow(b.y);
+    if (edge.first == edge.end) return edge;
+    int64_t dx = b.x - a.x, dy = b.y - a.y;
+    edge.divisor = dy * SUBPIXEL;
+    int64_t n = (a.x - HALF_PIXEL) * dy + dx * (edge.first * SUBPIXEL + HALF_PIXEL - a.y);
+    edge.x = floorQuotient(n, edge.divisor, edge.error);
+    edge.step = floorQuotient(dx * SUBPIXEL, edge.divisor, edge.stepError);
+    return edge;
+}
+
+void writeFragment(uint pixel, float depth, uint color)
+{
+    uint64_t key = (uint64_t(floatBitsToUint(depth)) << 32u) | uint64_t(color);
+    atomicMin(framebuffer[pixel], key);
+}
+
+void rasterizeScreenTriangle(ScreenVertex a, ScreenVertex b, ScreenVertex c, uint color)
+{
+    int64_t area = int64_t(b.x - a.x) * (c.y - a.y) - int64_t(b.y - a.y) * (c.x - a.x);
+    if (area == 0) return;
+    if (area < 0) { ScreenVertex tmp = b; b = c; c = tmp; area = -area; }
+    precise float dzdx = ((b.z - a.z) * (c.y - a.y) - (c.z - a.z) * (b.y - a.y)) / float(area);
+    precise float dzdy = ((b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z)) / float(area);
+    EdgeWalker edges[3] = EdgeWalker[3](makeEdgeWalker(a, b), makeEdgeWalker(b, c), makeEdgeWalker(c, a));
+    int first = firstRow(min(a.y, min(b.y, c.y)));
+    int end = min(params.height, firstRow(max(a.y, max(b.y, c.y))));
+    for (int y = first; y < end; ++y) {
+        int left = 0, right = params.width;
+        for (int e = 0; e < 3; ++e) {
+            if (y < edges[e].first || y >= edges[e].end) continue;
+            int x = edges[e].x + int(edges[e].error != 0);
+            if (edges[e].left) left = max(0, x);
+            else right = min(params.width, x);
+            edges[e].x += edges[e].step;
+            edges[e].error += edges[e].stepError;
+            if (edges[e].error >= edges[e].divisor) { ++edges[e].x; edges[e].error -= edges[e].divisor; }
+        }
+        // Top-left fill rule: [left, right), pixel centers at .5.
+        float rowDepth = fma(dzdy, float(y * SUBPIXEL + HALF_PIXEL - a.y), a.z);
+        for (int x = left; x < right; ++x) {
+            float z = fma(dzdx, float(x * SUBPIXEL + HALF_PIXEL - a.x), rowDepth);
+            writeFragment(uint(y) * uint(params.width) + uint(x), z > 0.0 ? min(1.0, z) : 0.0, color);
+        }
+    }
+}
+
+float planeDistance(vec4 p, int plane)
+{
+    switch (plane) {
+        case 0: return p.z;
+        case 1: return p.w - p.z;
+        case 2: return p.w + p.x;
+        case 3: return p.w - p.x;
+        case 4: return p.w + p.y;
+        default: return p.w - p.y;
+    }
+}
+
+vec4 clipIntersection(vec4 a, vec4 b, float da, float db)
+{
+    if (da < 0.0) {
+        vec4 tmp = a; a = b; b = tmp;
+        float d = da; da = db; db = d;
+    }
+    return fma(vec4(da / (da - db)), b - a, a);
+}
+
+void rasterizeTriangle(vec4 a, vec4 b, vec4 c, uint color)
+{
+    uint clipMask = 0u;
+    for (int plane = 0; plane < 6; ++plane) {
+        bool ca = planeDistance(a, plane) < 0.0;
+        bool cb = planeDistance(b, plane) < 0.0;
+        bool cc = planeDistance(c, plane) < 0.0;
+        if (ca && cb && cc) return;
+        if (ca || cb || cc) clipMask |= 1u << plane;
+    }
+    if (clipMask == 0u) {
+        rasterizeScreenTriangle(toScreen(a), toScreen(b), toScreen(c), color);
+        return;
+    }
+
+    // Homogeneous Sutherland–Hodgman clipping, then triangulate the polygon.
+    vec4 polygons[2][9];
+    polygons[0][0] = a; polygons[0][1] = b; polygons[0][2] = c;
+    int src = 0, size = 3;
+    for (int plane = 0; plane < 6; ++plane) {
+        if ((clipMask & (1u << plane)) == 0u) continue;
+        int count = 0;
+        vec4 prev = polygons[src][size - 1];
+        float dp = planeDistance(prev, plane);
+        for (int i = 0; i < size; ++i) {
+            vec4 curr = polygons[src][i];
+            float dc = planeDistance(curr, plane);
+            if ((dp < 0.0 && dc > 0.0) || (dp > 0.0 && dc < 0.0)) {
+                polygons[1 - src][count++] = clipIntersection(prev, curr, dp, dc);
+            }
+            if (dc >= 0.0) polygons[1 - src][count++] = curr;
+            prev = curr;
+            dp = dc;
+        }
+        if (count < 3) return;
+        size = count;
+        src = 1 - src;
+    }
+    ScreenVertex first = toScreen(polygons[src][0]);
+    for (int i = 2; i < size; ++i) {
+        rasterizeScreenTriangle(first, toScreen(polygons[src][i - 1]), toScreen(polygons[src][i]), color);
+    }
+}
+
+void main()
+{
+    uint face_id = gl_GlobalInvocationID.x;
+    if (face_id >= params.nfaces) return;
+    uvec3 face = loadFace(face_id);
+    vec3 v0 = loadVertex(face.x);
+    vec3 v1 = loadVertex(face.y);
+    vec3 v2 = loadVertex(face.z);
+    // A flat normal is the same for every fragment of this triangle.
+    uvec3 c = shadeFragment(v0, v1, v2);
+    uint color = c.x | (c.y << 8u) | (c.z << 16u);
+    rasterizeTriangle(project(v0), project(v1), project(v2), color);
+}

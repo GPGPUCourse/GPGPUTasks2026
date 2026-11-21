@@ -373,6 +373,18 @@ public:
                 pNextFeature = &atomic_float_features;
 
 		vk::PhysicalDeviceFeatures2 device_enabled_features2;
+		vk::PhysicalDeviceShaderAtomicInt64Features int64_atomic_features;
+		{
+			const auto supported = physical_device_->getFeatures2<vk::PhysicalDeviceFeatures2, vk::PhysicalDeviceShaderAtomicInt64Features>();
+			rassert(supported.get<vk::PhysicalDeviceFeatures2>().features.shaderInt64,
+				"The selected Vulkan device must support shaderInt64");
+			rassert(supported.get<vk::PhysicalDeviceShaderAtomicInt64Features>().shaderBufferInt64Atomics,
+				"The selected Vulkan device must support shaderBufferInt64Atomics");
+			device_enabled_features2.features.setShaderInt64(true);
+			int64_atomic_features.setShaderBufferInt64Atomics(true).setPNext(pNextFeature);
+			pNextFeature = &int64_atomic_features;
+		}
+
 		if (isMoltenVK()) {
 			// note that for now we need geometry shader ONLY for gl_PrimitiveID
 			// but there is no geometry shader support on MoltenVK,

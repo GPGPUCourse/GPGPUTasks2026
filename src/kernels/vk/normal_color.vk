@@ -1,0 +1,9 @@
+// Encode the oriented world-space normal into RGB8 (no camera-facing flip).
+uvec3 shadeFragment(vec3 v0, vec3 v1, vec3 v2)
+{
+    vec3 n = cross(v1 - v0, v2 - v0);
+    float len = length(n);
+    if (!(len > 0.0)) return uvec3(0);
+    vec3 c = clamp(0.5 * (n / len) + 0.5, 0.0, 1.0);
+    return uvec3(floor(255.0 * c + 0.5));
+}

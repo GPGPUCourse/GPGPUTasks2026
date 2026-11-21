@@ -62,7 +62,7 @@ jobs:
         ./main_aplusb 0
         ./main_aplusb 1
 
-    - name: Run main_linear_bvh
+    - name: Run main_rasterization
       working-directory: ${{github.workspace}}/
       run: |
-        ./build/main_linear_bvh 0
+        ./build/main_rasterization 0
