@@ -257,12 +257,12 @@ void stack_next(inout uint it) {
     stack_next(it, 1);
 }
 
-bool intersect_triangle(vec3 orig, vec3 dir, uint leaf_index, out int face_id) {
+bool intersect_triangle(vec3 orig, vec3 dir, uint leaf_index, inout int face_id) {
     uint cur_face_id = leafTriIndices[leaf_index];
     uvec3 face = loadFace(cur_face_id);
     float cur_t, cur_u, cur_v;
     bool intersect = intersect_ray_triangle(orig, dir, loadVertex(face.x), loadVertex(face.y),
-            loadVertex(face.x), 0, FLT_MAX_GLSL, false, cur_t, cur_u, cur_v);
+            loadVertex(face.z), 0, FLT_MAX_GLSL, false, cur_t, cur_u, cur_v);
     if (intersect) {
         face_id = int(cur_face_id);
     }
@@ -270,12 +270,12 @@ bool intersect_triangle(vec3 orig, vec3 dir, uint leaf_index, out int face_id) {
 }
 
 void intersect_triangle(vec3 orig, vec3 dir, uint leaf_index, float tMin, float tMax,
-                        out float t, out float u, out float v, out int face_id) {
+                        inout float t, inout float u, inout float v, inout int face_id) {
     uint cur_face_id = leafTriIndices[leaf_index];
     uvec3 face = loadFace(cur_face_id);
     float cur_t, cur_u, cur_v;
     if (intersect_ray_triangle(orig, dir, loadVertex(face.x), loadVertex(face.y),
-            loadVertex(face.x), tMin, tMax, false, cur_t, cur_u, cur_v)) {
+            loadVertex(face.z), tMin, tMax, false, cur_t, cur_u, cur_v)) {
         t = cur_t;
         u = cur_u;
         v = cur_v;
@@ -321,7 +321,7 @@ bool bvh_closest_hit(vec3 orig,
         }
 
         if (right >= leafStart) {
-            intersect_triangle(orig, dir, left - leafStart, tMin, t, t, u, v, face_id);
+            intersect_triangle(orig, dir, right - leafStart, tMin, t, t, u, v, face_id);
         } else {
             float far_t;
             intersect_right = intersect_ray_aabb(orig, dir, bvhNodes[right].aabb, tMin, t, right_near_t, far_t);
@@ -371,13 +371,13 @@ bool any_hit_from(vec3 orig,
 
         if (left >= leafStart && intersect_triangle(orig, dir, left - leafStart, face_id) && face_id != ignore_face) {
             return true;
-        } else {
+        } else if (left < leafStart) {
             intersect_left = intersect_ray_aabb(orig, dir, bvhNodes[left].aabb, 0, FLT_MAX_GLSL, near_t, far_t);
         }
 
         if (right >= leafStart && intersect_triangle(orig, dir, right - leafStart, face_id) && face_id != ignore_face) {
             return true;
-        } else {
+        } else if (left < leafStart) {
             intersect_right = intersect_ray_aabb(orig, dir, bvhNodes[right].aabb, 0, FLT_MAX_GLSL, near_t, far_t);
         }
 
