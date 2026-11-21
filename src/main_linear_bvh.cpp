@@ -72,7 +72,7 @@ void run(int argc, char** argv)
         "data/san-miguel/san-miguel.obj",
     };
 
-    const int niters = 10; // при отладке удобно запускать одну итерацию
+    const int niters = 1; // при отладке удобно запускать одну итерацию TODO change to 10
     std::vector<double> gpu_rt_perf_mrays_per_sec;
     std::vector<double> gpu_lbvh_perfs_mtris_per_sec;
 
@@ -193,8 +193,9 @@ void run(int argc, char** argv)
             framebuffer_ambient_occlusion_gpu.fill(NO_AMBIENT_OCCLUSION);
             cleaning_framebuffers_time += cleaning_framebuffers_t.elapsed();
 
+            std::cout << "start kernels" << std::endl;
             std::vector<double> rt_times_with_cpu_lbvh;
-            for (int iter = 0; iter < 1; ++iter) {
+            for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
                 vk_rt_with_lbvh.exec(

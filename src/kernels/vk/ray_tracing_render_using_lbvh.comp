@@ -247,12 +247,38 @@ float random01(inout uint s)
     return float(s >> 8u) * (1.0 / 16777216.0);
 }
 
+// Diagnostic codes: 810x = closest-hit traversal, 820x = AO traversal,
+// 830x = triangle lookup, 840x = framebuffer/output lookup.
+bool load_leaf_face_checked(uint leaf_index, out uint face_id, out uvec3 face) {
+    if (leaf_index >= params.nfaces || leaf_index >= uint(leafTriIndices.length())) {
+        rassert(false, 8301);
+        return false;
+    }
+
+    face_id = leafTriIndices[leaf_index];
+    if (face_id >= params.nfaces || face_id >= uint(faces.length()) / 3u) {
+        rassert(false, 8302);
+        return false;
+    }
+
+    face = loadFace(face_id);
+    uint vertexCount = uint(vertices.length()) / 3u;
+    if (any(greaterThanEqual(face, uvec3(vertexCount)))) {
+        rassert(false, 8303);
+        return false;
+    }
+    return true;
+}
+
 bool intersect_triangle(vec3 orig, vec3 dir, uint leaf_index, inout int face_id) {
-    uint cur_face_id = leafTriIndices[leaf_index];
-    uvec3 face = loadFace(cur_face_id);
+    uint cur_face_id;
+    uvec3 face;
+    if (!load_leaf_face_checked(leaf_index, cur_face_id, face)) {
+        return false;
+    }
     float cur_t, cur_u, cur_v;
     bool intersect = intersect_ray_triangle(orig, dir, loadVertex(face.x), loadVertex(face.y),
-            loadVertex(face.z), 0, FLT_MAX_GLSL, false, cur_t, cur_u, cur_v);
+            loadVertex(face.z), 1e-4, FLT_MAX_GLSL, false, cur_t, cur_u, cur_v);
     if (intersect) {
         face_id = int(cur_face_id);
     }
@@ -261,8 +287,11 @@ bool intersect_triangle(vec3 orig, vec3 dir, uint leaf_index, inout int face_id)
 
 void intersect_triangle(vec3 orig, vec3 dir, uint leaf_index, float tMin, float tMax,
                         inout float t, inout float u, inout float v, inout int face_id) {
-    uint cur_face_id = leafTriIndices[leaf_index];
-    uvec3 face = loadFace(cur_face_id);
+    uint cur_face_id;
+    uvec3 face;
+    if (!load_leaf_face_checked(leaf_index, cur_face_id, face)) {
+        return;
+    }
     float cur_t, cur_u, cur_v;
     if (intersect_ray_triangle(orig, dir, loadVertex(face.x), loadVertex(face.y),
             loadVertex(face.z), tMin, tMax, false, cur_t, cur_u, cur_v)) {
@@ -284,6 +313,23 @@ bool bvh_closest_hit(vec3 orig,
         out float outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
         out float outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
+    // Early diagnostic returns must leave valid outputs for main().
+    outFaceId = -1;
+    outT = FLT_MAX_GLSL;
+    outU = 0.0;
+    outV = 0.0;
+
+    if (params.nfaces == 0u || params.nfaces > 0x40000000u ||
+            params.nfaces > uint(leafTriIndices.length())) {
+        rassert(false, 8100);
+        return false;
+    }
+    int nodeCount = int(2u * params.nfaces - 1u);
+    if (nodeCount > bvhNodes.length()) {
+        rassert(false, 8100);
+        return false;
+    }
+
     int rootIndex = 0;
     int leafStart = int(params.nfaces) - 1;
 
@@ -297,9 +343,22 @@ bool bvh_closest_hit(vec3 orig,
     float u = 0;
     float v = 0;
 
+    uint steps = 0u;
     while (cur != -1) {
+        if (++steps > params.nfaces) {
+            rassert(false, 8101);
+            return false;
+        }
+        if (cur < 0 || cur >= leafStart) {
+            rassert(false, 8102);
+            return false;
+        }
         int left = int(bvhNodes[cur].leftChildIndex);
         int right = int(bvhNodes[cur].rightChildIndex);
+        if (left < 0 || left >= nodeCount || right < 0 || right >= nodeCount) {
+            rassert(false, 8103);
+            return false;
+        }
         bool intersect_left = false;
         bool intersect_right = false;
 
@@ -322,11 +381,11 @@ bool bvh_closest_hit(vec3 orig,
         cur = (intersect_left && left_near_t <= right_near_t) ? left : cur;
         cur = (intersect_right && right_near_t < left_near_t) ? right : cur;
         if (intersect_left && intersect_right) {
-            if (stack_begin < kStackCapacity) {
-                stack[stack_begin++] = (left_near_t <= right_near_t) ? right : left;
-            } else {
-                rassert(false, 111111111);
+            if (stack_begin >= kStackCapacity) {
+                rassert(false, 8104);
+                return false;
             }
+            stack[stack_begin++] = (left_near_t <= right_near_t) ? right : left;
         } else if (!intersect_left && !intersect_right) {
             cur = stack_begin == 0 ? -1 : stack[--stack_begin];
         }
@@ -346,6 +405,17 @@ bool any_hit_from(vec3 orig,
         vec3 dir,
         int ignore_face)
 {
+    if (params.nfaces == 0u || params.nfaces > 0x40000000u ||
+            params.nfaces > uint(leafTriIndices.length())) {
+        rassert(false, 8200);
+        return false;
+    }
+    int nodeCount = int(2u * params.nfaces - 1u);
+    if (nodeCount > bvhNodes.length()) {
+        rassert(false, 8200);
+        return false;
+    }
+
     int rootIndex = 0;
     int leafStart = int(params.nfaces) - 1;
 
@@ -354,12 +424,25 @@ bool any_hit_from(vec3 orig,
     int stack[kStackCapacity];
     uint stack_begin = 0;
 
-    int face_id;
+    int face_id = -1;
     float far_t, near_t;
 
+    uint steps = 0u;
     while (cur != -1) {
+        if (++steps > params.nfaces) {
+            rassert(false, 8201);
+            return false;
+        }
+        if (cur < 0 || cur >= leafStart) {
+            rassert(false, 8202);
+            return false;
+        }
         int left = int(bvhNodes[cur].leftChildIndex);
         int right = int(bvhNodes[cur].rightChildIndex);
+        if (left < 0 || left >= nodeCount || right < 0 || right >= nodeCount) {
+            rassert(false, 8203);
+            return false;
+        }
         bool intersect_left = false;
         bool intersect_right = false;
 
@@ -382,11 +465,11 @@ bool any_hit_from(vec3 orig,
         } else {
             cur = (intersect_left) ? left : right;
             if (intersect_left && intersect_right) {
-                if (stack_begin < kStackCapacity) {
-                    stack[stack_begin++] = right;
-                } else {
-                    rassert(false, 111111121);
+                if (stack_begin >= kStackCapacity) {
+                    rassert(false, 8204);
+                    return false;
                 }
+                stack[stack_begin++] = right;
             }
         }
     }
@@ -407,7 +490,10 @@ void main()
     uint i = gl_GlobalInvocationID.x;
     uint j = gl_GlobalInvocationID.y;
 
-    rassert(camera.magic_bits_guard == CAMERA_VIEW_GPU_MAGIC_BITS_GUARD, 346435342);
+    if (camera.magic_bits_guard != CAMERA_VIEW_GPU_MAGIC_BITS_GUARD) {
+        rassert(false, 346435342);
+        return;
+    }
     if (i >= uint(camera.K.width) || j >= uint(camera.K.height))
     return;
 
@@ -436,13 +522,27 @@ void main()
     );
 
     uint idx = j * uint(camera.K.width) + i;
+    if (idx >= uint(framebuffer_face_id.length()) ||
+            idx >= uint(framebuffer_ambient_occlusion.length())) {
+        rassert(false, 8401);
+        return;
+    }
     framebuffer_face_id[idx] = faceIdBest;
 
     float ao = 1.0; // background stays white
 
     if (faceIdBest >= 0)
     {
+        if (uint(faceIdBest) >= params.nfaces ||
+                uint(faceIdBest) >= uint(faces.length()) / 3u) {
+            rassert(false, 8402);
+            return;
+        }
         uvec3 f = loadFace(uint(faceIdBest));
+        if (any(greaterThanEqual(f, uvec3(uint(vertices.length()) / 3u)))) {
+            rassert(false, 8403);
+            return;
+        }
         vec3 a = loadVertex(f.x);
         vec3 b = loadVertex(f.y);
         vec3 c = loadVertex(f.z);
