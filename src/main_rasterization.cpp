@@ -12,7 +12,9 @@
 #include "io/camera_reader.h"
 #include "io/scene_reader.h"
 
+#include <cstdlib>
 #include <filesystem>
+#include <string_view>
 
 // Считает сколько отличающихся пикселей (отличающихся > threshold)
 template<typename T>
@@ -263,6 +265,15 @@ void run(int argc, char** argv)
             } params{projection, nfaces, narrow_cast<int>(width), narrow_cast<int>(height)};
             static_assert(sizeof(PushConstants) == 76);
 
+#ifdef CUDA_SUPPORT
+            std::unique_ptr<cuda::TiledRasterizer> tiled;
+            if (sw_context.type() == gpu::Context::TypeCUDA) {
+                const char *mode = std::getenv("GPGPU_CUDA_RASTERIZER");
+                if (!mode || std::string_view(mode) != "baseline") {
+                    tiled = std::make_unique<cuda::TiledRasterizer>(nfaces, params.width, params.height);
+                }
+            }
+#endif
             double cleaning_framebuffers_time = 0.0;
             std::vector<double> render_times;
             for (int iter = 0; iter < niters; ++iter) {
@@ -303,8 +314,12 @@ void run(int argc, char** argv)
 #ifdef CUDA_SUPPORT
                 } else if (sw_context.type() == gpu::Context::TypeCUDA) {
                     timer t;
-                    cuda::sw_rasterize_normals(work_size, vertices_gpu, faces_gpu, framebuffer_normals_gpu,
-                                               projection, nfaces, params.width, params.height);
+                    if (tiled) {
+                        tiled->draw(vertices_gpu, faces_gpu, framebuffer_normals_gpu, projection);
+                    } else {
+                        cuda::sw_rasterize_normals(work_size, vertices_gpu, faces_gpu, framebuffer_normals_gpu,
+                                                   projection, nfaces, params.width, params.height);
+                    }
                     render_times.push_back(1000.0 * t.elapsed());
 #endif
                 } else {
@@ -314,11 +329,32 @@ void run(int argc, char** argv)
             const double rasterization_time = stats::sum(render_times) / 1000.0;
             sw_gpu_rasterization_times_ms.push_back(stats::median(render_times));
             std::cout << "GPU software rasterization frame times (in ms) - " << stats::valuesStatsLine(render_times) << std::endl;
+#ifdef CUDA_SUPPORT
+            if (tiled) {
+                const auto stats = tiled->stats();
+                std::cout << "[CUDA tiles] " << stats.triangles << " triangles, " << stats.binRefs << " bin refs, "
+                          << stats.tileRefs << " tile refs, " << stats.activeTiles << " active tiles"
+                          << (stats.fallback ? " (baseline fallback)" : "") << std::endl;
+            }
+#endif
 
             // Считываем результат по PCI-E шине: GPU VRAM -> CPU RAM
             timer pcie_reading_t;
             const auto packed = framebuffer_normals_gpu.readVector();
             const double pcie_reading_time = pcie_reading_t.elapsed();
+#ifdef CUDA_SUPPORT
+            if (tiled && std::getenv("GPGPU_VERIFY_CUDA_RASTERIZER")) {
+                gpu::gpu_mem_64u baseline(npixels);
+                baseline.fill(no_fragment);
+                cuda::sw_rasterize_normals(work_size, vertices_gpu, faces_gpu, baseline, projection,
+                                           nfaces, params.width, params.height);
+                const auto expected = baseline.readVector();
+                size_t differences = 0;
+                for (size_t i = 0; i < npixels; ++i) differences += (packed[i] != expected[i]);
+                std::cout << "[CUDA tiles] differing packed pixels vs CUDA baseline: " << differences << std::endl;
+                rassert(differences == 0, 6741364829215, differences);
+            }
+#endif
 
             image8u gpu_framebuffer_normals(width, height, 3);
             for (size_t y = 0; y < height; ++y) {
