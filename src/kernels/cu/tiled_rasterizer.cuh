@@ -5,7 +5,10 @@ constexpr int BIN_SIZE = 128;
 constexpr int TILES_PER_BIN = BIN_SIZE / TILE_SIZE;
 constexpr int BIN_THREADS = 256;
 constexpr int COARSE_THREADS = TILES_PER_BIN * TILES_PER_BIN;
-constexpr int FINE_THREADS = TILE_SIZE * TILE_SIZE;
+constexpr int WARP_SIZE = 32;
+constexpr int FINE_WARPS = 4;
+constexpr int FINE_THREADS = FINE_WARPS * WARP_SIZE;
+constexpr unsigned FULL_WARP = 0xffffffffu;
 constexpr unsigned MAX_BIN_PARTS = 16;
 constexpr unsigned BIN_REFS_PER_PART = 4096;
 using PixelKey = unsigned long long;
@@ -301,72 +304,124 @@ __global__ void coarseRasterizer(RasterGrid grid, RasterBuffers buffers, unsigne
     }
 }
 
-__device__ void drawInTile(const SetupTriangle &tri, int x0, int y0, int x1, int y1, PixelKey *tile)
+#include "fine_coverage.cuh"
+
+struct FineTriangle {
+    Coverage coverage;
+    unsigned first;
+    float z, dzdx, dzdy;
+    int x, y;
+    uint32_t color;
+};
+
+__device__ void setupFragmentPlane(FineTriangle &out, const SetupTriangle &tri, int x0, int y0)
 {
     const auto a = tri.a, b = tri.b, c = tri.c;
-    const auto bounds = pixelBounds(a, b, c);
-    const int first = max(y0, bounds.y0), end = min(y1, bounds.y1);
     const float area = float(edgeValue(a, b, c.x, c.y));
-    const float dzdx = ((b.z - a.z) * (c.y - a.y) - (c.z - a.z) * (b.y - a.y)) / area;
-    const float dzdy = ((b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z)) / area;
-    // Setup already tested coverage when the entire bounding box contains exactly one sample.
-    if (bounds.x1 == bounds.x0 + 1 && bounds.y1 == bounds.y0 + 1) {
-        const int x = bounds.x0, y = bounds.y0;
-        const float rowDepth = fmaf(dzdy, float(y * SUBPIXEL + HALF_PIXEL - a.y), a.z);
-        const float depth = clamp01(fmaf(dzdx, float(x * SUBPIXEL + HALF_PIXEL - a.x), rowDepth));
-        atomicMin(tile + (y - y0) * TILE_SIZE + x - x0, (PixelKey(__float_as_uint(depth)) << 32) | tri.color);
-        return;
+    out.dzdx = ((b.z - a.z) * (c.y - a.y) - (c.z - a.z) * (b.y - a.y)) / area;
+    out.dzdy = ((b.x - a.x) * (c.z - a.z) - (c.x - a.x) * (b.z - a.z)) / area;
+    out.x = x0 * SUBPIXEL + HALF_PIXEL - a.x;
+    out.y = y0 * SUBPIXEL + HALF_PIXEL - a.y;
+    out.z = a.z;
+    out.color = tri.color;
+}
+
+__device__ void shadeBatch(FineTriangle triangle, unsigned lane, FineTriangle *batch, PixelKey *pixels)
+{
+    const unsigned count = __popcll(triangle.coverage);
+    const unsigned nonempty = __ballot_sync(FULL_WARP, count != 0);
+    if (!nonempty) return;
+    unsigned end = count;
+    #pragma unroll
+    for (int step = 1; step < WARP_SIZE; step *= 2) {
+        const unsigned prev = __shfl_up_sync(FULL_WARP, end, step);
+        if (lane >= step) end += prev;
     }
-    // Initialize each Bresenham edge directly at the first row owned by the tile.
-    EdgeWalker edges[] = {{a, b, first, end, true}, {b, c, first, end, true}, {c, a, first, end, true}};
-    for (int y = first; y < end; ++y) {
-        int left = x0, right = x1;
-        for (auto &edge : edges) {
-            if (y < edge.first || y >= edge.end) continue;
-            if (edge.left) left = max(x0, edge.ceilX());
-            else right = min(x1, edge.ceilX());
-            edge.next();
+    const unsigned total = __shfl_sync(FULL_WARP, end, WARP_SIZE - 1);
+    triangle.first = end - count;
+    if (count) batch[lane] = triangle;
+    __syncwarp();
+
+    // Each bit marks a triangle's first fragment in the current group of 32.
+    // Its prefix popcount selects the source lane among the nonempty triangles.
+    unsigned started = 0;
+    const unsigned throughLane = 0xffffffffu >> (31 - lane);
+    for (unsigned base = 0; base < total; base += WARP_SIZE) {
+        const unsigned offset = triangle.first - base;
+        unsigned starts = count && offset < WARP_SIZE ? 1u << offset : 0;
+#if __CUDA_ARCH__ >= 800
+        starts = __reduce_or_sync(FULL_WARP, starts);
+#else
+        #pragma unroll
+        for (int step = 16; step > 0; step >>= 1) starts |= __shfl_xor_sync(FULL_WARP, starts, step);
+#endif
+        if (base + lane < total) {
+            const unsigned owner = __fns(nonempty, 0, started + __popc(starts & throughLane));
+            const FineTriangle info = batch[owner];
+            const unsigned pixel = nthPixel(info.coverage, base + lane - info.first);
+            const int x = int(pixel & 7), y = int(pixel >> 3);
+            const float rowDepth = fmaf(info.dzdy, float(info.y + y * SUBPIXEL), info.z);
+            const float z = clamp01(fmaf(info.dzdx, float(info.x + x * SUBPIXEL), rowDepth));
+            atomicMin(pixels + pixel, (PixelKey(__float_as_uint(z)) << 32) | info.color);
         }
-        const float rowDepth = fmaf(dzdy, float(y * SUBPIXEL + HALF_PIXEL - a.y), a.z);
-        for (int x = left; x < right; ++x) {
-            const float depth = clamp01(fmaf(dzdx, float(x * SUBPIXEL + HALF_PIXEL - a.x), rowDepth));
-            const PixelKey fragment = (PixelKey(__float_as_uint(depth)) << 32) | tri.color;
-            atomicMin(tile + (y - y0) * TILE_SIZE + x - x0, fragment);
-        }
+        started += __popc(starts);
     }
+    __syncwarp(); // All reads from batch[] are done before any lane can reuse it.
 }
 
 __global__ void fineRasterizer(RasterGrid grid, RasterBuffers buffers, uint64_t *framebuffer)
 {
     if (buffers.counters->overflow) return;
-    __shared__ PixelKey pixels[TILE_SIZE * TILE_SIZE];
-    const int lane = threadIdx.x;
-    for (unsigned i = blockIdx.x; i < buffers.counters->numActiveTiles; i += gridDim.x) {
+    __shared__ PixelKey warpPixels[FINE_WARPS][TILE_SIZE * TILE_SIZE];
+    __shared__ FineTriangle warpBatch[FINE_WARPS][WARP_SIZE];
+    const unsigned warp = threadIdx.x / WARP_SIZE, lane = threadIdx.x % WARP_SIZE;
+    auto *pixels = warpPixels[warp];
+    for (unsigned i = blockIdx.x * FINE_WARPS + warp; i < buffers.counters->numActiveTiles;
+         i += gridDim.x * FINE_WARPS) {
         const int tile = buffers.activeTiles[i];
         const int x0 = (tile % grid.tilesX) * TILE_SIZE, y0 = (tile / grid.tilesX) * TILE_SIZE;
-        for (int slot = lane; slot < TILE_SIZE * TILE_SIZE; slot += FINE_THREADS) {
-            const int x = x0 + slot % TILE_SIZE, y = y0 + slot / TILE_SIZE;
-            const bool valid = x < grid.width && y < grid.height;
-            pixels[slot] = valid ? framebuffer[size_t(y) * grid.width + x] : ~PixelKey{0};
+        const unsigned width = min(TILE_SIZE, grid.width - x0), height = min(TILE_SIZE, grid.height - y0);
+        const Coverage valid = (COLUMN_BITS * ((1u << width) - 1u)) & (~0ull >> (8 * (8 - height)));
+        #pragma unroll
+        for (unsigned slot = lane; slot < 64; slot += WARP_SIZE) {
+            const int x = x0 + int(slot & 7), y = y0 + int(slot >> 3);
+            pixels[slot] = ((valid >> slot) & 1) ? framebuffer[size_t(y) * grid.width + x] : ~PixelKey{0};
         }
-        __syncthreads();
-        unsigned offset = lane;
-        for (unsigned mask = buffers.tileParts[tile]; mask; mask &= mask - 1) {
-            const int part = __ffs(mask) - 1;
-            const Range tris = buffers.tiles[size_t(tile) * MAX_BIN_PARTS + part];
-            while (offset < tris.count) {
-                const auto tri = buffers.triangles[buffers.tileRefs[tris.begin + offset]];
-                drawInTile(tri, x0, y0, min(x0 + TILE_SIZE, grid.width), min(y0 + TILE_SIZE, grid.height), pixels);
-                offset += FINE_THREADS;
+        __syncwarp();
+
+        unsigned parts = buffers.tileParts[tile], ref = 0, left = 0;
+        while (parts || left) {
+            unsigned filled = 0, triId = 0;
+            do {
+                if (!left) {
+                    const int part = __ffs(parts) - 1;
+                    parts &= parts - 1;
+                    const Range range = buffers.tiles[size_t(tile) * MAX_BIN_PARTS + part];
+                    ref = range.begin;
+                    left = range.count;
+                }
+                const unsigned chunk = min(WARP_SIZE - filled, left);
+                if (lane - filled < chunk) triId = buffers.tileRefs[ref + lane - filled];
+                ref += chunk;
+                left -= chunk;
+                filled += chunk;
+            } while (filled < WARP_SIZE && (parts || left));
+
+            FineTriangle triangle{};
+            if (lane < filled) {
+                const auto tri = buffers.triangles[triId];
+                triangle.coverage = triangleMask(tri, x0, y0) & valid;
+                if (triangle.coverage) setupFragmentPlane(triangle, tri, x0, y0);
             }
-            offset -= tris.count;
+            shadeBatch(triangle, lane, warpBatch[warp], pixels);
         }
-        __syncthreads();
-        for (int slot = lane; slot < TILE_SIZE * TILE_SIZE; slot += FINE_THREADS) {
-            const int x = x0 + slot % TILE_SIZE, y = y0 + slot / TILE_SIZE;
-            if (x < grid.width && y < grid.height) framebuffer[size_t(y) * grid.width + x] = pixels[slot];
+
+        #pragma unroll
+        for (unsigned slot = lane; slot < 64; slot += WARP_SIZE) {
+            const int x = x0 + int(slot & 7), y = y0 + int(slot >> 3);
+            if ((valid >> slot) & 1) framebuffer[size_t(y) * grid.width + x] = pixels[slot];
         }
-        __syncthreads();
+        __syncwarp();
     }
 }
 

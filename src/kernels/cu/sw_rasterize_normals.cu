@@ -68,34 +68,17 @@ struct EdgeWalker {
     int x, step;
     int64_t error, stepError, divisor;
 
-    __device__ EdgeWalker(ScreenVertex a, ScreenVertex b, int start = 0, int stop = INT_MAX, bool fast = false)
-        : left(a.y > b.y)
+    __device__ EdgeWalker(ScreenVertex a, ScreenVertex b) : left(a.y > b.y)
     {
         if (left) { const auto tmp = a; a = b; b = tmp; }
-        first = max(start, firstRow(a.y));
-        end = min(stop, firstRow(b.y));
-        if (first >= end) return;
+        first = firstRow(a.y);
+        end = firstRow(b.y);
+        if (first == end) return;
         const int64_t dx = b.x - a.x, dy = b.y - a.y;
         divisor = dy * SUBPIXEL;
         const int64_t n = (a.x - HALF_PIXEL) * dy + dx * (first * SUBPIXEL + HALF_PIXEL - a.y);
-        if (fast) {
-            x = fastFloorQuotient(n, divisor, error);
-            if (end - first > 1) step = fastFloorQuotient(dx * SUBPIXEL, divisor, stepError);
-            else { step = 0; stepError = 0; }
-        } else {
-            x = floorQuotient(n, divisor, error);
-            step = floorQuotient(dx * SUBPIXEL, divisor, stepError);
-        }
-    }
-
-    __device__ static int fastFloorQuotient(int64_t n, int64_t d, int64_t &remainder)
-    {
-        // Estimate the quotient, then correct in integer arithmetic to preserve coverage.
-        int q = __float2int_rd(__fdividef(float(n), float(d)));
-        remainder = n - int64_t(q) * d;
-        while (remainder < 0) { --q; remainder += d; }
-        while (remainder >= d) { ++q; remainder -= d; }
-        return q;
+        x = floorQuotient(n, divisor, error);
+        step = floorQuotient(dx * SUBPIXEL, divisor, stepError);
     }
 
     __device__ static int floorQuotient(int64_t n, int64_t d, int64_t &remainder)
