@@ -171,21 +171,8 @@ __device__ float4 clipIntersection(float4 a, float4 b, float da, float db)
 }
 
 template<class Emit>
-__device__ void clipAndProject(float4 a, float4 b, float4 c, int width, int height, Emit emit)
+__device__ void clipPartial(float4 a, float4 b, float4 c, unsigned clip_mask, int width, int height, Emit emit)
 {
-    unsigned clip_mask = 0;
-    for (int plane = 0; plane < 6; ++plane) {
-        const bool ca = planeDistance(a, plane) < 0.0f;
-        const bool cb = planeDistance(b, plane) < 0.0f;
-        const bool cc = planeDistance(c, plane) < 0.0f;
-        if (ca && cb && cc) return;
-        if (ca || cb || cc) clip_mask |= 1u << plane;
-    }
-    if (!clip_mask) {
-        emit(toScreen(a, width, height), toScreen(b, width, height), toScreen(c, width, height));
-        return;
-    }
-
     // Sutherland–Hodgman clipping: each plane adds at most one vertex.
     float4 polygons[2][9] = {{a, b, c}};
     int input = 0, size = 3;
@@ -213,6 +200,24 @@ __device__ void clipAndProject(float4 a, float4 b, float4 c, int width, int heig
     const ScreenVertex first = toScreen(polygon[0], width, height);
     for (int i = 2; i < size; ++i) {
         emit(first, toScreen(polygon[i - 1], width, height), toScreen(polygon[i], width, height));
+    }
+}
+
+template<class Emit>
+__device__ void clipAndProject(float4 a, float4 b, float4 c, int width, int height, Emit emit)
+{
+    unsigned clip_mask = 0;
+    for (int plane = 0; plane < 6; ++plane) {
+        const bool ca = planeDistance(a, plane) < 0.0f;
+        const bool cb = planeDistance(b, plane) < 0.0f;
+        const bool cc = planeDistance(c, plane) < 0.0f;
+        if (ca && cb && cc) return;
+        if (ca || cb || cc) clip_mask |= 1u << plane;
+    }
+    if (!clip_mask) {
+        emit(toScreen(a, width, height), toScreen(b, width, height), toScreen(c, width, height));
+    } else {
+        clipPartial(a, b, c, clip_mask, width, height, emit);
     }
 }
 

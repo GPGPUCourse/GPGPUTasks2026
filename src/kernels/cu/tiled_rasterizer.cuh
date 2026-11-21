@@ -98,6 +98,21 @@ struct EmitTriangle {
     }
 };
 
+__device__ unsigned clipOutcode(float4 p)
+{
+    return (unsigned(p.z < 0.0f) << 0) | (unsigned(p.w - p.z < 0.0f) << 1) |
+           (unsigned(p.w + p.x < 0.0f) << 2) | (unsigned(p.w - p.x < 0.0f) << 3) |
+           (unsigned(p.w + p.y < 0.0f) << 4) | (unsigned(p.w - p.y < 0.0f) << 5);
+}
+
+// The slow path may allocate a clipping polygon, but it only initializes it for
+// triangles that actually cross a plane. Inlining can move those stores before culling.
+__device__ __noinline__ void setupClipped(float4 pa, float4 pb, float4 pc, unsigned mask,
+                                          int width, int height, EmitTriangle emit)
+{
+    clipPartial(pa, pb, pc, mask, width, height, emit);
+}
+
 __global__ void triangleSetup(const float *vertices, const unsigned *faces, ProjectionGPU projection,
                               unsigned nfaces, RasterGrid grid, RasterBuffers buffers)
 {
@@ -105,8 +120,17 @@ __global__ void triangleSetup(const float *vertices, const unsigned *faces, Proj
     if (i >= nfaces) return;
     const uint3 face = loadFace(faces, i);
     const float3 a = loadVertex(vertices, face.x), b = loadVertex(vertices, face.y), c = loadVertex(vertices, face.z);
-    clipAndProject(project(projection, a), project(projection, b), project(projection, c), grid.width, grid.height,
-                   EmitTriangle{buffers, a, b, c});
+    const float4 pa = project(projection, a), pb = project(projection, b), pc = project(projection, c);
+    const unsigned ma = clipOutcode(pa), mb = clipOutcode(pb), mc = clipOutcode(pc);
+    if (ma & mb & mc) return;
+    const unsigned mask = ma | mb | mc;
+    const EmitTriangle emit{buffers, a, b, c};
+    if (mask) {
+        setupClipped(pa, pb, pc, mask, grid.width, grid.height, emit);
+    } else {
+        emit(toScreen(pa, grid.width, grid.height), toScreen(pb, grid.width, grid.height),
+             toScreen(pc, grid.width, grid.height));
+    }
 }
 
 // Find the largest edge value on a rectangle of sample centers. Including edge ties here
