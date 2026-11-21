@@ -16,7 +16,7 @@
 - [Задание 7](https://github.com/GPGPUCourse/GPGPUTasks2026/tree/task07): ```[до 09.11, 5 баллов]``` SpMV (умножение разреженной CSR-матрицы на вектор).
 - [Задание 8](https://github.com/GPGPUCourse/GPGPUTasks2026/tree/task08): ```[до 16.11+23.11, 5+10 баллов]``` Ray Tracing: обход BVH ```5 баллов``` + построение LBVH на GPU ```10 баллов```. ```Престиж```: 5 баллов за denoising, 10 баллов за RT cores hardware acceleration.
 - [Задание 9](https://github.com/GPGPUCourse/GPGPUTasks2026/tree/task09): ```[до 30.11, 7 баллов]``` Чистое математическое SDF искусство.
-- [Задание 10](https://github.com/GPGPUCourse/GPGPUTasks2026/tree/task10): ```[до 07.12, 10 баллов]``` Ускорение software GPGPU rasterization на основании идей [cudaraster](https://research.nvidia.com/sites/default/files/pubs/2011-08_High-Performance-Software-Rasterization/laine2011hpg_paper.pdf). ```Престиж```: 10 баллов за идеи [CuRast](https://diglib.eg.org/items/e0145eb3-5971-450b-b8ca-7eaf23332df7).
+- [Задание 10](https://github.com/GPGPUCourse/GPGPUTasks2026/tree/task10): ```[до 07.12, 10 баллов]``` Ускорение software GPGPU rasterization на основании идей [cudaraster](https://research.nvidia.com/sites/default/files/pubs/2011-08_High-Performance-Software-Rasterization/laine2011hpg_paper.pdf).
 
 Другое:
 
