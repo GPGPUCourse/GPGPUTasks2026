@@ -324,7 +324,11 @@ void TiledRasterizer::draw(const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_
         vertices.cuptr(), faces.cuptr(), projection, s.faceCount, s.grid, s.buffers);
     binRasterizer<<<s.smCount, BIN_THREADS, s.grid.numBins() * sizeof(unsigned), stream>>>(s.grid, s.buffers);
     makeCoarseTasks<<<div_ceil(s.grid.numBins(), BIN_THREADS / 32), BIN_THREADS, 0, stream>>>(s.grid, s.buffers, s.smCount);
-    coarseRasterizer<<<2 * s.smCount, COARSE_THREADS, 0, stream>>>(s.grid, s.buffers, s.smCount);
+    if (std::max(s.grid.width, s.grid.height) <= COARSE_NARROW_MAX_SIDE) {
+        coarseRasterizer<int><<<4 * s.smCount, COARSE_THREADS, 0, stream>>>(s.grid, s.buffers, s.smCount);
+    } else {
+        coarseRasterizer<int64_t><<<2 * s.smCount, COARSE_THREADS, 0, stream>>>(s.grid, s.buffers, s.smCount);
+    }
     fineRasterizer<<<6 * s.smCount, FINE_THREADS, 0, stream>>>(s.grid, s.buffers, framebuffer.cuptr());
     rasterizeOverflow<<<s.smCount, BIN_THREADS, 0, stream>>>(vertices.cuptr(), faces.cuptr(), framebuffer.cuptr(),
         projection, s.faceCount, s.grid, s.buffers.counters);

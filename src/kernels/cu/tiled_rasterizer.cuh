@@ -11,6 +11,7 @@ constexpr int FINE_THREADS = FINE_WARPS * WARP_SIZE;
 constexpr unsigned FULL_WARP = 0xffffffffu;
 constexpr unsigned MAX_BIN_PARTS = 16;
 constexpr unsigned BIN_REFS_PER_PART = 4096;
+constexpr int COARSE_NARROW_MAX_SIDE = 32768;
 using PixelKey = unsigned long long;
 
 struct SetupTriangle {
@@ -223,29 +224,100 @@ __global__ void makeCoarseTasks(RasterGrid grid, RasterBuffers buffers, unsigned
     if (lane < parts) buffers.tasks[first + lane] = {bin, lane, parts};
 }
 
+template<class Value>
+struct CoarseEdge {
+    Value corner;
+    int dx, dy;
+
+    __device__ CoarseEdge(ScreenVertex a, ScreenVertex b, int binX, int binY)
+        : dx(a.y - b.y), dy(b.x - a.x)
+    {
+        constexpr int span = (TILE_SIZE - 1) * SUBPIXEL;
+        const int x = binX * SUBPIXEL + HALF_PIXEL + (dx > 0 ? span : 0);
+        const int y = binY * SUBPIXEL + HALF_PIXEL + (dy > 0 ? span : 0);
+        // Moving by a tile changes the edge value by a multiple of 2048.
+        // Discard the fractional bits once without changing the >= 0 test.
+        static_assert(TILE_SIZE * SUBPIXEL == 2048);
+        const int64_t base = edgeValue(a, b, x, y) >> 11;
+        // At <=32768 pixels, the maximum variation within a bin is below 2^28.
+        // Saturating the origin leaves its sign tests exact and all MADs in range.
+        if constexpr (sizeof(Value) == 4) {
+            corner = int(min(int64_t(1) << 29, max(-(int64_t(1) << 29), base)));
+        } else {
+            corner = base;
+        }
+    }
+
+    __device__ bool passes(int x, int y) const
+    {
+        return corner + Value(dx) * x + Value(dy) * y >= 0;
+    }
+};
+
 template<bool Write>
+__device__ void coarseEmit(unsigned *positions, unsigned *out, unsigned triId, int x, int y)
+{
+    const unsigned pos = atomicAdd(positions + y * TILES_PER_BIN + x, 1u);
+    if constexpr (Write) out[pos] = triId;
+}
+
+template<bool Write, class Value>
 __device__ void coarsePass(RasterGrid grid, RasterBuffers buffers, CoarseTask task, unsigned shards, unsigned *positions)
 {
     const int binTileX = (task.bin % grid.binsX) * TILES_PER_BIN;
     const int binTileY = (task.bin / grid.binsX) * TILES_PER_BIN;
-    const unsigned lane = threadIdx.x & 31;
+    const int binX = binTileX * TILE_SIZE, binY = binTileY * TILE_SIZE;
+    const unsigned lane = threadIdx.x & (WARP_SIZE - 1);
     const unsigned shardBegin = shards * task.part / task.parts, shardEnd = shards * (task.part + 1) / task.parts;
-    for (unsigned shard = shardBegin + threadIdx.x / 32; shard < shardEnd; shard += COARSE_THREADS / 32) {
+    for (unsigned shard = shardBegin + threadIdx.x / WARP_SIZE; shard < shardEnd; shard += COARSE_THREADS / WARP_SIZE) {
         const Range refs = buffers.bins[task.bin * shards + shard];
-        for (unsigned j = lane; j < refs.count; j += 32) {
-            const unsigned triId = buffers.binRefs[refs.begin + j];
-            const auto tri = buffers.triangles[triId];
-            const auto bounds = pixelBounds(tri.a, tri.b, tri.c);
-            const int x0 = max(0, bounds.x0 / TILE_SIZE - binTileX);
-            const int y0 = max(0, bounds.y0 / TILE_SIZE - binTileY);
-            const int x1 = min(TILES_PER_BIN - 1, (bounds.x1 - 1) / TILE_SIZE - binTileX);
-            const int y1 = min(TILES_PER_BIN - 1, (bounds.y1 - 1) / TILE_SIZE - binTileY);
-            const bool testCoverage = (x1 != x0 || y1 != y0);
-            for (int y = y0; y <= y1; ++y) {
-                for (int x = x0; x <= x1; ++x) {
-                    if (testCoverage && !mayCover(tri, (binTileX + x) * TILE_SIZE, (binTileY + y) * TILE_SIZE, TILE_SIZE)) continue;
-                    const unsigned pos = atomicAdd(positions + y * TILES_PER_BIN + x, 1u);
-                    if (Write) buffers.tileRefs[pos] = triId;
+        for (unsigned j = 0; j < refs.count; j += WARP_SIZE) {
+            unsigned triId = 0, box = 0;
+            bool large = false;
+            if (j + lane < refs.count) {
+                triId = buffers.binRefs[refs.begin + j + lane];
+                const auto tri = buffers.triangles[triId];
+                const auto bounds = pixelBounds(tri.a, tri.b, tri.c);
+                const int x0 = max(0, bounds.x0 / TILE_SIZE - binTileX);
+                const int y0 = max(0, bounds.y0 / TILE_SIZE - binTileY);
+                const int x1 = min(TILES_PER_BIN - 1, (bounds.x1 - 1) / TILE_SIZE - binTileX);
+                const int y1 = min(TILES_PER_BIN - 1, (bounds.y1 - 1) / TILE_SIZE - binTileY);
+                const int area = (x1 - x0 + 1) * (y1 - y0 + 1);
+                large = area > 16;
+                if (large) {
+                    static_assert(TILES_PER_BIN == 16);
+                    box = x0 | (y0 << 4) | (x1 << 8) | (y1 << 12); // four 4-bit tile coordinates
+                } else if (area == 1) {
+                    coarseEmit<Write>(positions, buffers.tileRefs, triId, x0, y0);
+                } else {
+                    const CoarseEdge<Value> ab(tri.a, tri.b, binX, binY), bc(tri.b, tri.c, binX, binY), ca(tri.c, tri.a, binX, binY);
+                    for (int y = y0; y <= y1; ++y) {
+                        for (int x = x0; x <= x1; ++x) {
+                            if (ab.passes(x, y) && bc.passes(x, y) && ca.passes(x, y))
+                                coarseEmit<Write>(positions, buffers.tileRefs, triId, x, y);
+                        }
+                    }
+                }
+            }
+            // Small boxes stay lane-local. Redistribute the long tile walks to the whole warp.
+            for (unsigned pending = __ballot_sync(FULL_WARP, large); pending; pending &= pending - 1) {
+                const int owner = __ffs(pending) - 1;
+                const unsigned id = __shfl_sync(FULL_WARP, triId, owner);
+                const unsigned bounds = __shfl_sync(FULL_WARP, box, owner);
+                const int x0 = bounds & 15, y0 = (bounds >> 4) & 15;
+                const int x1 = (bounds >> 8) & 15, y1 = bounds >> 12;
+                // Round the row stride up to a power of two so lanes can map to (x,y)
+                // without dividing by the actual number of tiles in a row.
+                const int logWidth = 32 - __clz(unsigned(x1 - x0));
+                const int stride = 1 << logWidth;
+                const auto tri = buffers.triangles[id];
+                const CoarseEdge<Value> ab(tri.a, tri.b, binX, binY), bc(tri.b, tri.c, binX, binY), ca(tri.c, tri.a, binX, binY);
+                const int x = x0 + (lane & (stride - 1));
+                if (x <= x1) {
+                    for (int y = y0 + (lane >> logWidth); y <= y1; y += WARP_SIZE >> logWidth) {
+                        if (ab.passes(x, y) && bc.passes(x, y) && ca.passes(x, y))
+                            coarseEmit<Write>(positions, buffers.tileRefs, id, x, y);
+                    }
                 }
             }
         }
@@ -254,6 +326,7 @@ __device__ void coarsePass(RasterGrid grid, RasterBuffers buffers, CoarseTask ta
 
 // Persistent CTAs pick up several bin jobs. Counts/cursors are private to the CTA;
 // no order-preserving merge of tile list parts is needed.
+template<class Value>
 __global__ void coarseRasterizer(RasterGrid grid, RasterBuffers buffers, unsigned shards)
 {
     if (__syncthreads_or(threadIdx.x == 0 && atomicAdd(&buffers.counters->overflow, 0u))) return;
@@ -266,7 +339,7 @@ __global__ void coarseRasterizer(RasterGrid grid, RasterBuffers buffers, unsigne
         __syncthreads();
         if (taskId >= buffers.counters->numTasks) return;
         const CoarseTask task = buffers.tasks[taskId];
-        coarsePass<false>(grid, buffers, task, shards, positions);
+        coarsePass<false, Value>(grid, buffers, task, shards, positions);
         __syncthreads();
 
         const unsigned count = positions[lane];
@@ -299,7 +372,7 @@ __global__ void coarseRasterizer(RasterGrid grid, RasterBuffers buffers, unsigne
             }
         }
         __syncthreads();
-        coarsePass<true>(grid, buffers, task, shards, positions);
+        coarsePass<true, Value>(grid, buffers, task, shards, positions);
         __syncthreads();
     }
 }
