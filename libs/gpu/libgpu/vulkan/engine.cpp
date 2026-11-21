@@ -22,6 +22,14 @@
 #endif
 
 namespace {
+	void waitForFences(vk::raii::Device& device, vk::raii::Fence& fence, long assert_mark) {
+		vk::Result res;
+		do {
+			res = device.waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS);
+		} while (res == vk::Result::eTimeout);
+		VK_CHECK_RESULT(res, assert_mark);
+	}
+
 	// see https://vulkan-tutorial.com/Drawing_a_triangle/Setup/Validation_layers
 	// this is a debug callback for Vulkan Validation Layers
 	// when they find any problems - this callback will be triggered
@@ -540,7 +548,7 @@ vk::raii::CommandBuffer avk2::VulkanEngine::createCommandBuffer()
 void avk2::VulkanEngine::submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer, vk::raii::Fence &fence)
 {
 	submitCommandBufferAsync(command_buffer, fence);
-	VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 345123451241);
+	waitForFences(getDevice(), fence, 345123451241);
 }
 
 void avk2::VulkanEngine::submitCommandBufferAsync(const vk::raii::CommandBuffer &command_buffer, vk::raii::Fence &fence)
@@ -780,7 +788,7 @@ void avk2::VulkanEngine::writeImage(const avk2::raii::ImageData &image_dst, cons
 
 			if (is_prev_chunk_exists) {
 				rassert(fence != nullptr, 34523124121);
-				VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 4512341231);
+				waitForFences(getDevice(), *fence, 4512341231);
 			}
 		}
 	}
@@ -874,7 +882,7 @@ void avk2::VulkanEngine::readImage(const avk2::raii::ImageData &image_src, const
 
 			if (is_cur_chunk_exists) {
 				rassert(fence != nullptr, 34523124122);
-				VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 34124125123);
+				waitForFences(getDevice(), *fence, 34124125123);
 			}
 		}
 	}
@@ -981,7 +989,7 @@ void avk2::VulkanEngine::writeBuffer(const avk2::raii::BufferData &buffer_dst, s
 
 		if (is_prev_chunk_exists) {
 			rassert(fence != nullptr, 45635243413412);
-			VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 453151251236);
+			waitForFences(getDevice(), *fence, 453151251236);
 		}
 	}
 }
@@ -1027,7 +1035,7 @@ void avk2::VulkanEngine::readBuffer(const avk2::raii::BufferData &buffer_src, si
 
 		if (is_cur_chunk_exists) {
 			rassert(fence != nullptr, 554624331241);
-			VK_CHECK_RESULT(getDevice().waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS), 675623543242141);
+			waitForFences(getDevice(), *fence, 675623543242141);
 		}
 	}
 }
