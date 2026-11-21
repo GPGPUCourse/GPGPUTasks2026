@@ -289,12 +289,13 @@ SceneGeometry loadPLY(const std::string &path)
 {
     using namespace ply_detail;
 
-    std::ifstream in(path);
+    std::ifstream in(path, std::ios::binary);
     rassert(in.good(), 3100, path);
 
     // Header
     std::string line;
     std::getline(in, line);
+    if (!line.empty() && line.back() == '\r') line.pop_back();
     rassert(line == "ply", 3101, path);
 
     bool isAscii = false;
@@ -317,6 +318,7 @@ SceneGeometry loadPLY(const std::string &path)
     Section section = NONE;
 
     while (std::getline(in, line)) {
+        if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.empty()) continue;
         if (line == "end_header") break;
 
