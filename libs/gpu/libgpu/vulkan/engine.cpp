@@ -24,9 +24,11 @@
 namespace {
 	void waitForFences(vk::raii::Device& device, vk::raii::Fence& fence, long assert_mark) {
 		vk::Result res_god_save_from_macros;
+		std::size_t cnt = 0;
 		do {
 			res_god_save_from_macros = device.waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS);
-		} while (res_god_save_from_macros == vk::Result::eTimeout);
+			cnt++;
+		} while (res_god_save_from_macros == vk::Result::eTimeout && cnt < 10);
 		VK_CHECK_RESULT(res_god_save_from_macros, assert_mark);
 	}
 
