@@ -11,6 +11,13 @@ float sdPlane(vec3 p)
     return p.y;
 }
 
+float sdCapsule( vec3 p, vec3 a, vec3 b, float r )
+{
+  vec3 pa = p - a, ba = b - a;
+  float h = clamp( dot(pa,ba)/dot(ba,ba), 0.0, 1.0 );
+  return length( pa - ba*h ) - r;
+}
+
 // косинус который пропускает некоторые периоды, удобно чтобы махать ручкой не все время
 float lazycos(float angle)
 {
@@ -24,25 +31,98 @@ float lazycos(float angle)
     return 1.0;
 }
 
-// возможно, для конструирования тела пригодятся какие-то примитивы из набора https://iquilezles.org/articles/distfunctions/
-// способ сделать гладкий переход между примитивами: https://iquilezles.org/articles/smin/
-vec4 sdBody(vec3 p)
+vec3 lerp(vec3 a, vec3 b, float v) {
+    return a + (b - a) * v;
+}
+
+float smin( float a, float b, float k )
 {
-    float d = 1e10;
+    k *= 1.0;
+    float r = exp2(-a/k) + exp2(-b/k);
+    return -k*log2(r);
+}
 
-    // TODO
-    d = sdSphere((p - vec3(0.0, 0.35, -0.7)), 0.35);
+vec4 sdTorso(vec3 p)
+{
+    float d1 = sdSphere((p - vec3(0.0, 0.25, -0.7)), 0.25);
+    float d2 = sdSphere((p - vec3(0.0, 0.53, -0.7)), 0.12);
+    
+    return vec4(
+       smin(d1, d2, 0.1),
+       vec3(0.0, 1.0, 0.0)
+    );
+}
 
-    // return distance and color
-    return vec4(d, vec3(0.0, 1.0, 0.0));
+vec4 sdArms(vec3 p) {
+    float dl = sdCapsule(p, vec3(0.35, .2, -0.7), vec3(0.25, .4, -0.7), .03);
+    float dr = sdCapsule(
+      p, 
+      lerp(
+        vec3(-0.45, .6, -0.7),
+        vec3(-0.35, .2, -0.7), 
+        (lazycos(iTime * 8.0) + 1.0) / 2.0
+      ), 
+      vec3(-0.25, .4, -0.7),
+      .03
+    );
+    return vec4(
+        min(dl, dr),
+        vec3(0.0, 1.0, 0.0)
+    );
+}
+
+vec4 sdLegs(vec3 p) {
+    if (p.x < 0.0) {
+      p.x = -p.x; 
+    }
+    
+    float d = sdCapsule(p, vec3(0.07, 0.10, -0.7), vec3(0.082, -0.03, -0.7), .04);
+    return vec4(
+        d,
+        vec3(0.0, 1.0, 0.0)
+    );
+}
+
+vec4 sdBody(vec3 p) {
+    vec4 torso = sdTorso(p);
+    vec4 legs  = sdLegs(p);
+    vec4 arms  = sdArms(p);
+    
+    
+    if (legs.x < torso.x) {
+      return legs;
+    }
+    if (arms.x < torso.x) {
+      return arms;
+    }
+    return torso;
+    
 }
 
 vec4 sdEye(vec3 p)
 {
 
-    vec4 res = vec4(1e10, 0.0, 0.0, 0.0);
+    float dw = sdSphere((p - vec3(0.0, 0.5, -.55)), 0.148);
+    float dc = sdSphere((p - vec3(0.0, 0.51, -.485)), 0.100);
+    float db = sdSphere((p - vec3(0.0, 0.512, -.451)), 0.072);
 
-    return res;
+    if (db < dc) {
+      return vec4(
+        db,
+        vec3(0.0, 0.0, 0.0)
+      );
+    }
+    if (dc < dw) {
+      return vec4(
+        dc,
+        vec3(0.0, 1.0, 1.0)
+     );
+    }
+
+    return vec4(
+       dw,
+       vec3(1.0, 1.0, 1.0)
+    );
 }
 
 vec4 sdMonster(vec3 p)
@@ -182,3 +262,4 @@ void mainImage( out vec4 fragColor, in vec2 fragCoord )
     // Output to screen
     fragColor = vec4(col, 1.0);
 }
+
