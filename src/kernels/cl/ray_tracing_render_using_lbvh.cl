@@ -13,6 +13,8 @@
 #include "geometry_helpers.cl"
 #include "random_helpers.cl"
 
+#define STACK_DEPTH 65
+
 // BVH traversal: closest hit along ray
 static inline bool bvh_closest_hit(
     const float3              orig,
@@ -28,11 +30,68 @@ static inline bool bvh_closest_hit(
     __private float*          outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
     __private float*          outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
 {
+
+    if (!nfaces) {
+        return false;
+    }
+
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
     // TODO implement BVH travering (with stack, don't use recursion)
 
+    __private uint stack[STACK_DEPTH]; 
+    stack[0] = rootIndex;
+    uint stackSize = 1;                
+    float tBest = FLT_MAX;                   
+    int bestFaceId = -1; 
+
+    float bestU = 0.0f;
+    float bestV = 0.0f;
+    float tHitNear;
+    float tHitFar;
+
+    float t;
+    float tU;
+    float tV;
+
+    while (stackSize > 0) {
+        uint cur = stack[stackSize - 1];
+        stackSize--;
+
+        BVHNodeGPU node = nodes[cur];
+
+        bool AABBintersection = intersect_ray_aabb(orig, dir, node.aabb, tMin, tBest, &tHitNear, &tHitFar);
+        if (AABBintersection) {
+            if (cur >= leafStart) {
+                uint leaf = cur - leafStart;
+                uint triangle = leafTriIndices[leaf];
+
+                uint3 f = loadFace(faces, (uint)triangle);
+                float3 v0 = loadVertex(vertices, f.x);
+                float3 v1 = loadVertex(vertices, f.y);
+                float3 v2 = loadVertex(vertices, f.z);
+                
+                bool TriangleIntersection = intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tBest, false, &t, &tU, &tV);
+                if (TriangleIntersection) {
+                    tBest = t;
+                    bestFaceId = triangle;
+                    bestU = tU;
+                    bestV = tV;
+                }
+            } else {
+                stack[stackSize++] = node.leftChildIndex;
+                stack[stackSize++] = node.rightChildIndex;
+            }
+        }
+    }
+    if (bestFaceId != -1) {
+        *outT = tBest;
+        *outU = bestU;
+        *outV = bestV;
+        *outFaceId = bestFaceId;
+        return true;
+    }
     return false;
 }
 
@@ -47,11 +106,59 @@ static inline bool any_hit_from(
     uint                      nfaces,
     int                       ignore_face)
 {
+
+    if (!nfaces) {
+        return false;
+    }
+
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
     // TODO implement BVH travering (with stack, don't use recursion)
 
+    __private uint stack[STACK_DEPTH]; 
+    stack[0] = rootIndex;
+    uint stackSize = 1;     
+    const float tMin = 1e-4f;
+    const float tBest = FLT_MAX;                   
+    float tHitNear;
+    float tHitFar;
+
+    float t;
+    float tU;
+    float tV;
+
+    while (stackSize > 0) {
+        uint cur = stack[stackSize - 1];
+        stackSize--;
+
+        BVHNodeGPU node = nodes[cur];
+
+        bool AABBintersection = intersect_ray_aabb(orig, dir, node.aabb, tMin, tBest, &tHitNear, &tHitFar);
+        if (AABBintersection) {
+            if (cur >= leafStart) {
+                uint leaf = cur - leafStart;
+                uint triangle = leafTriIndices[leaf];
+
+                if (triangle == ignore_face) {
+                    continue;
+                }
+
+                uint3 f = loadFace(faces, (uint)triangle);
+                float3 v0 = loadVertex(vertices, f.x);
+                float3 v1 = loadVertex(vertices, f.y);
+                float3 v2 = loadVertex(vertices, f.z);
+                
+                bool TriangleIntersection = intersect_ray_triangle(orig, dir, v0, v1, v2, tMin, tBest, false, &t, &tU, &tV);
+                if (TriangleIntersection) {
+                    return true;
+                }
+            } else {
+                stack[stackSize++] = node.leftChildIndex;
+                stack[stackSize++] = node.rightChildIndex;
+            }
+        }
+    }
     return false;
 }
 
