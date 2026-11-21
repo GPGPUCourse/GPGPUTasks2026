@@ -2,6 +2,8 @@
 
 #include <libgpu/vulkan/engine.h>
 
+#include <memory>
+
 #include "shared_structs/projection_gpu_shared.h"
 
 struct SceneGeometry;
@@ -15,6 +17,25 @@ void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu:
 void sw_rasterize_normals(const gpu::WorkSize &work_size, const gpu::gpu_mem_32f &vertices,
     const gpu::gpu_mem_32u &faces, const gpu::gpu_mem_64u &framebuffer,
     const ProjectionGPU &projection, unsigned int nfaces, int width, int height);
+
+class TiledRasterizer {
+public:
+    TiledRasterizer(unsigned nfaces, int width, int height);
+    ~TiledRasterizer();
+    void draw(const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
+              const gpu::gpu_mem_64u &framebuffer, const ProjectionGPU &projection);
+
+    struct Stats {
+        unsigned triangles, activeTiles;
+        unsigned long long binRefs, tileRefs;
+        bool fallback;
+    };
+    Stats stats() const;
+
+private:
+    struct Impl;
+    std::unique_ptr<Impl> impl;
+};
 }
 
 namespace ocl {
