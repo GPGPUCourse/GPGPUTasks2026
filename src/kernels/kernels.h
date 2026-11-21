@@ -21,6 +21,12 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     gpu::gpu_mem_32f &framebuffer_ambient_occlusion,
     gpu::shared_device_buffer_typed<CameraViewGPU> camera,
     unsigned int nfaces);
+
+size_t build_lbvh_temp_bytes(unsigned int nfaces);
+void build_lbvh(const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces, unsigned int nfaces,
+    gpu::gpu_mem_32u &centroid_bounds, gpu::gpu_mem_32u &morton_codes, gpu::gpu_mem_32u &faces_indices,
+    gpu::gpu_mem_32u &sorted_morton_codes, gpu::gpu_mem_32u &leaf_faces_indices, gpu::gpu_mem_8u &sort_temp,
+    gpu::shared_device_buffer_typed<BVHNodeGPU> &nodes, gpu::gpu_mem_32u &parents, gpu::gpu_mem_32u &visited);
 }
 
 namespace ocl {
