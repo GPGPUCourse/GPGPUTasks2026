@@ -31,9 +31,50 @@ __device__ bool bvh_closest_hit(
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    int stack[64];
+    int sp = 0;
+    int node = rootIndex;
+    while (true) {
+        if (node >= leafStart) {
+            unsigned int fi = leafTriIndices[node - leafStart];
+            uint3 f = loadFace(faces, fi);
+            float3 a = loadVertex(vertices, f.x);
+            float3 b = loadVertex(vertices, f.y);
+            float3 c = loadVertex(vertices, f.z);
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, outT, /*backface*/ false, t, u, v)) {
+                outT = t; outFaceId = (int)fi; outU = u; outV = v;
+            }
+            if (sp == 0) break;
+            node = stack[--sp];
+            continue;
+        }
 
-    return false; // no intersections found
+        const int left = (int)nodes[node].leftChildIndex;
+        const int right = (int)nodes[node].rightChildIndex;
+        float nearL, farL, nearR, farR;
+        bool hitL = intersect_ray_aabb(orig, dir, nodes[left].aabb, tMin, outT, nearL, farL);
+        bool hitR = intersect_ray_aabb(orig, dir, nodes[right].aabb, tMin, outT, nearR, farR);
+        if (hitL && hitR) {
+            // ближний узел обходим первым, дальний откладываем в стек
+            if (nearR < nearL) {
+                stack[sp++] = left;
+                node = right;
+            } else {
+                stack[sp++] = right;
+                node = left;
+            }
+        } else if (hitL) {
+            node = left;
+        } else if (hitR) {
+            node = right;
+        } else {
+            if (sp == 0) break;
+            node = stack[--sp];
+        }
+    }
+
+    return outFaceId >= 0;
 }
 
 // BVH traversal: any hit (for AO rays)
@@ -51,7 +92,46 @@ __device__ bool any_hit_from(
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    const float tMin = 1e-4f;
+    const float tMax = FLT_MAX;
+
+    int stack[64];
+    int sp = 0;
+    int node = rootIndex;
+    while (true) {
+        if (node >= leafStart) {
+            unsigned int fi = leafTriIndices[node - leafStart];
+            if ((int)fi != ignore_face) {
+                uint3 f = loadFace(faces, fi);
+                float3 a = loadVertex(vertices, f.x);
+                float3 b = loadVertex(vertices, f.y);
+                float3 c = loadVertex(vertices, f.z);
+                float t, u, v;
+                if (intersect_ray_triangle(orig, dir, a, b, c, tMin, tMax, /*backface*/ false, t, u, v))
+                    return true;
+            }
+            if (sp == 0) break;
+            node = stack[--sp];
+            continue;
+        }
+
+        const int left = (int)nodes[node].leftChildIndex;
+        const int right = (int)nodes[node].rightChildIndex;
+        float tNear, tFar;
+        bool hitL = intersect_ray_aabb(orig, dir, nodes[left].aabb, tMin, tMax, tNear, tFar);
+        bool hitR = intersect_ray_aabb(orig, dir, nodes[right].aabb, tMin, tMax, tNear, tFar);
+        if (hitL && hitR) {
+            stack[sp++] = right;
+            node = left;
+        } else if (hitL) {
+            node = left;
+        } else if (hitR) {
+            node = right;
+        } else {
+            if (sp == 0) break;
+            node = stack[--sp];
+        }
+    }
 
     return false; // no intersections found
 }
