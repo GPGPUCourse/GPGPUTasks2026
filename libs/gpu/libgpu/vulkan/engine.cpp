@@ -23,11 +23,11 @@
 
 namespace {
 	void waitForFences(vk::raii::Device& device, vk::raii::Fence& fence, long assert_mark) {
-		vk::Result res;
+		vk::Result res_god_save_from_macros;
 		do {
-			res = device.waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS);
-		} while (res == vk::Result::eTimeout);
-		VK_CHECK_RESULT(res, assert_mark);
+			res_god_save_from_macros = device.waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS);
+		} while (res_god_save_from_macros == vk::Result::eTimeout);
+		VK_CHECK_RESULT(res_god_save_from_macros, assert_mark);
 	}
 
 	// see https://vulkan-tutorial.com/Drawing_a_triangle/Setup/Validation_layers
