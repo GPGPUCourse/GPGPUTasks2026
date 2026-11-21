@@ -325,7 +325,7 @@ bool bvh_closest_hit(vec3 orig,
             if (stack_begin < kStackCapacity) {
                 stack[stack_begin++] = (left_near_t <= right_near_t) ? right : left;
             } else {
-                rassert(false, 11111111111111);
+                rassert(false, 111111111);
             }
         } else if (!intersect_left && !intersect_right) {
             cur = stack_begin == 0 ? -1 : stack[--stack_begin];
@@ -385,7 +385,7 @@ bool any_hit_from(vec3 orig,
                 if (stack_begin < kStackCapacity) {
                     stack[stack_begin++] = right;
                 } else {
-                    rassert(false, 11111111111111);
+                    rassert(false, 111111121);
                 }
             }
         }
