@@ -32,7 +32,10 @@
 
 ## Что вам предлагается сделать
 
-```10 баллов``` Ускорьте software (аппаратную) растеризацию как можно сильнее чтобы приблизиться к hardware растеризации. Пример baseline отставания на RTX 4090:
+```10 баллов``` Ускорьте software (аппаратную) растеризацию как можно сильнее чтобы приблизиться к hardware растеризации.
+```10 баллов престижа``` Дотянитесь до звезд - реализуйте все из cudaraster, реализуйте все из [CuRast: Cuda-Based Software Rasterization for Billions of Triangles](https://diglib.eg.org/items/e0145eb3-5971-450b-b8ca-7eaf23332df7). Обгоните видеодрайвер. Обыграйте NVIDIA на ее же поле.
+
+Пример baseline отставания на RTX 4090:
 
 ```
 Using device #1: API: CUDA+OpenCL+Vulkan. GPU. NVIDIA GeForce RTX 4090 (CUDA 13000). Free memory: 21304/24058 Mb.
