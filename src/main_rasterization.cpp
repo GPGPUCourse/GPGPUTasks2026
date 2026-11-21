@@ -73,7 +73,7 @@ void run(int argc, char** argv)
         "data/san-miguel/san-miguel.obj",
     };
 
-    const int niters = 10; // при отладке удобно запускать одну итерацию
+    const int niters = 100; // при отладке удобно запускать одну итерацию
     const int cpu_niters = 3; // CPU обработка медленная, поэтому для скорости экспериментов - обойдемся тремя запусками
     std::vector<double> cpu_rasterization_times_ms;
     std::vector<double> hw_vulkan_rasterization_times_ms;
