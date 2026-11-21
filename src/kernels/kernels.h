@@ -25,6 +25,7 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize& workSize,
 void faces_morton_codes(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32f& vertices, const gpu::gpu_mem_32u& faces,
     const gpu::shared_device_buffer_typed<uint2>& morton_codes,
+    const gpu::shared_device_buffer_typed<float3>& bounds,
     unsigned int nfaces);
 
 void sortMortonCodes(const gpu::shared_device_buffer_typed<uint2>& morton_codes, std::size_t count);

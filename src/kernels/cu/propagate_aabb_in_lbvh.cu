@@ -5,7 +5,7 @@
 #include <libgpu/cuda/cu/common.cu>
 
 #include "../shared_structs/bvh_node_gpu_shared.h"
-
+#include <cuda/atomic>
 __global__ void propagate_aabb_in_lbvh(
     BVHNodeGPU* outNodes,
     const unsigned int* parents,
@@ -21,9 +21,10 @@ __global__ void propagate_aabb_in_lbvh(
     while (nodeIndex != 0) {
         const unsigned int parentIndex = parents[nodeIndex];
 
-        if (atomicInc(&flags[parentIndex], 1) == 1) {
+        ::cuda::atomic_ref<unsigned int, ::cuda::thread_scope_device> flag(flags[parentIndex]);
+
+        if (flag.exchange(1u, ::cuda::memory_order_acq_rel) == 0u)
             return;
-        }
 
         BVHNodeGPU& node = outNodes[parentIndex];
         const BVHNodeGPU& left = outNodes[node.leftChildIndex];

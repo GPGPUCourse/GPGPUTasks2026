@@ -293,13 +293,13 @@ void run(int argc, char** argv)
             gpu::gpu_mem_32u leaf_faces_indices_gpu(nfaces);
             gpu::gpu_mem_32u parents(nfaces * 2);
             gpu::gpu_mem_32u flags(nfaces);
-
+            gpu::shared_device_buffer_typed<float3> bounds(2);
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
                 cuda::faces_morton_codes(gpu::WorkSize(GROUP_SIZE, 1, nfaces, 1),
-                    vertices_gpu, faces_gpu, morton_codes, nfaces);
+                    vertices_gpu, faces_gpu, morton_codes, bounds, nfaces);
 
                 cuda::sortMortonCodes(morton_codes, nfaces);
 
