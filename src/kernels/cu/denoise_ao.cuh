@@ -1,8 +1,8 @@
 #pragma once
 
-// Dammertz et al. describe geometry-guided denoising. This single pass uses equal triangle IDs as its edge test. https://www.uni-ulm.de/fileadmin/website_uni_ulm/iui.inst.100/institut/Papers/atrousGIfilter.pdf
+// Dammertz et al. describe geometry-guided denoising. https://www.uni-ulm.de/fileadmin/website_uni_ulm/iui.inst.100/institut/Papers/atrousGIfilter.pdf
 // Depth-guided version of weighted AO filtering. https://github.com/nvpro-samples/gl_ssao/blob/f6b010dc7a05346518cd13d3368d8d830a382ed9/bilateralblur.frag.glsl#L34-L68
-static __global__ void denoise_ao(const int* faces, const float* ao, float* filtered, int width, int height)
+static __global__ void denoise_ao(const int* faces, const float* ao, float* filtered, int width, int height, int step)
 {
     int x = blockIdx.x * blockDim.x + threadIdx.x;
     int y = blockIdx.y * blockDim.y + threadIdx.y;
@@ -11,7 +11,7 @@ static __global__ void denoise_ao(const int* faces, const float* ao, float* filt
     float sum = 0, weight = 0;
     for (int dy = -2; dy <= 2; ++dy) {
         for (int dx = -2; dx <= 2; ++dx) {
-            int nx = x + dx, ny = y + dy;
+            int nx = x + step * dx, ny = y + step * dy;
             if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
             int j = ny * width + nx;
             if (faces[i] != faces[j]) continue;
@@ -30,7 +30,9 @@ void denoise_ao(const gpu::gpu_mem_32i& faces, const gpu::gpu_mem_32f& ao,
 {
     auto stream = gpu::Context().cudaStream();
     dim3 blocks((width + 15) / 16, (height + 15) / 16);
-    ::denoise_ao<<<blocks, dim3(16, 16), 0, stream>>>(faces.cuptr(), ao.cuptr(), filtered.cuptr(), width, height);
+    gpu::gpu_mem_32f firstPass(ao.number());
+    ::denoise_ao<<<blocks, dim3(16, 16), 0, stream>>>(faces.cuptr(), ao.cuptr(), firstPass.cuptr(), width, height, 1);
+    ::denoise_ao<<<blocks, dim3(16, 16), 0, stream>>>(faces.cuptr(), firstPass.cuptr(), filtered.cuptr(), width, height, 2);
     CUDA_CHECK_KERNEL_SYNC(stream);
 }
 }
