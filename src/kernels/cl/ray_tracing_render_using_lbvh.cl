@@ -23,6 +23,7 @@ static inline bool bvh_closest_hit(
     __global const float*     vertices,
     __global const uint*      faces,
     float                     tMin,
+    int                       ignoreFace,
     __private float*          outT, // сюда нужно записать t рассчитанный в intersect_ray_triangle(..., t, u, v)
     __private int*            outFaceId,
     __private float*          outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
@@ -31,9 +32,49 @@ static inline bool bvh_closest_hit(
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+    uint stack[32 + 32 + 1];
+    int size = 0;
+    stack[size++] = rootIndex;
+    int bestFace = -1;
+    float tBest = FLT_MAX;
 
-    return false;
+    while (size > 0) {
+        uint index = stack[--size];
+        BVHNodeGPU node = nodes[index];
+        float nearT, farT;
+        if (!intersect_ray_aabb(orig, dir, node.aabb, tMin, tBest, &nearT, &farT))
+            continue;
+
+        if (index < leafStart) {
+            stack[size++] = node.rightChildIndex;
+            stack[size++] = node.leftChildIndex;
+            continue;
+        }
+
+        int faceId = (int)leafTriIndices[index - leafStart];
+        if (faceId == ignoreFace)
+            continue;
+
+        uint3 face = loadFace(faces, faceId);
+        float t, u, v;
+        if (intersect_ray_triangle(orig, dir, loadVertex(vertices, face.x),
+                                   loadVertex(vertices, face.y), loadVertex(vertices, face.z),
+                                   tMin, tBest, false, &t, &u, &v)) {
+            if (ignoreFace >= 0)
+                return true;
+
+            if (t < tBest || faceId > bestFace) {
+                tBest = t;
+                *outT = t;
+                *outU = u;
+                *outV = v;
+                *outFaceId = faceId;
+                bestFace = faceId;
+            }
+        }
+    }
+
+    return bestFace >= 0;
 }
 
 // Cast a single ray and report if ANY occluder is hit (for ambient occlusion)
@@ -47,12 +88,24 @@ static inline bool any_hit_from(
     uint                      nfaces,
     int                       ignore_face)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
+    float t, u, v;
+    int faceId;
 
-    // TODO implement BVH travering (with stack, don't use recursion)
-
-    return false;
+    return bvh_closest_hit(
+        orig,
+        dir,
+        nodes,
+        leafTriIndices,
+        nfaces,
+        vertices,
+        faces,
+        1e-4f,
+        ignore_face,
+        &t,
+        &faceId,
+        &u,
+        &v
+    );
 }
 
 // Helper: build tangent basis for a given normal
@@ -110,6 +163,7 @@ __kernel void ray_tracing_render_using_lbvh(
         vertices,
         faces,
         tMin,
+        -1,
         &tBest,
         &faceIdBest,
         &uBest,
