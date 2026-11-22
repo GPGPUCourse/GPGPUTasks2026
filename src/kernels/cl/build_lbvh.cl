@@ -110,12 +110,13 @@ __kernel void sort_codes(
     uint width,
     uint stride)
 {
-    uint pairIndex = get_global_id(0);
-    if (pairIndex >= paddedCount / 2)
+    uint left = get_global_id(0);
+    if (left >= paddedCount)
         return;
 
-    uint left = (pairIndex / stride) * (2 * stride) + pairIndex % stride;
-    uint right = left + stride;
+    uint right = left ^ stride;
+    if (right < left)
+        return;
 
     bool leftGreater = codes[left] > codes[right] || (codes[left] == codes[right] && indices[left] > indices[right]);
     bool ascending = (left & width) == 0;

@@ -46,29 +46,8 @@ static inline bool bvh_closest_hit(
             continue;
 
         if (index < leafStart) {
-            float leftNearT, leftFarT;
-            float rightNearT, rightFarT;
-            bool leftHit = intersect_ray_aabb(
-                orig, dir, nodes[node.leftChildIndex].aabb, tMin, tBest,
-                &leftNearT, &leftFarT);
-            bool rightHit = intersect_ray_aabb(
-                orig, dir, nodes[node.rightChildIndex].aabb, tMin, tBest,
-                &rightNearT, &rightFarT);
-
-            if (leftHit && rightHit) {
-                if (leftNearT < rightNearT) {
-                    stack[size++] = node.rightChildIndex;
-                    stack[size++] = node.leftChildIndex;
-                } else {
-                    stack[size++] = node.leftChildIndex;
-                    stack[size++] = node.rightChildIndex;
-                }
-            } else if (leftHit) {
-                stack[size++] = node.leftChildIndex;
-            } else if (rightHit) {
-                stack[size++] = node.rightChildIndex;
-            }
-
+            stack[size++] = node.rightChildIndex;
+            stack[size++] = node.leftChildIndex;
             continue;
         }
 
