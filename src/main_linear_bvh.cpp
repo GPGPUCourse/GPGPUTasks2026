@@ -220,7 +220,6 @@ void run(int argc, char** argv) {
       framebuffer_ambient_occlusion_gpu.fill(NO_AMBIENT_OCCLUSION);
       cleaning_framebuffers_time += cleaning_framebuffers_t.elapsed();
 
-      std::cout << "start kernels" << std::endl;
       std::vector<double> rt_times_with_cpu_lbvh;
       for (int iter = 0; iter < niters; ++iter) {
         timer t;
