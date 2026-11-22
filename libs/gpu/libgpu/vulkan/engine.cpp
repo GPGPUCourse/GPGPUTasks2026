@@ -28,7 +28,7 @@ namespace {
 		do {
 			res_god_save_from_macros = device.waitForFences(vk::Fence(*fence), true, VULKAN_TIMEOUT_NANOSECS);
 			cnt++;
-		} while (res_god_save_from_macros == vk::Result::eTimeout && cnt < 100);
+		} while (res_god_save_from_macros == vk::Result::eTimeout);
 		VK_CHECK_RESULT(res_god_save_from_macros, assert_mark);
 	}
 
