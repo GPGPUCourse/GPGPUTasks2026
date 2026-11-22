@@ -12,56 +12,46 @@
 #include "camera_helpers.cu"
 #include "geometry_helpers.cu"
 #include "random_helpers.cu"
+#include "ambient_occlusion.cuh"
 
-// BVH traversal: closest hit along ray
-__device__ bool bvh_closest_hit(
-    const float3& orig,
-    const float3& dir,
-    const BVHNodeGPU* nodes,
-    const unsigned int* leafTriIndices,
-    unsigned int nfaces,
-    const float* vertices,
-    const unsigned int* faces,
-    float tMin,
-    float& outT, // сюда нужно записать t рассчитанный в intersect_ray_triangle(..., t, u, v)
-    int& outFaceId,
-    float& outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
-    float& outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
+// stack-based BVH traversal and shortening the ray interval after a closer hit. https://www.pbr-book.org/4ed/Primitives_and_Intersection_Acceleration/Bounding_Volume_Hierarchies
+// https://github.com/jbikker/bvh_article/blob/a4aaed059dddeca8c134b4511caf9d17202af3db/bvh.cpp#L118-L154
+static __device__ int trace_bvh(float3 origin, float3 direction, const BVHNodeGPU* nodes,
+    const unsigned* leafFaces, int faceCount, const float* vertices, const unsigned* faces,
+    float tMin, float& tBest, int ignoreFace = -1)
 {
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
-
-    // TODO implement BVH travering (with stack, don't use recursion)
-
-    return false; // no intersections found
-}
-
-// BVH traversal: any hit (for AO rays)
-// ignore_face: do not count intersections with this triangle index
-__device__ bool any_hit_from(
-    const float3& orig,
-    const float3& dir,
-    const float* vertices,
-    const unsigned int* faces,
-    const BVHNodeGPU* nodes,
-    const unsigned int* leafTriIndices,
-    unsigned int nfaces,
-    int ignore_face)
-{
-    const int rootIndex = 0;
-    const int leafStart = (int)nfaces - 1;
-
-    // TODO implement BVH travering (with stack, don't use recursion)
-
-    return false; // no intersections found
-}
-
-// + helper: build tangent basis for a given normal
-__device__ inline void make_basis(const float3& n, float3& t, float3& b) {
-    // pick a non-parallel vector
-    float3 up = (fabsf(n.z) < 0.999f) ? make_float3(0.f,0.f,1.f) : make_float3(0.f,1.f,0.f);
-    t = normalize_f3(cross_f3(up, n));
-    b = cross_f3(n, t);
+    int stack[64];
+    stack[0] = 0;
+    int size = 1;
+    int bestFace = -1;
+    while (size > 0) {
+        int index = stack[--size];
+        const BVHNodeGPU& node = nodes[index];
+        float nearT, farT;
+        // https://github.com/jbikker/bvh_article/blob/a4aaed059dddeca8c134b4511caf9d17202af3db/bvh.cpp#L16-L54
+        if (!intersect_ray_aabb(origin, direction, node.aabb, tMin, tBest, nearT, farT))
+            continue;
+        if (index < faceCount - 1) {
+            stack[size++] = node.rightChildIndex;
+            stack[size++] = node.leftChildIndex;
+            continue;
+        }
+        int face = leafFaces[index - (faceCount - 1)];
+        if (face == ignoreFace)
+            continue;
+        uint3 f = loadFace(faces, face);
+        float t, u, v;
+        if (intersect_ray_triangle(origin, direction, loadVertex(vertices, f.x),
+                loadVertex(vertices, f.y), loadVertex(vertices, f.z), tMin, tBest, false, t, u, v)) {
+            if (ignoreFace >= 0)
+                return face;
+            if (t < tBest || face > bestFace) {
+                tBest = t;
+                bestFace = face;
+            }
+        }
+    }
+    return bestFace;
 }
 
 __global__ void ray_tracing_render_using_lbvh(
@@ -72,13 +62,13 @@ __global__ void ray_tracing_render_using_lbvh(
     int* framebuffer_face_id,
     float* framebuffer_ambient_occlusion,
     CameraViewGPU *camera,
-    unsigned int nfaces
+    unsigned int nfaces, float* depth
 )
 {
     const unsigned int i = blockIdx.x * blockDim.x + threadIdx.x;
     const unsigned int j = blockIdx.y * blockDim.y + threadIdx.y;
 
-    curassert(camera.magic_bits_guard == CAMERA_VIEW_GPU_MAGIC_BITS_GUARD, 946435342);
+    curassert(camera->magic_bits_guard == CAMERA_VIEW_GPU_MAGIC_BITS_GUARD, 946435342);
     if (i >= camera->K.width || j >= camera->K.height)
         return;
 
@@ -87,89 +77,19 @@ __global__ void ray_tracing_render_using_lbvh(
 
     float tMin  = 1e-6f;
     float tBest = FLT_MAX;
-    float uBest=0, vBest=0;
-    int   faceIdBest = -1;
-
-    // Use BVH traversal instead of brute-force loop
-    bool hit = bvh_closest_hit(
-        ray_origin,
-        ray_direction,
-        bvhNodes,
-        leafTriIndices,
-        nfaces,
-        vertices,
-        faces,
-        tMin,
-        tBest,
-        faceIdBest,
-        uBest,
-        vBest
-    );
+    int faceIdBest = trace_bvh(ray_origin, ray_direction, bvhNodes, leafTriIndices,
+                               nfaces, vertices, faces, tMin, tBest);
 
     const unsigned int idx = j * camera->K.width + i;
     framebuffer_face_id[idx] = faceIdBest;
+    if (depth) depth[idx] = tBest;
 
-    float ao = 1.0f; // background stays white
-    if (faceIdBest >= 0) {
-        uint3 f = loadFace(faces, faceIdBest);
-        float3 a = loadVertex(vertices, f.x);
-        float3 b = loadVertex(vertices, f.y);
-        float3 c = loadVertex(vertices, f.z);
-
-        float3 e1 = {b.x - a.x, b.y - a.y, b.z - a.z};
-        float3 e2 = {c.x - a.x, c.y - a.y, c.z - a.z};
-        float3 n  = normalize_f3(cross_f3(e1, e2));
-
-        // ensure hemisphere is "outside" relative to the camera ray
-        if (n.x*ray_direction.x + n.y*ray_direction.y + n.z*ray_direction.z > 0.0f)
-            n = make_float3(-n.x, -n.y, -n.z);
-
-        float3 P  = {ray_origin.x + tBest*ray_direction.x,
-            ray_origin.y + tBest*ray_direction.y,
-            ray_origin.z + tBest*ray_direction.z};
-
-        float scale = fmaxf(fmaxf(length_f3(e1), length_f3(e2)),
-            length_f3(make_float3(c.x-a.x, c.y-a.y, c.z-a.z)));
-        float eps   = 1e-3f * fmaxf(1.0f, scale);
-        float3 Po   = {P.x + n.x*eps, P.y + n.y*eps, P.z + n.z*eps};
-
-        // build tangent basis
-        float3 T, B;
-        make_basis(n, T, B);
-        // per-pixel seed (stable)
-        union {
-            float f32;
-            uint32_t u32;
-        } tBestUnion;
-        tBestUnion.f32 = tBest;
-        uint32_t rng = 0x9E3779B9u ^ idx ^ tBestUnion.u32;
-
-        int hits = 0;
-        for (int s = 0; s < AO_SAMPLES; ++s) {
-            // uniform hemisphere sampling (solid angle)
-            float u1 = random01(rng);
-            float u2 = random01(rng);
-            float z  = u1;                          // z in [0,1]
-            float phi = 6.28318530718f * u2;        // 2*pi*u2
-            float r  = sqrtf(fmaxf(0.f, 1.f - z*z));
-            float3 d_local = make_float3(r * cosf(phi), r * sinf(phi), z);
-
-            // transform to world space
-            float3 d = make_float3(
-                T.x*d_local.x + B.x*d_local.y + n.x*d_local.z,
-                T.y*d_local.x + B.y*d_local.y + n.y*d_local.z,
-                T.z*d_local.x + B.z*d_local.y + n.z*d_local.z
-            );
-
-            if (any_hit_from(Po, d,
-                             vertices, faces,
-                             bvhNodes, leafTriIndices,
-                             nfaces, faceIdBest))
-                ++hits;
-        }
-        ao = 1.0f - (float)hits / (float)AO_SAMPLES; // [0,1]
-    }
-    framebuffer_ambient_occlusion[idx] = ao;
+    framebuffer_ambient_occlusion[idx] = ambient_occlusion(vertices, faces, ray_origin, ray_direction,
+        faceIdBest, tBest, idx, [&](float3 origin, float3 direction, int face) {
+            float tMax = FLT_MAX;
+            return trace_bvh(origin, direction, bvhNodes, leafTriIndices, nfaces, vertices, faces,
+                             1e-4f, tMax, face) >= 0;
+        });
 }
 
 
@@ -180,7 +100,7 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     gpu::gpu_mem_32i &framebuffer_face_id,
     gpu::gpu_mem_32f &framebuffer_ambient_occlusion,
     gpu::shared_device_buffer_typed<CameraViewGPU> camera,
-    unsigned int nfaces)
+    unsigned int nfaces, gpu::gpu_mem_32f* depth)
 {
     gpu::Context context;
     rassert(context.type() == gpu::Context::TypeCUDA, 34523543124312, context.type());
@@ -190,8 +110,12 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
         bvhNodes.cuptr(), leafTriIndices.cuptr(),
         framebuffer_face_id.cuptr(), framebuffer_ambient_occlusion.cuptr(),
         camera.cuptr(),
-        nfaces
+        nfaces, depth ? depth->cuptr() : nullptr
         );
-    CUDA_CHECK_KERNEL(stream);
+    CUDA_CHECK_KERNEL_SYNC(stream);
 }
 } // namespace cuda
+
+#include "build_lbvh.cuh"
+#include "denoise_ao.cuh"
+#include "optix_renderer.cuh"

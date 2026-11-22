@@ -62,12 +62,7 @@ void run(int argc, char** argv)
     //   - Если аргумент запуска есть и он от 0 до N-1 - вернет устройство под указанным номером
     gpu::Device device = gpu::chooseGPUDevice(gpu::selectAllDevices(ALL_GPUS, true), argc, argv);
 
-    // TODO 000 сделайте здесь свой выбор API - если он отличается от OpenCL то в этой строке нужно заменить TypeOpenCL на TypeCUDA или TypeVulkan
-    // TODO 000 после этого изучите этот код, запустите его, изучите соответсвующий вашему выбору кернел - src/kernels/<ваш выбор>/aplusb.<ваш выбор>
-    // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
-    // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
-    // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -229,9 +224,6 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на CPU LBVH
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-
                 if (context.type() == gpu::Context::TypeOpenCL) {
                     ocl_rt_with_lbvh.exec(
                         gpu::WorkSize(16, 16, width, height),
@@ -279,7 +271,7 @@ void run(int argc, char** argv)
             images_saving_time += cpu_lbvh_images_saving_t.elapsed();
             if (has_brute_force) {
                 unsigned int count_ao_errors = countDiffs(brute_force_framebuffer_ambient_occlusion, cpu_lbvh_framebuffer_ambient_occlusion, 0.01f);
-                unsigned int count_face_id_errors = countDiffs(brute_force_framebuffer_face_ids, cpu_lbvh_framebuffer_face_ids, 1);
+                unsigned int count_face_id_errors = countDiffs(brute_force_framebuffer_face_ids, cpu_lbvh_framebuffer_face_ids, 0);
                 rassert(count_ao_errors < width * height / 100, 345341512354123, count_ao_errors, to_percent(count_ao_errors, width * height));
                 rassert(count_face_id_errors < width * height / 100, 3453415123546587, count_face_id_errors, to_percent(count_face_id_errors, width * height));
             }
@@ -288,16 +280,15 @@ void run(int argc, char** argv)
         double gpu_lbvh_time_sum = 0.0;
         double rt_times_with_gpu_lbvh_sum = 0.0;
 
-        // TODO постройте LBVH на GPU
-        // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
-
-        if (gpu_lbvg_gpu_rt_done) {
+#ifdef CUDA_SUPPORT
+        {
+            gpu::shared_device_buffer_typed<BVHNodeGPU> nodes(2 * nfaces - 1);
+            gpu::gpu_mem_32u leafFaces(nfaces);
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO постройте LBVH на GPU
+                cuda::build_lbvh(vertices_gpu, faces_gpu, nodes, leafFaces, nfaces);
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -312,11 +303,15 @@ void run(int argc, char** argv)
             framebuffer_ambient_occlusion_gpu.fill(NO_AMBIENT_OCCLUSION);
             cleaning_framebuffers_time += cleaning_framebuffers_t.elapsed();
 
+            gpu::gpu_mem_32f depth;
+            if (std::getenv("TASK08_OPTIX_PTX")) depth.resizeN(width * height);
             std::vector<double> gpu_lbvh_rt_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                cuda::ray_tracing_render_using_lbvh(gpu::WorkSize(16, 16, width, height),
+                    vertices_gpu, faces_gpu, nodes, leafFaces, framebuffer_face_id_gpu,
+                    framebuffer_ambient_occlusion_gpu, camera_gpu, nfaces, depth.number() ? &depth : nullptr);
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }
@@ -336,15 +331,42 @@ void run(int argc, char** argv)
             timer gpu_lbvh_images_saving_t;
             debug_io::dumpImage(results_dir + "/framebuffer_face_ids_with_gpu_lbvh.bmp", debug_io::randomMapping(gpu_lbvh_framebuffer_face_ids, NO_FACE_ID));
             debug_io::dumpImage(results_dir + "/framebuffer_ambient_occlusion_with_gpu_lbvh.bmp", debug_io::depthMapping(gpu_lbvh_framebuffer_ambient_occlusion));
+            gpu::gpu_mem_32f filtered(width * height);
+            cuda::denoise_ao(framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                             filtered, width, height);
+            image32f denoised(width, height, 1);
+            filtered.readN(denoised.ptr(), width * height);
+            debug_io::dumpImage(results_dir + "/ambient_occlusion_denoised.bmp", debug_io::depthMapping(denoised));
             images_saving_time += gpu_lbvh_images_saving_t.elapsed();
             if (has_brute_force) {
                 unsigned int count_ao_errors = countDiffs(brute_force_framebuffer_ambient_occlusion, gpu_lbvh_framebuffer_ambient_occlusion, 0.01f);
-                unsigned int count_face_id_errors = countDiffs(brute_force_framebuffer_face_ids, gpu_lbvh_framebuffer_face_ids, 1);
+                unsigned int count_face_id_errors = countDiffs(brute_force_framebuffer_face_ids, gpu_lbvh_framebuffer_face_ids, 0);
                 rassert(count_ao_errors < width * height / 100, 3567856512354123, count_ao_errors, to_percent(count_ao_errors, width * height));
                 rassert(count_face_id_errors < width * height / 100, 3453465346387, count_face_id_errors, to_percent(count_face_id_errors, width * height));
             }
+            gpu::gpu_mem_32f rtDepth(depth.number());
+            if (cuda::render_optix(vertices_gpu, faces_gpu, camera, framebuffer_face_id_gpu,
+                                   framebuffer_ambient_occlusion_gpu, rtDepth)) {
+                image32i ids(width, height, 1);
+                framebuffer_face_id_gpu.readN(ids.ptr(), width * height);
+                auto differences = countDiffs(ids, gpu_lbvh_framebuffer_face_ids, 0);
+                std::cout << "OptiX face-ID differences: " << differences << std::endl;
+                auto reference = depth.readVector();
+                auto hardware = rtDepth.readVector();
+                size_t depthErrors = 0;
+                for (size_t i = 0; i < reference.size(); ++i) {
+                    if (std::abs(reference[i] - hardware[i]) > 1e-4f * std::max(1.f, reference[i]))
+                        ++depthErrors;
+                }
+                std::cout << "OptiX depth differences: " << depthErrors << std::endl;
+                rassert(depthErrors < width * height / 100, 783462391, depthErrors);
+                image32f ao(width, height, 1);
+                framebuffer_ambient_occlusion_gpu.readN(ao.ptr(), width * height);
+                debug_io::dumpImage(results_dir + "/ambient_occlusion_optix.bmp", debug_io::depthMapping(ao));
+            }
         }
 
+#endif
         double total_time = total_t.elapsed();
         std::cout << "Scene processed in " << total_t.elapsed() << " sec = ";
         std::cout << to_percent(loading_data_time, total_time) << " scene IO + ";
