@@ -364,7 +364,7 @@ void run(int argc, char** argv)
                 }
 
                 // sort by morton codes
-                ocl_merge_sort.exec(
+                ocl_merge_sort.execAsynchronized(
                     {GROUP_SIZE, nfaces},
                     lbvh_sort_keys_gpu.clmem(), lbvh_sort_buffer_gpu.clmem(),
                     1u, nfaces);
@@ -372,7 +372,7 @@ void run(int argc, char** argv)
                 auto* sorted = &lbvh_sort_buffer_gpu;
                 auto* destination = &lbvh_sort_keys_gpu;
                 for (unsigned int sorted_k = GROUP_SIZE; sorted_k < nfaces; sorted_k *= 2) {
-                    ocl_merge_sort.exec(
+                    ocl_merge_sort.execAsynchronized(
                         {GROUP_SIZE, nfaces},
                         sorted->clmem(), destination->clmem(),
                         sorted_k, nfaces);
@@ -395,19 +395,22 @@ void run(int argc, char** argv)
 
                 // OpenCL 1.2 doesn't support memory order =(
                 if (nfaces > 1) {
+                    constexpr unsigned int passes_per_batch = 4;
                     lbvh_ready_in.fill(0u);
                     unsigned int root_ready = 0;
                     do {
-                        ocl_build_internal_aabb.exec(
-                            {GROUP_SIZE, nfaces - 1},
-                            lbvh_nodes_gpu.clmem(),
-                            lbvh_ready_in,
-                            lbvh_ready_out,
-                            nfaces
-                        );
+                        for (unsigned int pass = 0; pass < passes_per_batch; ++pass) {
+                            ocl_build_internal_aabb.execAsynchronized(
+                                {GROUP_SIZE, nfaces - 1},
+                                lbvh_nodes_gpu.clmem(),
+                                lbvh_ready_in,
+                                lbvh_ready_out,
+                                nfaces
+                            );
+                            lbvh_ready_in.swap(lbvh_ready_out);
+                        }
 
-                        lbvh_ready_out.readN(&root_ready, 1);
-                        lbvh_ready_in.swap(lbvh_ready_out);
+                        lbvh_ready_in.readN(&root_ready, 1);
                     } while (root_ready == 0);
                 }
 
