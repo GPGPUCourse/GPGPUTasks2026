@@ -3,11 +3,11 @@
 #endif
 
 #include "../defines.h"
-#include "../shared_structs/primitive_gpu_shared.h"
+#include "../shared_structs/sort_key_gpu_shared.h"
 
 void merge_sort_local(
-    __local const PrimitiveGPU*  input_data,
-    __local PrimitiveGPU*        output_data,
+    __local const SortKeyGPU*    input_data,
+    __local SortKeyGPU*          output_data,
     uint                         thread_id,
     uint                         sorted_k,
     uint                         n
@@ -25,7 +25,7 @@ void merge_sort_local(
     const uint r_end = min(start + size, (uint)n);
     const uint is_left = l_start <= thread_id && thread_id < l_end;
 
-    const PrimitiveGPU elem = input_data[thread_id];
+    const SortKeyGPU elem = input_data[thread_id];
     int l = (int)(is_left ? r_start : l_start) - 1;
     int r = is_left ? r_end : l_end;
     while (r - l > 1) {
@@ -44,8 +44,8 @@ void merge_sort_local(
 }
 
 void merge_sort_global(
-    __global const PrimitiveGPU*  input_data,
-    __global PrimitiveGPU*        output_data,
+    __global const SortKeyGPU*    input_data,
+    __global SortKeyGPU*          output_data,
     uint                          thread_id,
     uint                          sorted_k,
     uint                          n
@@ -63,7 +63,7 @@ void merge_sort_global(
     const uint r_end = min(start + size, (uint)n);
     const uint is_left = l_start <= thread_id && thread_id < l_end;
 
-    const PrimitiveGPU elem = input_data[thread_id];
+    const SortKeyGPU elem = input_data[thread_id];
     int l = (int)(is_left ? r_start : l_start) - 1;
     int r = is_left ? r_end : l_end;
     while (r - l > 1) {
@@ -83,13 +83,13 @@ void merge_sort_global(
 
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
 __kernel void merge_sort(
-    __global const PrimitiveGPU*  input_data,
-    __global PrimitiveGPU*        output_data,
+    __global const SortKeyGPU*    input_data,
+    __global SortKeyGPU*          output_data,
     uint                          sorted_k,
     uint                          n
 ) {
-    __local PrimitiveGPU buf1[GROUP_SIZE];
-    __local PrimitiveGPU buf2[GROUP_SIZE];
+    __local SortKeyGPU buf1[GROUP_SIZE];
+    __local SortKeyGPU buf2[GROUP_SIZE];
 
     const uint thread_id = get_global_id(0);
     if (sorted_k < GROUP_SIZE) {

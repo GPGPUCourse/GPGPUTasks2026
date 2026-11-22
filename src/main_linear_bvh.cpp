@@ -10,6 +10,7 @@
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
 #include "kernels/shared_structs/primitive_gpu_shared.h"
+#include "kernels/shared_structs/sort_key_gpu_shared.h"
 
 #include "io/camera_reader.h"
 #include "io/scene_reader.h"
@@ -298,7 +299,8 @@ void run(int argc, char** argv)
             std::vector<double> gpu_lbvh_times;
 
             gpu::shared_device_buffer_typed<PrimitiveGPU> lbvh_primitives_gpu{scene.faces.size()};
-            gpu::shared_device_buffer_typed<PrimitiveGPU> lbvh_sort_buffer_gpu{scene.faces.size()};
+            gpu::shared_device_buffer_typed<SortKeyGPU> lbvh_sort_keys_gpu{scene.faces.size()};
+            gpu::shared_device_buffer_typed<SortKeyGPU> lbvh_sort_buffer_gpu{scene.faces.size()};
             gpu::shared_device_buffer_typed<BVHNodeGPU> lbvh_nodes_gpu{2 * scene.faces.size() - 1};
             gpu::gpu_mem_32u lbvh_leaf_triangle_indices_gpu{scene.faces.size()};
             gpu::gpu_mem_32u lbvh_parents_gpu{2 * scene.faces.size() - 1};
@@ -329,7 +331,7 @@ void run(int argc, char** argv)
                         nfaces
                     );
 
-                    uint input_size = (nfaces + GROUP_SIZE - 1) / GROUP_SIZE;
+                    unsigned int input_size = (nfaces + GROUP_SIZE - 1) / GROUP_SIZE;
                     bool is_first = true;
                     while (input_size > 1) {
                         gpu::gpu_mem_32f& min_input = is_first ? min_centroids_first : min_centroids_second;
@@ -356,7 +358,7 @@ void run(int argc, char** argv)
                         {GROUP_SIZE, nfaces},
                         min_centroid, max_centroid,
                         lbvh_centroids,
-                        lbvh_primitives_gpu.clmem(),
+                        lbvh_sort_keys_gpu.clmem(),
                         nfaces
                     );
                 }
@@ -364,11 +366,11 @@ void run(int argc, char** argv)
                 // sort by morton codes
                 ocl_merge_sort.exec(
                     {GROUP_SIZE, nfaces},
-                    lbvh_primitives_gpu.clmem(), lbvh_sort_buffer_gpu.clmem(),
+                    lbvh_sort_keys_gpu.clmem(), lbvh_sort_buffer_gpu.clmem(),
                     1u, nfaces);
 
                 auto* sorted = &lbvh_sort_buffer_gpu;
-                auto* destination = &lbvh_primitives_gpu;
+                auto* destination = &lbvh_sort_keys_gpu;
                 for (unsigned int sorted_k = GROUP_SIZE; sorted_k < nfaces; sorted_k *= 2) {
                     ocl_merge_sort.exec(
                         {GROUP_SIZE, nfaces},
@@ -376,13 +378,14 @@ void run(int argc, char** argv)
                         sorted_k, nfaces);
                     std::swap(sorted, destination);
                 }
-                if (sorted != &lbvh_primitives_gpu) {
-                    lbvh_primitives_gpu.swap(lbvh_sort_buffer_gpu);
+                if (sorted != &lbvh_sort_keys_gpu) {
+                    lbvh_sort_keys_gpu.swap(lbvh_sort_buffer_gpu);
                 }
 
                 // build LBVH
                 ocl_build_tree.exec(
                     {GROUP_SIZE, nfaces},
+                    lbvh_sort_keys_gpu.clmem(),
                     lbvh_primitives_gpu.clmem(),
                     lbvh_leaf_triangle_indices_gpu,
                     lbvh_nodes_gpu.clmem(),

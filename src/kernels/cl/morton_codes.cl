@@ -5,7 +5,7 @@
 #include "helpers/rassert.cl"
 #include "../defines.h"
 
-#include "../shared_structs/primitive_gpu_shared.h"
+#include "../shared_structs/sort_key_gpu_shared.h"
 #include "../shared_structs/morton_code_gpu_shared.h"
 
 // Helper: expand 10 bits into 30 bits by inserting 2 zeros between each bit
@@ -44,7 +44,7 @@ __kernel void compute_morton_codes(
     __global const float*   min_centroid,
     __global const float*   max_centroid,
     __global const float*   centroids,
-    __global PrimitiveGPU*  primitives,
+    __global SortKeyGPU*    sort_keys,
     uint                    n
 ) {
     const uint thread_id = get_global_id(0);
@@ -69,5 +69,6 @@ __kernel void compute_morton_codes(
     ny = fmin(fmax(ny, 0.0f), 1.0f);
     nz = fmin(fmax(nz, 0.0f), 1.0f);
 
-    primitives[thread_id].morton_code = ComputeMorton3D(nx, ny, nz);
+    sort_keys[thread_id].morton_code = ComputeMorton3D(nx, ny, nz);
+    sort_keys[thread_id].triangle_index = thread_id;
 }
