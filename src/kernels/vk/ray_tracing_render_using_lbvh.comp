@@ -321,25 +321,44 @@ bool any_hit_from(vec3 orig,
         vec3 dir,
         int ignore_face)
 {
+    int rootIndex = 0;
     int leafStart = int(params.nfaces) - 1;
 
+    int cur = rootIndex;
+
     int stack[kStackCapacity];
-    int stack_begin = 0;
-    stack[stack_begin] = 0;
+    uint stack_begin = 0;
 
     int face_id;
     float far_t, near_t;
 
-    while (stack_begin >= 0) {
-        int cur = stack[stack_begin--];
+    while (cur != -1) {
+        int left = int(bvhNodes[cur].leftChildIndex);
+        int right = int(bvhNodes[cur].rightChildIndex);
+        bool intersect_left = false;
+        bool intersect_right = false;
 
-        float far_t, near_t;
-        if (cur >= leafStart && intersect_triangle(orig, dir, cur - leafStart, face_id) && face_id != ignore_face) {
+        if (left >= leafStart &&
+                intersect_triangle(orig, dir, left - leafStart, face_id) && face_id != ignore_face) {
             return true;
-        } else if (cur < leafStart &&
-                    intersect_ray_aabb(orig, dir, bvhNodes[cur].aabb, 1e-4, FLT_MAX_GLSL, near_t, far_t)) {
-            stack[++stack_begin] = int(bvhNodes[cur].leftChildIndex);
-            stack[++stack_begin] = int(bvhNodes[cur].rightChildIndex);
+        } else if (left < leafStart) {
+            intersect_left = intersect_ray_aabb(orig, dir, bvhNodes[left].aabb, 0, FLT_MAX_GLSL, near_t, far_t);
+        }
+
+        if (right >= leafStart &&
+                intersect_triangle(orig, dir, right - leafStart, face_id) && face_id != ignore_face) {
+            return true;
+        } else if (right < leafStart) {
+            intersect_right = intersect_ray_aabb(orig, dir, bvhNodes[right].aabb, 0, FLT_MAX_GLSL, near_t, far_t);
+        }
+
+        if (!intersect_left && !intersect_right) {
+            cur = stack_begin == 0 ? -1 : stack[--stack_begin];
+        } else {
+            cur = (intersect_left) ? left : right;
+            if (intersect_left && intersect_right) {
+                stack[stack_begin++] = right;
+            }
         }
     }
 
