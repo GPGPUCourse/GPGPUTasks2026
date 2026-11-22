@@ -4,18 +4,19 @@ constexpr int TILE_SIZE = 8;
 constexpr int BIN_SIZE = 128;
 constexpr int TILES_PER_BIN = BIN_SIZE / TILE_SIZE;
 constexpr int BIN_THREADS = 256;
+constexpr int LARGE_BIN_THREADS = 4 * BIN_THREADS;
 constexpr int COARSE_THREADS = TILES_PER_BIN * TILES_PER_BIN;
 constexpr int WARP_SIZE = 32;
 constexpr int FINE_WARPS = 4;
 constexpr int FINE_THREADS = FINE_WARPS * WARP_SIZE;
 constexpr unsigned FULL_WARP = 0xffffffffu;
 constexpr unsigned MAX_BIN_PARTS = 16;
-constexpr unsigned BIN_REFS_PER_PART = 4096;
+constexpr unsigned BIN_REFS_PER_PART = 8192;
 constexpr int COARSE_NARROW_MAX_SIDE = 32768;
 constexpr int PACKED_TILE_MAX_SIDE = 65536 * TILE_SIZE;
 using PixelKey = unsigned long long;
 
-struct ScreenPoint {
+struct alignas(8) ScreenPoint {
     int x, y;
     __device__ ScreenPoint(ScreenVertex p) : x(p.x), y(p.y) {}
 };
@@ -41,8 +42,9 @@ struct RasterGrid {
 };
 
 struct RasterCounters {
-    unsigned numTriangles, nextTask, numTasks, numActiveTiles, overflow;
+    unsigned numTriangles, nextTask, numTasks, numActiveTiles, overflow, numFaceGroups;
     unsigned long long numBinRefs, numTileRefs;
+    unsigned long long tileSlots, boxSlots; // allocated so far, upper bound from Bin
 };
 
 struct CoarseTask {
@@ -86,9 +88,19 @@ __device__ bool coversSample(ScreenPoint a, ScreenPoint b, ScreenPoint c, int x,
     return edge(a, b) && edge(b, c) && edge(c, a);
 }
 
+struct VertexNormal {
+    float3 a, b, c;
+    __device__ uint32_t color() const { return shadeFragment(a, b, c); }
+};
+struct CachedNormal {
+    uint32_t rgb;
+    __device__ uint32_t color() const { return rgb; }
+};
+
+template<class Normal>
 struct EmitTriangle {
     RasterBuffers buffers;
-    float3 v0, v1, v2;
+    Normal normal;
     int boundsShift;
 
     __device__ void operator()(ScreenVertex a, ScreenVertex b, ScreenVertex c) const
@@ -112,7 +124,7 @@ struct EmitTriangle {
                          (unsigned(second && dy == 2) << 30);
         }
 
-        const uint32_t color = shadeFragment(v0, v1, v2);
+        const uint32_t color = normal.color();
         // Compact surviving triangles, using one allocation per participating group of lanes.
         const unsigned lanes = __activemask();
         const int leader = __ffs(lanes) - 1;
@@ -144,25 +156,133 @@ __device__ unsigned clipOutcode(float4 p)
 
 // The slow path may allocate a clipping polygon, but it only initializes it for
 // triangles that actually cross a plane. Inlining can move those stores before culling.
+template<class Emit>
 __device__ __noinline__ void setupClipped(float4 pa, float4 pb, float4 pc, unsigned mask,
-                                          int width, int height, EmitTriangle emit)
+                                          int width, int height, Emit emit)
 {
     clipPartial(pa, pb, pc, mask, width, height, emit);
 }
 
-__global__ void triangleSetup(const float *vertices, const unsigned *faces, ProjectionGPU projection,
-                              unsigned nfaces, RasterGrid grid, RasterBuffers buffers)
+constexpr unsigned FACES_PER_BOUND = 128;
+static_assert(FACES_PER_BOUND % WARP_SIZE == 0 && BIN_THREADS % FACES_PER_BOUND == 0);
+constexpr unsigned LOCAL_INDEX_MASK = (1u << 13) - 1;
+struct FaceBounds { float3 lo, hi; unsigned vertexBase; };
+
+// One warp reduces consecutive faces into a camera-independent object-space box.
+__global__ void buildFaceBounds(const float *vertices, const unsigned *faces, unsigned nfaces, FaceBounds *bounds, uint2 *records)
 {
-    const unsigned i = blockIdx.x * blockDim.x + threadIdx.x;
+    const unsigned lane = threadIdx.x % WARP_SIZE;
+    const unsigned group = (blockIdx.x * blockDim.x + threadIdx.x) / WARP_SIZE;
+    if (group * FACES_PER_BOUND >= nfaces) return;
+    float3 lo{INFINITY, INFINITY, INFINITY}, hi{-INFINITY, -INFINITY, -INFINITY};
+    bool invalid = false;
+    // An unsigned base slightly before the first index accommodates backwards
+    // references too. Subtraction/addition of the base is modulo 2^32.
+    const unsigned base = faces[3 * (group * FACES_PER_BOUND)] - 1024u;
+    for (unsigned k = lane; k < FACES_PER_BOUND && group * FACES_PER_BOUND + k < nfaces; k += WARP_SIZE) {
+        const uint3 f = loadFace(faces, group * FACES_PER_BOUND + k);
+        const float3 points[] = {loadVertex(vertices, f.x), loadVertex(vertices, f.y), loadVertex(vertices, f.z)};
+        const unsigned a = f.x - base, b = f.y - base, c = f.z - base;
+        const unsigned color = shadeFragment(points[0], points[1], points[2]);
+        // 39 index bits, 24 RGB bits and one flag. On a miss, Setup reads
+        // the original 32-bit indices; the cached flat normal is still valid.
+        records[group * FACES_PER_BOUND + k] = make_uint2(a | (b << 13) | (c << 26),
+            (color << 7) | ((c >> 6) & 127u) | (unsigned((a | b | c) <= LOCAL_INDEX_MASK) << 31));
+        #pragma unroll
+        for (int j = 0; j < 3; ++j) {
+            const float3 p = points[j];
+            invalid |= !(isfinite(p.x) && isfinite(p.y) && isfinite(p.z));
+            lo = {fminf(lo.x,p.x), fminf(lo.y,p.y), fminf(lo.z,p.z)};
+            hi = {fmaxf(hi.x,p.x), fmaxf(hi.y,p.y), fmaxf(hi.z,p.z)};
+        }
+    }
+    #pragma unroll
+    for (int s = WARP_SIZE / 2; s; s >>= 1) {
+        lo.x = fminf(lo.x, __shfl_down_sync(FULL_WARP, lo.x, s));
+        lo.y = fminf(lo.y, __shfl_down_sync(FULL_WARP, lo.y, s));
+        lo.z = fminf(lo.z, __shfl_down_sync(FULL_WARP, lo.z, s));
+        hi.x = fmaxf(hi.x, __shfl_down_sync(FULL_WARP, hi.x, s));
+        hi.y = fmaxf(hi.y, __shfl_down_sync(FULL_WARP, hi.y, s));
+        hi.z = fmaxf(hi.z, __shfl_down_sync(FULL_WARP, hi.z, s));
+    }
+    if (__any_sync(FULL_WARP, invalid)) lo.x = -INFINITY;
+    if (!lane) bounds[group] = {lo, hi, base};
+}
+
+// Use the same FMA order as project(), at the corner that maximizes (or
+// minimizes) this row. Combining independent component extrema is conservative.
+template<bool Max>
+__device__ float projectExtreme(const float *row, FaceBounds b)
+{
+    return projectRow(row, {(row[0] >= 0) == Max ? b.hi.x : b.lo.x,
+                            (row[1] >= 0) == Max ? b.hi.y : b.lo.y,
+                            (row[2] >= 0) == Max ? b.hi.z : b.lo.z});
+}
+
+constexpr unsigned GROUP_INSIDE = 1u << 31;
+__global__ void classifyFaceGroups(const FaceBounds *bounds, unsigned groups, ProjectionGPU p,
+                                   uint2 *visible, RasterCounters *counters)
+{
+    const unsigned g = blockIdx.x * blockDim.x + threadIdx.x;
+    if (g >= groups) return;
+    const FaceBounds b = bounds[g];
+    unsigned tag = g;
+    if (isfinite(b.lo.x)) {
+        const float w = projectExtreme<true>(p.rows[3], b);
+        const float hiZ = projectExtreme<true>(p.rows[2], b), loZ = projectExtreme<false>(p.rows[2], b);
+        const float hiX = projectExtreme<true>(p.rows[0], b), loX = projectExtreme<false>(p.rows[0], b);
+        const float hiY = projectExtreme<true>(p.rows[1], b), loY = projectExtreme<false>(p.rows[1], b);
+        if (hiZ < 0 || loZ > w || hiX < -w || loX > w || hiY < -w || loY > w) return;
+        const float minW = projectExtreme<false>(p.rows[3], b);
+        if (loZ >= 0 && hiZ <= minW && loX >= -minW && hiX <= minW && loY >= -minW && hiY <= minW)
+            tag |= GROUP_INSIDE;
+    }
+    const unsigned lanes = __activemask(), lane = threadIdx.x % WARP_SIZE;
+    const int leader = __ffs(lanes) - 1;
+    unsigned base = 0;
+    if (lane == leader) base = atomicAdd(&counters->numFaceGroups, __popc(lanes));
+    base = __shfl_sync(lanes, base, leader);
+    visible[base + __popc(lanes & ((1u << lane) - 1))] = make_uint2(tag, b.vertexBase);
+}
+
+template<bool CullGroups>
+__global__ void triangleSetup(const float *vertices, const unsigned *faces, ProjectionGPU projection,
+                              unsigned nfaces, RasterGrid grid, RasterBuffers buffers, const uint2 *visible, const uint2 *records)
+{
+    unsigned i = blockIdx.x * blockDim.x + threadIdx.x, vertexBase = 0;
+    bool inside = false;
+    if constexpr (CullGroups) {
+        if (i / FACES_PER_BOUND >= buffers.counters->numFaceGroups) return;
+        const uint2 group = visible[i / FACES_PER_BOUND];
+        const unsigned tag = group.x;
+        vertexBase = group.y;
+        inside = (tag & GROUP_INSIDE) != 0;
+        i = (tag & ~GROUP_INSIDE) * FACES_PER_BOUND + i % FACES_PER_BOUND;
+    }
     if (i >= nfaces) return;
-    const uint3 face = loadFace(faces, i);
+    uint3 face;
+    unsigned rgb = 0;
+    if constexpr (CullGroups) {
+        const uint2 rec = records[i];
+        rgb = (rec.y >> 7) & 0xffffffu;
+        if (rec.y >> 31) {
+            face = make_uint3(vertexBase + (rec.x & LOCAL_INDEX_MASK), vertexBase + ((rec.x >> 13) & LOCAL_INDEX_MASK),
+                              vertexBase + ((rec.x >> 26) | ((rec.y & 127u) << 6)));
+        } else face = loadFace(faces, i);
+    } else face = loadFace(faces, i);
     const float3 a = loadVertex(vertices, face.x), b = loadVertex(vertices, face.y), c = loadVertex(vertices, face.z);
     const float4 pa = project(projection, a), pb = project(projection, b), pc = project(projection, c);
-    const unsigned ma = clipOutcode(pa), mb = clipOutcode(pb), mc = clipOutcode(pc);
-    if (ma & mb & mc) return;
-    const unsigned mask = ma | mb | mc;
+    unsigned mask = 0;
+    if (!inside) {
+        const unsigned ma = clipOutcode(pa), mb = clipOutcode(pb), mc = clipOutcode(pc);
+        if (ma & mb & mc) return;
+        mask = ma | mb | mc;
+    }
     static_assert(TILE_SIZE == 8 && BIN_SIZE == 128);
-    const EmitTriangle emit{buffers, a, b, c, grid.packsTileBounds() ? 3 : 7};
+    const auto normal = [&]() {
+        if constexpr (CullGroups) return CachedNormal{rgb}; else return VertexNormal{a, b, c};
+    }();
+    const EmitTriangle<decltype(normal)> emit{buffers, normal, grid.packsTileBounds() ? 3 : 7};
     if (mask) {
         setupClipped(pa, pb, pc, mask, grid.width, grid.height, emit);
     } else {
@@ -186,12 +306,15 @@ __device__ bool mayCover(const SetupTriangle &tri, int x, int y, int size)
            edgeMayCover(tri.c, tri.a, x, y, size);
 }
 
-template<bool Write>
+template<bool Write, unsigned ChunkSize>
 __device__ void binPass(RasterGrid grid, RasterBuffers buffers, unsigned *positions)
 {
     const unsigned stride = blockDim.x * gridDim.x;
     const int shift = grid.packsTileBounds() ? 4 : 0;
-    for (unsigned i = blockIdx.x * blockDim.x + threadIdx.x; i < buffers.counters->numTriangles; i += stride) {
+    unsigned long long boxSlots = 0;
+    const unsigned chunk = blockIdx.x + (threadIdx.x / ChunkSize) * gridDim.x;
+    const unsigned first = chunk * ChunkSize + threadIdx.x % ChunkSize;
+    for (unsigned i = first; i < buffers.counters->numTriangles; i += stride) {
         const uint2 bounds = buffers.triangleBounds[i];
         const int x0 = (bounds.x & 0xffff) >> shift, x1 = (bounds.y & 0xffff) >> shift;
         const int y0 = bounds.x >> (16 + shift), y1 = bounds.y >> (16 + shift);
@@ -216,30 +339,41 @@ __device__ void binPass(RasterGrid grid, RasterBuffers buffers, unsigned *positi
                     const unsigned hx = x == x1 ? tiles.y & 15 : 15;
                     const unsigned hy = y == y1 ? (tiles.y >> 16) & 15 : 15;
                     buffers.binRefs[pos] = make_uint2(i, lx | (ly << 4) | (hx << 8) | (hy << 12));
+                    boxSlots += (hx - lx + 1) * (hy - ly + 1);
                 }
             }
         }
+    }
+    if constexpr (Write) {
+        #pragma unroll
+        for (int step = WARP_SIZE / 2; step; step >>= 1) boxSlots += __shfl_down_sync(FULL_WARP, boxSlots, step);
+        if (threadIdx.x % WARP_SIZE == 0 && boxSlots) atomicAdd(&buffers.counters->boxSlots, boxSlots);
     }
 }
 
 // One persistent CTA per shard (grid sized to the number of SMs). Each CTA owns its
 // entire set of bin queues. Only the allocation of the backing span is global/atomic.
+template<int Threads>
 __global__ void binRasterizer(RasterGrid grid, RasterBuffers buffers)
 {
     if (__syncthreads_or(threadIdx.x == 0 && atomicAdd(&buffers.counters->overflow, 0u))) return;
     extern __shared__ unsigned positions[];
-    __shared__ unsigned long long warpOffsets[BIN_THREADS / WARP_SIZE], base;
+    static_assert(Threads % BIN_THREADS == 0);
+    __shared__ unsigned long long warpOffsets[Threads / WARP_SIZE], base;
     __shared__ bool fits;
     const int lane = threadIdx.x % WARP_SIZE, warp = threadIdx.x / WARP_SIZE;
-    for (int bin = threadIdx.x; bin < grid.numBins(); bin += BIN_THREADS) positions[bin] = 0;
+    for (int bin = threadIdx.x; bin < grid.numBins(); bin += Threads) positions[bin] = 0;
     __syncthreads();
-    binPass<false>(grid, buffers, positions);
+    // Small inputs may have fewer 256-triangle chunks than shards. Distribute
+    // whole warps instead; retain the coarser interleave on the large-mesh path.
+    constexpr unsigned chunkSize = Threads == BIN_THREADS ? WARP_SIZE : BIN_THREADS;
+    binPass<false, chunkSize>(grid, buffers, positions);
     __syncthreads();
 
     // Order within this block's reservation is arbitrary. Scan per-thread totals
     // so every thread can publish its own (possibly strided) set of bin ranges.
     unsigned long long local = 0;
-    for (int bin = threadIdx.x; bin < grid.numBins(); bin += BIN_THREADS) local += positions[bin];
+    for (int bin = threadIdx.x; bin < grid.numBins(); bin += Threads) local += positions[bin];
     unsigned long long end = local;
     #pragma unroll
     for (int step = 1; step < WARP_SIZE; step *= 2) {
@@ -251,7 +385,7 @@ __global__ void binRasterizer(RasterGrid grid, RasterBuffers buffers)
     if (threadIdx.x == 0) {
         unsigned long long total = 0;
         #pragma unroll
-        for (int i = 0; i < BIN_THREADS / WARP_SIZE; ++i) {
+        for (int i = 0; i < Threads / WARP_SIZE; ++i) {
             const auto warpTotal = warpOffsets[i];
             warpOffsets[i] = total;
             total += warpTotal;
@@ -263,14 +397,14 @@ __global__ void binRasterizer(RasterGrid grid, RasterBuffers buffers)
     __syncthreads();
     if (!fits) return;
     unsigned cursor = unsigned(base + warpOffsets[warp] + end - local);
-    for (int bin = threadIdx.x; bin < grid.numBins(); bin += BIN_THREADS) {
+    for (int bin = threadIdx.x; bin < grid.numBins(); bin += Threads) {
         const unsigned count = positions[bin];
         buffers.bins[bin * gridDim.x + blockIdx.x] = {cursor, count};
         positions[bin] = cursor;
         cursor += count;
     }
     __syncthreads();
-    binPass<true>(grid, buffers, positions);
+    binPass<true, chunkSize>(grid, buffers, positions);
 }
 
 // Split hot bins across CTAs by input shard. Each (tile, part) has a single writer;
@@ -415,6 +549,36 @@ __device__ void coarsePass(RasterGrid grid, RasterBuffers buffers, CoarseTask ta
     }
 }
 
+// Count bounding rectangles in a 2D difference array. Each reference contributes
+// four corners, regardless of area; only scatter needs the triangle's edges.
+__device__ void countBoxes(RasterBuffers buffers, CoarseTask task, unsigned shards, unsigned *diff)
+{
+    constexpr unsigned pitch = TILES_PER_BIN + 1;
+    const unsigned begin = shards * task.part / task.parts, end = shards * (task.part + 1) / task.parts;
+    for (unsigned s = begin + threadIdx.x / WARP_SIZE; s < end; s += COARSE_THREADS / WARP_SIZE) {
+        const Range refs = buffers.bins[task.bin * shards + s];
+        for (unsigned j = threadIdx.x % WARP_SIZE; j < refs.count; j += WARP_SIZE) {
+            const unsigned box = buffers.binRefs[refs.begin + j].y;
+            const unsigned x0 = box & 15, y0 = (box >> 4) & 15;
+            const unsigned x1 = ((box >> 8) & 15) + 1, y1 = (box >> 12) + 1;
+            atomicAdd(diff + y0 * pitch + x0, 1u);
+            atomicSub(diff + y0 * pitch + x1, 1u);
+            atomicSub(diff + y1 * pitch + x0, 1u);
+            atomicAdd(diff + y1 * pitch + x1, 1u);
+        }
+    }
+}
+
+__device__ unsigned scanTileRow(unsigned count, unsigned column)
+{
+    #pragma unroll
+    for (int step = 1; step < TILES_PER_BIN; step *= 2) {
+        const unsigned prev = __shfl_up_sync(FULL_WARP, count, step, TILES_PER_BIN);
+        if (column >= step) count += prev;
+    }
+    return count;
+}
+
 // Persistent CTAs pick up several bin jobs. Counts/cursors are private to the CTA;
 // no order-preserving merge of tile list parts is needed.
 template<class Value>
@@ -424,21 +588,38 @@ __global__ __launch_bounds__(COARSE_THREADS, sizeof(Value) == 4 ? 5 : 1)
 void coarseRasterizer(RasterGrid grid, RasterBuffers buffers, unsigned shards)
 {
     if (__syncthreads_or(threadIdx.x == 0 && atomicAdd(&buffers.counters->overflow, 0u))) return;
-    __shared__ unsigned positions[COARSE_THREADS], taskId;
+    __shared__ unsigned positions[COARSE_THREADS], diff[(TILES_PER_BIN + 1) * (TILES_PER_BIN + 1)], taskId;
     __shared__ unsigned long long warpEnds[COARSE_THREADS / WARP_SIZE], base;
     __shared__ bool fits;
     const unsigned lane = threadIdx.x;
     const unsigned warp = lane / WARP_SIZE, warpLane = lane % WARP_SIZE;
+    const bool useBoxes = buffers.counters->boxSlots <= buffers.tileCapacity;
+    unsigned refsWritten = 0, activated = 0;
     for (;;) {
         if (lane == 0) taskId = atomicAdd(&buffers.counters->nextTask, 1u);
-        positions[lane] = 0;
+        if (useBoxes) {
+            for (unsigned i = lane; i < (TILES_PER_BIN + 1) * (TILES_PER_BIN + 1); i += COARSE_THREADS) diff[i] = 0;
+        } else positions[lane] = 0;
         __syncthreads();
-        if (taskId >= buffers.counters->numTasks) return;
+        if (taskId >= buffers.counters->numTasks) break;
         const CoarseTask task = buffers.tasks[taskId];
-        coarsePass<false, Value>(grid, buffers, task, shards, positions);
-        __syncthreads();
-
-        const unsigned count = positions[lane];
+        const int x = lane % TILES_PER_BIN, y = lane / TILES_PER_BIN;
+        const unsigned slot = x * TILES_PER_BIN + y;
+        unsigned count;
+        if (useBoxes) {
+            countBoxes(buffers, task, shards, diff);
+            __syncthreads();
+            // Integrate the four corner updates first along X, then along Y.
+            // After the transpose this lane owns tile (y, x).
+            positions[slot] = scanTileRow(diff[y * (TILES_PER_BIN + 1) + x], x);
+            __syncthreads();
+            count = scanTileRow(positions[lane], x);
+        } else {
+            // Holes in conservative ranges must not force a baseline fallback.
+            coarsePass<false, Value>(grid, buffers, task, shards, positions);
+            __syncthreads();
+            count = positions[slot];
+        }
         unsigned long long end = count;
         #pragma unroll
         for (int step = 1; step < WARP_SIZE; step *= 2) {
@@ -455,26 +636,37 @@ void coarseRasterizer(RasterGrid grid, RasterBuffers buffers, unsigned shards)
                 warpEnds[i] = total;
                 total += count;
             }
-            base = total ? atomicAdd(&buffers.counters->numTileRefs, total) : 0ull;
+            base = total ? atomicAdd(&buffers.counters->tileSlots, total) : 0ull;
             fits = (base + total <= buffers.tileCapacity);
             if (!fits) atomicExch(&buffers.counters->overflow, 1u);
         }
         __syncthreads();
-        if (!fits) return;
+        if (!fits) break;
         const unsigned begin = static_cast<unsigned>(base + warpEnds[warp] + end - count);
-        positions[lane] = begin;
-        bool newTile = false;
-        if (count != 0) {
-            const int tileX = (task.bin % grid.binsX) * TILES_PER_BIN + lane % TILES_PER_BIN;
-            const int tileY = (task.bin / grid.binsX) * TILES_PER_BIN + lane / TILES_PER_BIN;
-            const int tile = tileY * grid.tilesX + tileX;
-            buffers.tiles[size_t(tile) * MAX_BIN_PARTS + task.part] = {begin, count};
-            newTile = !atomicOr(buffers.tileParts + tile, 1u << task.part);
-        }
-        const int newTiles = __syncthreads_count(newTile);
-        if (lane == 0 && newTiles) atomicAdd(&buffers.counters->numActiveTiles, newTiles);
+        positions[slot] = begin;
+        __syncthreads();
         coarsePass<true, Value>(grid, buffers, task, shards, positions);
         __syncthreads();
+        const unsigned written = positions[slot] - begin;
+        refsWritten += written;
+        if (written != 0) {
+            const int tileX = (task.bin % grid.binsX) * TILES_PER_BIN + y;
+            const int tileY = (task.bin / grid.binsX) * TILES_PER_BIN + x;
+            const int tile = tileY * grid.tilesX + tileX;
+            buffers.tiles[size_t(tile) * MAX_BIN_PARTS + task.part] = {begin, written};
+            activated += !atomicOr(buffers.tileParts + tile, 1u << task.part);
+        }
+        __syncthreads();
+    }
+    // These are diagnostics, not allocation cursors. Report once per warp.
+    #pragma unroll
+    for (int step = WARP_SIZE / 2; step; step >>= 1) {
+        refsWritten += __shfl_down_sync(FULL_WARP, refsWritten, step);
+        activated += __shfl_down_sync(FULL_WARP, activated, step);
+    }
+    if (warpLane == 0) {
+        if (refsWritten) atomicAdd(&buffers.counters->numTileRefs, (unsigned long long)refsWritten);
+        if (activated) atomicAdd(&buffers.counters->numActiveTiles, activated);
     }
 }
 
@@ -586,19 +778,19 @@ __global__ void fineRasterizer(RasterGrid grid, RasterBuffers buffers, uint64_t 
     __shared__ PixelKey warpPixels[FINE_WARPS][TILE_SIZE * TILE_SIZE];
     __shared__ FineTriangle warpBatch[FINE_WARPS][WARP_SIZE];
     __shared__ EdgeLut lut;
+    const unsigned warp = threadIdx.x / WARP_SIZE, lane = threadIdx.x % WARP_SIZE;
+    const unsigned tile = blockIdx.x * FINE_WARPS + warp;
+    unsigned parts = tile < unsigned(grid.numTiles()) ? buffers.tileParts[tile] : 0u;
+    // Each CTA owns four neighboring tiles. Even out-of-bounds warps must
+    // participate in staging the LUT if any tile in the block is active.
+    if (!__syncthreads_or(parts != 0)) return;
     for (unsigned j = threadIdx.x; j < EDGE_LUT_SIZE; j += FINE_THREADS) {
         lut.masks[j] = edgeLut.masks[j];
     }
     __syncthreads();
 
-    const unsigned warp = threadIdx.x / WARP_SIZE, lane = threadIdx.x % WARP_SIZE;
     auto *pixels = warpPixels[warp];
-    // Tile parts are enough to find work. Visiting tiles in screen order also
-    // gives more spatial locality than following Coarse's unordered active list.
-    for (unsigned tile = blockIdx.x * FINE_WARPS + warp; tile < unsigned(grid.numTiles());
-         tile += gridDim.x * FINE_WARPS) {
-        unsigned parts = buffers.tileParts[tile];
-        if (!parts) continue;
+    if (parts) {
         const int x0 = (tile % grid.tilesX) * TILE_SIZE, y0 = (tile / grid.tilesX) * TILE_SIZE;
         const unsigned width = min(TILE_SIZE, grid.width - x0), height = min(TILE_SIZE, grid.height - y0);
         const Coverage valid = (COLUMN_BITS * ((1u << width) - 1u)) & (~0ull >> (8 * (8 - height)));
@@ -661,7 +853,6 @@ __global__ void fineRasterizer(RasterGrid grid, RasterBuffers buffers, uint64_t 
             const int x = x0 + int(slot & 7), y = y0 + int(slot >> 3);
             if ((valid >> slot) & 1) framebuffer[size_t(y) * grid.width + x] = pixels[slot];
         }
-        __syncwarp();
     }
 }
 
@@ -682,10 +873,18 @@ template<class T>
 class ScratchArray {
 public:
     ScratchArray() = default;
-    ~ScratchArray() { if (ptr) cudaFree(ptr); }
+    ~ScratchArray() { reset(); }
     ScratchArray(const ScratchArray &) = delete;
     ScratchArray &operator=(const ScratchArray &) = delete;
 
+    void reset() { if (ptr) cudaFree(ptr); ptr = nullptr; }
     void allocate(size_t count) { CUDA_SAFE_CALL(cudaMalloc(&ptr, count * sizeof(T))); }
+    bool tryAllocate(size_t count)
+    {
+        const auto err = cudaMalloc(&ptr, count * sizeof(T));
+        if (err == cudaErrorMemoryAllocation) { cudaGetLastError(); return false; }
+        CUDA_SAFE_CALL(err);
+        return true;
+    }
     T *ptr = nullptr;
 };

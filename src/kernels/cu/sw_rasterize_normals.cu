@@ -257,7 +257,12 @@ struct TiledRasterizer::Impl {
     RasterGrid grid{};
     RasterBuffers buffers{};
     unsigned faceCount, smCount, binShards;
-    bool enabled = false;
+    bool enabled = false, largeBin = false;
+    gpu::gpu_mem_32f staticVertices;
+    gpu::gpu_mem_32u staticFaces;
+    ScratchArray<FaceBounds> bounds;
+    ScratchArray<uint2> visible, records;
+    bool boundsReady = false;
     ScratchArray<SetupTriangle> triangles;
     ScratchArray<uint2> binRefs;
     ScratchArray<unsigned> tileScratch, tileParts;
@@ -280,6 +285,15 @@ struct TiledRasterizer::Impl {
                 div_ceil(width, TILE_SIZE), div_ceil(height, TILE_SIZE)};
         const size_t numBins = size_t(grid.binsX) * grid.binsY;
         if (numBins * sizeof(unsigned) > prop.sharedMemPerBlock || size_t(grid.tilesX) * grid.tilesY > INT_MAX) return;
+
+        const size_t binShared = numBins * sizeof(unsigned);
+        int resident = 0;
+        CUDA_SAFE_CALL(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&resident, binRasterizer<BIN_THREADS>, BIN_THREADS, binShared));
+        if (!resident) return;
+        if (nfaces >= 2 * LARGE_BIN_THREADS * binShards && prop.maxThreadsPerBlock >= LARGE_BIN_THREADS) {
+            CUDA_SAFE_CALL(cudaOccupancyMaxActiveBlocksPerMultiprocessor(&resident, binRasterizer<LARGE_BIN_THREADS>, LARGE_BIN_THREADS, binShared));
+            largeBin = resident > 0;
+        }
 
         const unsigned triCapacity = nfaces + nfaces / 4 + 1024;
         const unsigned binCapacity = std::max(2u * nfaces, 32u * static_cast<unsigned>(numBins));
@@ -310,11 +324,29 @@ TiledRasterizer::TiledRasterizer(unsigned nfaces, int width, int height)
 
 TiledRasterizer::~TiledRasterizer() = default;
 
+void TiledRasterizer::bindStaticGeometry(const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces)
+{
+    auto &s = *impl;
+    if (!s.enabled || s.faceCount < s.smCount * BIN_THREADS) return;
+    if (!s.bounds.ptr) {
+        const unsigned groups = div_ceil(s.faceCount, FACES_PER_BOUND);
+        if (!s.bounds.tryAllocate(groups) || !s.visible.tryAllocate(groups) || !s.records.tryAllocate(s.faceCount)) {
+            s.bounds.reset();
+            s.visible.reset();
+            s.records.reset();
+            return; // Optional cache: keep the dynamic renderer usable on low-memory devices.
+        }
+    }
+    s.staticVertices = vertices;
+    s.staticFaces = faces;
+    s.boundsReady = false;
+}
+
 void TiledRasterizer::drawCleared(const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
                                   const gpu::gpu_mem_64u &framebuffer, const ProjectionGPU &projection)
 {
     if (!impl->faceCount) return;
-    const auto &s = *impl;
+    auto &s = *impl;
     if (!s.enabled) {
         sw_rasterize_normals(gpu::WorkSize(BIN_THREADS, s.faceCount), vertices, faces, framebuffer,
                              projection, s.faceCount, s.grid.width, s.grid.height);
@@ -324,16 +356,39 @@ void TiledRasterizer::drawCleared(const gpu::gpu_mem_32f &vertices, const gpu::g
     cudaStream_t stream = context.cudaStream();
     CUDA_SAFE_CALL(cudaMemsetAsync(s.buffers.counters, 0, sizeof(RasterCounters), stream));
     CUDA_SAFE_CALL(cudaMemsetAsync(s.buffers.tileParts, 0, s.grid.numTiles() * sizeof(unsigned), stream));
-    triangleSetup<<<div_ceil(s.faceCount, unsigned(BIN_THREADS)), BIN_THREADS, 0, stream>>>(
-        vertices.cuptr(), faces.cuptr(), projection, s.faceCount, s.grid, s.buffers);
-    binRasterizer<<<s.binShards, BIN_THREADS, s.grid.numBins() * sizeof(unsigned), stream>>>(s.grid, s.buffers);
+    const unsigned blocks = div_ceil(s.faceCount, unsigned(BIN_THREADS));
+    if (s.bounds.ptr && s.staticVertices.cuptr() == vertices.cuptr() && s.staticFaces.cuptr() == faces.cuptr()) {
+        if (!s.boundsReady) {
+            const unsigned groups = div_ceil(s.faceCount, FACES_PER_BOUND);
+            buildFaceBounds<<<div_ceil(groups, unsigned(BIN_THREADS / WARP_SIZE)), BIN_THREADS, 0, stream>>>(
+                vertices.cuptr(), faces.cuptr(), s.faceCount, s.bounds.ptr, s.records.ptr);
+            s.boundsReady = true;
+        }
+        const unsigned groups = div_ceil(s.faceCount, FACES_PER_BOUND);
+        classifyFaceGroups<<<div_ceil(groups, unsigned(BIN_THREADS)), BIN_THREADS, 0, stream>>>(s.bounds.ptr,
+            groups, projection, s.visible.ptr, s.buffers.counters);
+        triangleSetup<true><<<blocks, BIN_THREADS, 0, stream>>>(vertices.cuptr(), faces.cuptr(), projection,
+            s.faceCount, s.grid, s.buffers, s.visible.ptr, s.records.ptr);
+    } else {
+        triangleSetup<false><<<blocks, BIN_THREADS, 0, stream>>>(vertices.cuptr(), faces.cuptr(), projection,
+            s.faceCount, s.grid, s.buffers, nullptr, nullptr);
+    }
+    const size_t binShared = s.grid.numBins() * sizeof(unsigned);
+    if (s.largeBin) {
+        binRasterizer<LARGE_BIN_THREADS><<<s.binShards, LARGE_BIN_THREADS, binShared, stream>>>(s.grid, s.buffers);
+    } else {
+        binRasterizer<BIN_THREADS><<<s.binShards, BIN_THREADS, binShared, stream>>>(s.grid, s.buffers);
+    }
     makeCoarseTasks<<<div_ceil(s.grid.numBins(), BIN_THREADS / 32), BIN_THREADS, 0, stream>>>(s.grid, s.buffers, s.binShards);
     if (std::max(s.grid.width, s.grid.height) <= COARSE_NARROW_MAX_SIDE) {
         coarseRasterizer<int><<<5 * s.smCount, COARSE_THREADS, 0, stream>>>(s.grid, s.buffers, s.binShards);
     } else {
         coarseRasterizer<int64_t><<<2 * s.smCount, COARSE_THREADS, 0, stream>>>(s.grid, s.buffers, s.binShards);
     }
-    fineRasterizer<<<12 * s.smCount, FINE_THREADS, 0, stream>>>(s.grid, s.buffers, framebuffer.cuptr());
+    // Let the block scheduler distribute tile work; a costly tile no longer
+    // holds up a warp's remaining grid-stride iterations.
+    const unsigned fineBlocks = div_ceil(unsigned(s.grid.numTiles()), unsigned(FINE_WARPS));
+    fineRasterizer<<<fineBlocks, FINE_THREADS, 0, stream>>>(s.grid, s.buffers, framebuffer.cuptr());
     rasterizeOverflow<<<s.smCount, BIN_THREADS, 0, stream>>>(vertices.cuptr(), faces.cuptr(), framebuffer.cuptr(),
         projection, s.faceCount, s.grid, s.buffers.counters);
     CUDA_CHECK_KERNEL_SYNC(stream);
@@ -341,11 +396,11 @@ void TiledRasterizer::drawCleared(const gpu::gpu_mem_32f &vertices, const gpu::g
 
 TiledRasterizer::Stats TiledRasterizer::stats() const
 {
-    if (!impl->enabled) return {0, 0, 0, 0, true};
+    if (!impl->enabled) return {0, 0, 0, 0, 0, true};
     if (!impl->faceCount) return {};
     RasterCounters info;
     CUDA_SAFE_CALL(cudaMemcpy(&info, impl->buffers.counters, sizeof(info), cudaMemcpyDeviceToHost));
-    return {info.numTriangles, info.numActiveTiles, info.numBinRefs, info.numTileRefs, info.overflow != 0};
+    return {info.numTriangles, info.numActiveTiles, info.numBinRefs, info.numTileRefs, info.tileSlots, info.overflow != 0};
 }
 
 } // namespace cuda

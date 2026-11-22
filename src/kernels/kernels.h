@@ -22,13 +22,16 @@ class TiledRasterizer {
 public:
     TiledRasterizer(unsigned nfaces, int width, int height);
     ~TiledRasterizer();
+    // Optional: cache object-space bounds for these immutable mesh buffers.
+    // Rebind after any vertex/index edit. Other meshes use the uncached path.
+    void bindStaticGeometry(const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces);
     // The framebuffer must already be cleared to ~uint64_t{0}. Untouched tiles stay clear.
     void drawCleared(const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
                      const gpu::gpu_mem_64u &framebuffer, const ProjectionGPU &projection);
 
     struct Stats {
         unsigned triangles, activeTiles;
-        unsigned long long binRefs, tileRefs;
+        unsigned long long binRefs, tileRefs, tileSlots;
         bool fallback;
     };
     Stats stats() const;

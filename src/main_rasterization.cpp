@@ -271,6 +271,7 @@ void run(int argc, char** argv)
                 const char *mode = std::getenv("GPGPU_CUDA_RASTERIZER");
                 if (!mode || std::string_view(mode) != "baseline") {
                     tiled = std::make_unique<cuda::TiledRasterizer>(nfaces, params.width, params.height);
+                    tiled->bindStaticGeometry(vertices_gpu, faces_gpu);
                 }
             }
 #endif
@@ -333,7 +334,7 @@ void run(int argc, char** argv)
             if (tiled) {
                 const auto stats = tiled->stats();
                 std::cout << "[CUDA tiles] " << stats.triangles << " triangles, " << stats.binRefs << " bin refs, "
-                          << stats.tileRefs << " tile refs, " << stats.activeTiles << " active tiles"
+                          << stats.tileRefs << " tile refs in " << stats.tileSlots << " slots, " << stats.activeTiles << " active tiles"
                           << (stats.fallback ? " (baseline fallback)" : "") << std::endl;
             }
 #endif

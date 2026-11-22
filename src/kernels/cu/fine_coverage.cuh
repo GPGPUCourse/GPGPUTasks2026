@@ -51,15 +51,13 @@ __device__ Coverage edgeMask(ScreenPoint a, ScreenPoint b, int sampleX, int samp
     if (intercept >= 7 * int64_t(rise)) return complement ? 0ull : ~0ull;
     if (intercept + 7 * int64_t(run) < 0) return complement ? ~0ull : 0ull;
 
-    // The quotient is in [0,15), so roundoff in the float estimate cannot
-    // move the integer result by more than one. Correct it in integer space.
+    // Round to nearest: the exact residual is within (0.5 + float error)*run
+    // of zero. Since run <= INT_MAX this fits in int32 even for wide viewports.
     const uint64_t numerator = uint64_t(8 * int64_t(run) - 1 - intercept);
-    unsigned q = __float2uint_rz(float(numerator) * __frcp_rn(float(run)));
-    int64_t r = int64_t(numerator) - int64_t(q) * run;
-    if (r < 0) { r += run; --q; }
-    else if (r >= run) { r -= run; ++q; }
-    const int height = int(q) - 7;
-    unsigned remainder = unsigned(r);
+    const unsigned q = __float2uint_rn(float(numerator) * __frcp_rn(float(run)));
+    const int r = int(unsigned(numerator) - q * run);
+    const int height = int(q) - 7 - int(r < 0);
+    unsigned remainder = unsigned(r) + (r < 0 ? run : 0);
     unsigned rises = 0;
     #pragma unroll
     for (int bit = 0; bit < 7; ++bit) {
