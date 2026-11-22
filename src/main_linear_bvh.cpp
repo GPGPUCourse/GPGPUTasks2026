@@ -337,7 +337,7 @@ void run(int argc, char** argv)
 
                 for (unsigned int width = 2; width <= paddedFaceCount; width *= 2) {
                     for (unsigned int stride = width / 2; stride > 0; stride /= 2) {
-                        ocl_sort_codes.exec(gpu::WorkSize(256, paddedFaceCount), codes_gpu, indices_gpu, paddedFaceCount, width, stride);
+                        ocl_sort_codes.exec(gpu::WorkSize(256, paddedFaceCount / 2), codes_gpu, indices_gpu, paddedFaceCount, width, stride);
                     }
                 }
 
