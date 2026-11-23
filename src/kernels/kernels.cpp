@@ -8,6 +8,8 @@
 #include "vk/generated_kernels/ray_tracing_render_brute_force_comp.h"
 #include "vk/generated_kernels/ray_tracing_render_using_lbvh_comp.h"
 
+#include "cl/generated_kernels/build_lbvh_gpu.h"
+
 #ifndef CUDA_SUPPORT
 namespace cuda {
 void aplusb(const gpu::WorkSize& workSize,
@@ -54,6 +56,11 @@ const ProgramBinaries& getRTBruteForce()
 const ProgramBinaries& getRTWithLBVH()
 {
     return opencl_binaries_ray_tracing_render_using_lbvh;
+}
+
+const ProgramBinaries& getLBVHBuild()
+{
+    return opencl_binaries_build_lbvh_gpu;
 }
 } // namespace ocl
 

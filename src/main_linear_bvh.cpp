@@ -18,6 +18,8 @@
 #include <filesystem>
 #include <fstream>
 
+#include "build_bvh_gpu.h"
+
 // Считает сколько непустых пикселей
 template<typename T>
 size_t countNonEmpty(const TypedImage<T> &image, T empty_value) {
@@ -290,7 +292,11 @@ void run(int argc, char** argv)
 
         // TODO постройте LBVH на GPU
         // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
+
+        gpu::shared_device_buffer_typed<BVHNodeGPU> gpu_lbvh_nodes_gpu(2 * nfaces - 1);
+        gpu::gpu_mem_32u gpu_leaf_faces_indices_gpu(nfaces);
+
+        bool gpu_lbvg_gpu_rt_done = true;
 
         if (gpu_lbvg_gpu_rt_done) {
             std::vector<double> gpu_lbvh_times;
@@ -298,6 +304,14 @@ void run(int argc, char** argv)
                 timer t;
 
                 // TODO постройте LBVH на GPU
+                const bool success = build_lbvh_gpu(
+                    vertices_gpu,
+                    faces_gpu,
+                    nfaces,
+                    gpu_lbvh_nodes_gpu,
+                    gpu_leaf_faces_indices_gpu);
+
+                rassert(success, 783451234);
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -317,6 +331,21 @@ void run(int argc, char** argv)
                 timer t;
 
                 // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                // ocl_rt_with_lbvh.exec(
+                //         gpu::WorkSize(16, 16, width, height),
+                //         vertices_gpu, faces_gpu,
+                //         lbvh_nodes_gpu.clmem(), leaf_faces_indices_gpu.clmem(),
+                //         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                //         camera_gpu.clmem(), nfaces);
+
+                ocl_rt_with_lbvh.exec(
+                    gpu::WorkSize(16, 16, width, height),
+                    vertices_gpu, faces_gpu,
+                    gpu_lbvh_nodes_gpu.clmem(),
+                    gpu_leaf_faces_indices_gpu.clmem(),
+                    framebuffer_face_id_gpu,
+                    framebuffer_ambient_occlusion_gpu,
+                    camera_gpu.clmem(), nfaces);
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }
