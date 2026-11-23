@@ -1,0 +1,48 @@
+#version 450
+
+#include <libgpu/vulkan/vk/common.vk>
+
+#include "../defines.h"
+#include "../shared_structs/aabb_gpu_shared.h"
+#include "../shared_structs/bvh_node_gpu_shared.h"
+
+layout (std430, binding = 0) readonly buffer SortedTriangleIdsIn
+{
+    uint sortedTriangleIds[];
+};
+
+layout (std430, binding = 1) readonly buffer TriangleAABBsIn
+{
+    AABBGPU triangleAABBs[];
+};
+
+layout (std430, binding = 2) buffer BvhNodesInout
+{
+    BVHNodeGPU bvhNodes[];
+};
+
+layout (std430, binding = 3) buffer LeafTriangleIdsOut
+{
+    uint leafTriangleIds[];
+};
+
+layout (push_constant) uniform PushConstants
+{
+    uint nfaces;
+} params;
+
+layout (local_size_x = GROUP_SIZE) in;
+
+void main()
+{
+    const uint sortedPosition = gl_GlobalInvocationID.x;
+    if (sortedPosition >= params.nfaces) {
+        return;
+    }
+    uint leafIndex = (params.nfaces - 1) + sortedPosition;
+    uint originalFaceId = sortedTriangleIds[sortedPosition];
+    leafTriangleIds[sortedPosition] = originalFaceId;
+    bvhNodes[leafIndex].aabb = triangleAABBs[originalFaceId];
+    bvhNodes[leafIndex].leftChildIndex = 0xFFFFFFFFu;
+    bvhNodes[leafIndex].rightChildIndex = 0xFFFFFFFFu;
+}

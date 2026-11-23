@@ -1,0 +1,60 @@
+#version 450
+
+#include <libgpu/vulkan/vk/common.vk>
+
+#include "../defines.h"
+#include "../shared_structs/bvh_node_gpu_shared.h"
+
+layout (std430, binding = 0) coherent buffer BvhNodesInout
+{
+    BVHNodeGPU bvhNodes[];
+};
+
+layout (std430, binding = 1) readonly buffer ParentIndicesIn
+{
+    uint parentIndices[];
+};
+
+layout (std430, binding = 2) coherent buffer ParentArrivalCountersInout
+{
+    uint parentArrivalCounters[];
+};
+
+layout (push_constant) uniform PushConstants
+{
+    uint nfaces;
+    uint nodeCount;
+} params;
+
+layout (local_size_x = GROUP_SIZE) in;
+
+AABBGPU combine(AABBGPU l, AABBGPU r) {
+    return AABBGPU(min(l.min_x, r.min_x), min(l.min_y, r.min_y), min(l.min_z, r.min_z),
+            max(l.max_x, r.max_x), max(l.max_y, r.max_y), max(l.max_z, r.max_z));
+}
+
+void main()
+{
+    const uint nodeId = gl_GlobalInvocationID.x;
+    if (nodeId >= params.nodeCount) {
+        return;
+    }
+    if (bvhNodes[nodeId].leftChildIndex != 0xFFFFFFFFu || bvhNodes[nodeId].rightChildIndex != 0xFFFFFFFFu) {
+        return;
+    }
+    uint child = nodeId;
+    uint parent = parentIndices[child];
+    while(parent != 0xFFFFFFFFu) {
+        memoryBarrierBuffer();
+        uint arrival = atomicAdd(parentArrivalCounters[parent], 1);
+        if (arrival != 1) {
+            break;
+        }
+        memoryBarrierBuffer();
+        AABBGPU left = bvhNodes[bvhNodes[parent].leftChildIndex].aabb;
+        AABBGPU right = bvhNodes[bvhNodes[parent].rightChildIndex].aabb;
+        bvhNodes[parent].aabb = combine(left, right);
+        child = parent;
+        parent = parentIndices[child];
+    }
+}

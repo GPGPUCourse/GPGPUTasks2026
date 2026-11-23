@@ -82,7 +82,19 @@ endforeach()
 set(VULKAN_SOURCES
         src/kernels/vk/aplusb.comp
         src/kernels/vk/ray_tracing_render_brute_force.comp
-        src/kernels/vk/ray_tracing_render_using_lbvh.comp)
+        src/kernels/vk/ray_tracing_render_using_lbvh.comp
+        src/kernels/vk/lbvh_prepare.comp
+        src/kernels/vk/lbvh_triangle_info.comp
+        src/kernels/vk/lbvh_centroid_bounds_partial.comp
+        src/kernels/vk/lbvh_centroid_bounds_final.comp
+        src/kernels/vk/lbvh_morton_codes.comp
+        src/kernels/vk/radix_sort_01_local_counting.comp
+        src/kernels/vk/radix_sort_02_global_prefixes_scan_sum_reduction.comp
+        src/kernels/vk/radix_sort_03_global_prefixes_scan_accumulation.comp
+        src/kernels/vk/radix_sort_04_scatter.comp
+        src/kernels/vk/lbvh_init_leaves.comp
+        src/kernels/vk/lbvh_topology.comp
+        src/kernels/vk/lbvh_aabbs.comp)
 
 set(VULKAN_DEFINES)
 foreach(VK_FILE IN LISTS VULKAN_SOURCES)

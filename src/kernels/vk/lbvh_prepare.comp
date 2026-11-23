@@ -1,0 +1,42 @@
+#version 450
+
+#include <libgpu/vulkan/vk/common.vk>
+
+#include "../defines.h"
+#include "../shared_structs/aabb_gpu_shared.h"
+
+layout (std430, binding = 0) buffer CentroidBoundsOut
+{
+    AABBGPU centroidBounds;
+};
+
+layout (std430, binding = 1) buffer ParentArrivalCountersOut
+{
+    uint parentArrivalCounters[];
+};
+
+layout (push_constant) uniform PushConstants
+{
+    uint nfaces;
+} params;
+
+layout (local_size_x = GROUP_SIZE) in;
+
+void main()
+{
+    const float INF = uintBitsToFloat(0x7F800000u);
+    const float MINF = uintBitsToFloat(0xFF800000u);
+
+    const uint i = gl_GlobalInvocationID.x;
+    if (i >= params.nfaces) { return; }
+    if (i == 0) {
+        centroidBounds.min_x = INF;
+        centroidBounds.min_y = INF;
+        centroidBounds.min_z = INF;
+        centroidBounds.max_x = MINF;
+        centroidBounds.max_y = MINF;
+        centroidBounds.max_z = MINF;
+    }
+
+    parentArrivalCounters[i] = 0;
+}

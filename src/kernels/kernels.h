@@ -35,4 +35,17 @@ const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getRTBruteForce();
 const ProgramBinaries& getRTWithLBVH();
+
+const ProgramBinaries& getLBVHPrepare();
+const ProgramBinaries& getLBVHTriangleInfo();
+const ProgramBinaries& getLBVHCentroidBoundsPartial();
+const ProgramBinaries& getLBVHCentroidBoundsFinal();
+const ProgramBinaries& getLBVHMortonCodes();
+const ProgramBinaries& getRadixSort01LocalCounting();
+const ProgramBinaries& getRadixSort02GlobalPrefixesScanSumReduction();
+const ProgramBinaries& getRadixSort03GlobalPrefixesScanAccumulation();
+const ProgramBinaries& getRadixSort04Scatter();
+const ProgramBinaries& getLBVHInitLeaves();
+const ProgramBinaries& getLBVHTopology();
+const ProgramBinaries& getLBVHAABBs();
 }

@@ -1,0 +1,63 @@
+#version 450
+
+#include <libgpu/vulkan/vk/common.vk>
+
+#include "../defines.h"
+#include "../shared_structs/aabb_gpu_shared.h"
+
+layout (std430, binding = 0) readonly buffer CentroidsIn
+{
+    float centroids[];
+};
+
+layout (std430, binding = 1) buffer PartialCentroidBoundsOut
+{
+    AABBGPU partialCentroidBounds[];
+};
+
+layout (push_constant) uniform PushConstants
+{
+    uint nfaces;
+    uint partialCount;
+} params;
+
+layout (local_size_x = GROUP_SIZE) in;
+
+shared vec3 minCentroids[GROUP_SIZE];
+shared vec3 maxCentroids[GROUP_SIZE];
+
+void main()
+{
+    const uint w = gl_WorkGroupID.x;
+    const uint g = gl_GlobalInvocationID.x;
+    const uint l = gl_LocalInvocationID.x;
+
+    const float INF = uintBitsToFloat(0x7F800000u);
+    const float MINF = uintBitsToFloat(0xFF800000u);
+
+    minCentroids[l].x = g < params.nfaces ? centroids[3*g + 0] : INF;
+    maxCentroids[l].x = g < params.nfaces ? centroids[3*g + 0] : MINF;
+    minCentroids[l].y = g < params.nfaces ? centroids[3*g + 1] : INF;
+    maxCentroids[l].y = g < params.nfaces ? centroids[3*g + 1] : MINF;
+    minCentroids[l].z = g < params.nfaces ? centroids[3*g + 2] : INF;
+    maxCentroids[l].z = g < params.nfaces ? centroids[3*g + 2] : MINF;
+    memoryBarrierShared();
+    barrier();
+
+    if (l == 0) {
+        partialCentroidBounds[w].min_x = minCentroids[0].x;
+        partialCentroidBounds[w].max_x = maxCentroids[0].x;
+        partialCentroidBounds[w].min_y = minCentroids[0].y;
+        partialCentroidBounds[w].max_y = maxCentroids[0].y;
+        partialCentroidBounds[w].min_z = minCentroids[0].z;
+        partialCentroidBounds[w].max_z = maxCentroids[0].z;
+        for(uint i = 0; i < GROUP_SIZE; ++i) {
+            partialCentroidBounds[w].min_x = min(partialCentroidBounds[w].min_x, minCentroids[i].x);
+            partialCentroidBounds[w].max_x = max(partialCentroidBounds[w].max_x, maxCentroids[i].x);
+            partialCentroidBounds[w].min_y = min(partialCentroidBounds[w].min_y, minCentroids[i].y);
+            partialCentroidBounds[w].max_y = max(partialCentroidBounds[w].max_y, maxCentroids[i].y);
+            partialCentroidBounds[w].min_z = min(partialCentroidBounds[w].min_z, minCentroids[i].z);
+            partialCentroidBounds[w].max_z = max(partialCentroidBounds[w].max_z, maxCentroids[i].z);
+        }
+    }
+}

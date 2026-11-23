@@ -1,0 +1,97 @@
+#version 450
+
+#include <libgpu/vulkan/vk/common.vk>
+
+#include "../defines.h"
+#include "../shared_structs/bvh_node_gpu_shared.h"
+
+layout (std430, binding = 0) readonly buffer SortedMortonCodesIn
+{
+    uint sortedMortonCodes[];
+};
+
+layout (std430, binding = 1) buffer BvhNodesInout
+{
+    BVHNodeGPU bvhNodes[];
+};
+
+layout (std430, binding = 2) buffer ParentIndicesInout
+{
+    uint parentIndices[];
+};
+
+layout (push_constant) uniform PushConstants
+{
+    uint nfaces;
+} params;
+
+layout (local_size_x = GROUP_SIZE) in;
+
+int clz32(int x)
+{
+    return 31 - findMSB(x);
+}
+
+int prefix(int l, int r) {
+    if (l < 0 || r < 0) { return -1; }
+    if (l >= params.nfaces || r >= params.nfaces) { return -1; }
+    int ml = int(sortedMortonCodes[l]);
+    int mr = int(sortedMortonCodes[r]);
+    if (ml == mr) {
+        return 32 + clz32(l ^ r);
+    }
+    return clz32(ml ^ mr);
+}
+
+void main()
+{
+    const int i = int(gl_GlobalInvocationID.x);
+    const int leafStart = int(params.nfaces) - 1;
+    if (i >= leafStart) {
+        return;
+    }
+
+    int prefixLeft  = prefix(i, i - 1);
+    int prefixRight = prefix(i, i + 1);
+
+    int dir = 1;
+    if (prefixRight <= prefixLeft) { dir = -1; }
+
+    int delta = prefix(i, i - dir);
+    int lmax = 2;
+    while(prefix(i, i + lmax*dir) > delta) { lmax *= 2; }
+    int l = 0;
+    for(int t = lmax/2; t >= 1; t /= 2) {
+        if (prefix(i, i + (l + t)*dir) > delta) { l += t; }
+    }
+
+    int j = i + l*dir;
+    int first = min(i, j);
+    int last = max(i, j);
+
+    int split = first;
+    if (last - first > 1) {
+        int g = prefix(first, last);
+        int step  = last - first;
+
+        do {
+            step = (step + 1) / 2;
+            int next = split + step;
+
+            if (next < last && prefix(first, next) > g) {
+                split = next;
+            }
+        } while (step > 1);
+    }
+    uint leftChild = split == first ? leafStart + first : split;
+    uint rightChild = split + 1 == last ? leafStart + (split + 1) : split + 1;
+
+
+    bvhNodes[i].leftChildIndex = leftChild;
+    bvhNodes[i].rightChildIndex = rightChild;
+    if (i == 0) {
+        parentIndices[0] = 0xFFFFFFFFu;
+    }
+    parentIndices[leftChild] = i;
+    parentIndices[rightChild] = i;
+}

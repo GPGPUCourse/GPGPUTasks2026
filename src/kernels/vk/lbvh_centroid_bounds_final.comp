@@ -1,0 +1,56 @@
+#version 450
+
+#include <libgpu/vulkan/vk/common.vk>
+
+#include "../defines.h"
+#include "../shared_structs/aabb_gpu_shared.h"
+
+layout (std430, binding = 0) readonly buffer PartialCentroidBoundsIn
+{
+    AABBGPU partialCentroidBounds[];
+};
+
+layout (std430, binding = 1) buffer CentroidBoundsOut
+{
+    AABBGPU centroidBounds;
+};
+
+layout (push_constant) uniform PushConstants
+{
+    uint partialCount;
+} params;
+
+layout (local_size_x = GROUP_SIZE) in;
+
+shared AABBGPU bounds[GROUP_SIZE];
+
+AABBGPU combine(AABBGPU l, AABBGPU r) {
+    return AABBGPU(min(l.min_x, r.min_x), min(l.min_y, r.min_y), min(l.min_z, r.min_z),
+            max(l.max_x, r.max_x), max(l.max_y, r.max_y), max(l.max_z, r.max_z));
+}
+
+void main()
+{
+    const uint w = gl_WorkGroupID.x;
+    const uint g = gl_GlobalInvocationID.x;
+    const uint l = gl_LocalInvocationID.x;
+
+    const float INF = uintBitsToFloat(0x7F800000u);
+    const float MINF = uintBitsToFloat(0xFF800000u);
+    const AABBGPU b0 = AABBGPU(INF, INF, INF, MINF, MINF, MINF);
+
+    bounds[l] = b0;
+    for (uint i = gl_LocalInvocationID.x; i < params.partialCount; i += GROUP_SIZE) {
+        AABBGPU b = i < params.partialCount ? partialCentroidBounds[i] : b0;
+        bounds[l] = combine(bounds[l], b);
+    }
+    memoryBarrierShared();
+    barrier();
+
+    if (l == 0) {
+        centroidBounds = b0;
+        for(uint i = 0; i < GROUP_SIZE; ++i) {
+            centroidBounds = combine(centroidBounds, bounds[i]);
+        }
+    }
+}

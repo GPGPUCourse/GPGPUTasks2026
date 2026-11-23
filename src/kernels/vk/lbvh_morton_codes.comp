@@ -1,0 +1,67 @@
+#version 450
+
+#include <libgpu/vulkan/vk/common.vk>
+
+#include "../defines.h"
+#include "../shared_structs/aabb_gpu_shared.h"
+
+layout (std430, binding = 0) readonly buffer CentroidsIn
+{
+    float centroids[];
+};
+
+layout (std430, binding = 1) readonly buffer CentroidBoundsIn
+{
+    AABBGPU centroidBounds;
+};
+
+layout (std430, binding = 2) buffer MortonCodesOut
+{
+    uint mortonCodes[];
+};
+
+layout (std430, binding = 3) buffer TriangleIdsOut
+{
+    uint triangleIds[];
+};
+
+layout (push_constant) uniform PushConstants
+{
+    uint nfaces;
+} params;
+
+layout (local_size_x = GROUP_SIZE) in;
+
+uint expandBits(uint v) {
+    v = (v * 0x00010001u) & 0xFF0000FFu;
+    v = (v * 0x00000101u) & 0x0F00F00Fu;
+    v = (v * 0x00000011u) & 0xC30C30C3u;
+    v = (v * 0x00000005u) & 0x49249249u;
+    return v;
+}
+
+uint morton3D(vec3 p) {
+    p = min(clamp(p, 0.0, 1.0) * 1024.0, 1023.0);
+    uint x = expandBits(uint(p.x));
+    uint y = expandBits(uint(p.y));
+    uint z = expandBits(uint(p.z));
+    return (x << 2) | (y << 1) | z;
+}
+
+void main()
+{
+    const uint triangleId = gl_GlobalInvocationID.x;
+    if (triangleId >= params.nfaces) {
+        return;
+    }
+
+    const float eps = 1e-9;
+
+    vec3 triCentroid = vec3(centroids[3*triangleId + 0], centroids[3*triangleId + 1], centroids[3*triangleId + 2]);
+    vec3 boundsMin = vec3(centroidBounds.min_x, centroidBounds.min_y, centroidBounds.min_z);
+    vec3 boundsSpan = max(vec3(centroidBounds.max_x, centroidBounds.max_y, centroidBounds.max_z) - boundsMin, vec3(eps));
+    vec3 normalized = (triCentroid - boundsMin) / boundsSpan;
+
+    mortonCodes[triangleId] = morton3D(normalized);
+    triangleIds[triangleId] = triangleId;
+}
