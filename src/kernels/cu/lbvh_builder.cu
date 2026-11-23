@@ -22,6 +22,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cfloat>
 #include <cstdint>
 #include <limits>
 #include <vector>
@@ -176,8 +177,53 @@ __device__ float atomicMaxFloat(float *address, float value) {
   return __uint_as_float(old);
 }
 
+__device__ void reduceWarpBounds(float3 &lower, float3 &upper) {
+  for (int offset = 16; offset > 0; offset >>= 1) {
+    lower.x = fminf(lower.x, __shfl_down_sync(0xFFFFFFFFu, lower.x, offset));
+    lower.y = fminf(lower.y, __shfl_down_sync(0xFFFFFFFFu, lower.y, offset));
+    lower.z = fminf(lower.z, __shfl_down_sync(0xFFFFFFFFu, lower.z, offset));
+    upper.x = fmaxf(upper.x, __shfl_down_sync(0xFFFFFFFFu, upper.x, offset));
+    upper.y = fmaxf(upper.y, __shfl_down_sync(0xFFFFFFFFu, upper.y, offset));
+    upper.z = fmaxf(upper.z, __shfl_down_sync(0xFFFFFFFFu, upper.z, offset));
+  }
+}
+
+__device__ void reduceCentroidBounds(float3 lower, float3 upper,
+                                     float3 *globalLower, float3 *globalUpper) {
+  static_assert(GROUP_SIZE % 32 == 0 && GROUP_SIZE <= 1024);
+  __shared__ float3 warpLower[GROUP_SIZE / 32];
+  __shared__ float3 warpUpper[GROUP_SIZE / 32];
+  const int lane = threadIdx.x % 32;
+  const int warp = threadIdx.x / 32;
+
+  reduceWarpBounds(lower, upper);
+  if (lane == 0) {
+    warpLower[warp] = lower;
+    warpUpper[warp] = upper;
+  }
+  __syncthreads();
+
+  if (warp == 0) {
+    lower = lane < GROUP_SIZE / 32 ? warpLower[lane]
+                                  : make_float3(FLT_MAX, FLT_MAX, FLT_MAX);
+    upper = lane < GROUP_SIZE / 32 ? warpUpper[lane]
+                                  : make_float3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+    reduceWarpBounds(lower, upper);
+    if (lane == 0) {
+      atomicMinFloat(&globalLower->x, lower.x);
+      atomicMinFloat(&globalLower->y, lower.y);
+      atomicMinFloat(&globalLower->z, lower.z);
+      atomicMaxFloat(&globalUpper->x, upper.x);
+      atomicMaxFloat(&globalUpper->y, upper.y);
+      atomicMaxFloat(&globalUpper->z, upper.z);
+    }
+  }
+}
+
 __global__ void computePrims(const uint32_t *faces, const float *vertices, Prim *prims, float3 *cMin, float3 *cMax, int N) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
+  float3 lower = make_float3(FLT_MAX, FLT_MAX, FLT_MAX);
+  float3 upper = make_float3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
   if (i < N) {
     uint3 f = loadFace(faces, i);
     float3 v0 = loadVertex(vertices, f.x);
@@ -201,13 +247,10 @@ __global__ void computePrims(const uint32_t *faces, const float *vertices, Prim 
     prims[i].aabb = aabb;
     prims[i].centroid = c;
 
-    atomicMinFloat(&cMin->x, c.x);
-    atomicMinFloat(&cMin->y, c.y);
-    atomicMinFloat(&cMin->z, c.z);
-    atomicMaxFloat(&cMax->x, c.x);
-    atomicMaxFloat(&cMax->y, c.y);
-    atomicMaxFloat(&cMax->z, c.z);
+    lower = c;
+    upper = c;
   }
+  reduceCentroidBounds(lower, upper, cMin, cMax);
 }
 
 __global__ void computeMortonCodes(Prim *prims, const float3 *cMin, const float3 *cMax, int N) {
@@ -350,12 +393,12 @@ void buildLBVH_GPU(const gpu::gpu_mem_32f &vertices,
 
   auto &[prims, cMin, cMax, sortedCodes, parents, visitCounters] = scratchData;
 
-  cMin.fill({+std::numeric_limits<float>::infinity(),
-               +std::numeric_limits<float>::infinity(),
-               +std::numeric_limits<float>::infinity()});
-  cMax.fill({-std::numeric_limits<float>::infinity(),
-              -std::numeric_limits<float>::infinity(),
-              -std::numeric_limits<float>::infinity()});
+  cMin.fill({+std::numeric_limits<float>::max(),
+               +std::numeric_limits<float>::max(),
+               +std::numeric_limits<float>::max()});
+  cMax.fill({-std::numeric_limits<float>::max(),
+              -std::numeric_limits<float>::max(),
+              -std::numeric_limits<float>::max()});
   cudaMemsetAsync(visitCounters.cuptr(), 0, (2*N-1)*sizeof(uint32_t), stream);
 
   gpu::WorkSize wsN(GROUP_SIZE, N);
