@@ -1,6 +1,8 @@
 #include "kernels.h"
 
 #include "cl/generated_kernels/aplusb.h"
+#include "cl/generated_kernels/build_lbvh.h"
+#include "cl/generated_kernels/sort_morton_codes.h"
 #include "cl/generated_kernels/ray_tracing_render_brute_force.h"
 #include "cl/generated_kernels/ray_tracing_render_using_lbvh.h"
 
@@ -44,6 +46,16 @@ namespace ocl {
 const ocl::ProgramBinaries& getAplusB()
 {
     return opencl_binaries_aplusb;
+}
+
+const ProgramBinaries& getBuildLBVH()
+{
+    return opencl_binaries_build_lbvh;
+}
+
+const ProgramBinaries& getSortMortonCodes()
+{
+    return opencl_binaries_sort_morton_codes;
 }
 
 const ProgramBinaries& getRTBruteForce()
