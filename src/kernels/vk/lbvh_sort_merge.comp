@@ -1,0 +1,118 @@
+#version 450
+
+#include <libgpu/vulkan/vk/common.vk>
+
+#include "../defines.h"
+
+layout (std430, binding = 0) readonly  buffer KeysIn    { uint in_keys[];  };
+layout (std430, binding = 1) readonly  buffer ValsIn    { uint in_vals[];  };
+layout (std430, binding = 2) readonly  buffer GroupDiags{ uint group_diags[]; };
+layout (std430, binding = 3) writeonly buffer KeysOut   { uint out_keys[]; };
+layout (std430, binding = 4) writeonly buffer ValsOut   { uint out_vals[]; };
+
+layout (push_constant) uniform PushConstants {
+    int iter;
+    int n;
+} params;
+
+layout (local_size_x = GROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
+
+uint get_key(uint x, uint base, uint shift, uint left_cnt, uint left_cnt_prev, uint right_cnt_prev) {
+    uint idx = (x < left_cnt)
+        ? base + x + left_cnt_prev
+        : base + shift + right_cnt_prev + (x - left_cnt);
+    return in_keys[idx];
+}
+
+uint get_val(uint x, uint base, uint shift, uint left_cnt, uint left_cnt_prev, uint right_cnt_prev) {
+    uint idx = (x < left_cnt)
+        ? base + x + left_cnt_prev
+        : base + shift + right_cnt_prev + (x - left_cnt);
+    return in_vals[idx];
+}
+
+void main() {
+    const uint gid = gl_GlobalInvocationID.x;
+    if (gid >= uint(params.n)) return;
+
+    const uint lid = gl_LocalInvocationID.x;
+
+    const uint shift = uint(1) << uint(params.iter);
+    const uint block_mask = (uint(1) << uint(params.iter + 1)) - 1u;
+
+    const uint base = gid & ~block_mask;
+
+    const uint gr_id = gl_WorkGroupID.x;
+    const uint gr_d = (gr_id * GROUP_SIZE) & block_mask;
+
+    const uint block_len = min(uint(1) << uint(params.iter + 1), uint(params.n) - base);
+    const uint block_width = min(uint(GROUP_SIZE), uint(params.n) - gr_id * GROUP_SIZE);
+
+    const uint num_groups = (uint(params.n) + GROUP_SIZE - 1u) / GROUP_SIZE;
+    uint next_diag;
+    if (gr_d + block_width >= block_len) {
+        next_diag = min(uint(1) << uint(params.iter), block_len);
+    } else if (gr_id + 1u < num_groups) {
+        next_diag = group_diags[gr_id + 1u];
+    } else {
+        next_diag = min(uint(1) << uint(params.iter), block_len);
+    }
+    const uint left_cnt = next_diag - group_diags[gr_id];
+    const uint right_cnt = block_width - left_cnt;
+
+    const uint left_cnt_prev = group_diags[gr_id];
+    const uint right_cnt_prev =
+        ((gr_id * GROUP_SIZE) & block_mask) == 0u
+        ? 0u : gr_d - left_cnt_prev;
+
+    int l = -1;
+    int r = int(min(lid, left_cnt));
+
+    while (l + 1 < r) {
+        int m = (l + r) / 2;
+
+        const bool lim_r = int(lid) - m < int(right_cnt);
+
+        if (lim_r && get_key(uint(m), base, shift, left_cnt, left_cnt_prev, right_cnt_prev)
+                   > get_key(left_cnt + lid - uint(m), base, shift, left_cnt, left_cnt_prev, right_cnt_prev)) {
+            r = m;
+        } else {
+            l = m;
+        }
+    }
+
+    const bool lim_l = uint(r) < left_cnt;
+    const bool lim_r2 = lid - uint(r) < right_cnt;
+    if (!((!lim_l && lim_r2) || (lim_l && lim_r2
+            && get_key(uint(r), base, shift, left_cnt, left_cnt_prev, right_cnt_prev)
+             > get_key(left_cnt + lid - uint(r), base, shift, left_cnt, left_cnt_prev, right_cnt_prev)))) {
+        l = r;
+    }
+
+    const bool pick_left = (l >= 0) && (uint(l) < left_cnt)
+        && !((lid - uint(l) - 1u) < right_cnt
+             && get_key(uint(l), base, shift, left_cnt, left_cnt_prev, right_cnt_prev)
+              < get_key(left_cnt + lid - uint(l) - 1u, base, shift, left_cnt, left_cnt_prev, right_cnt_prev));
+
+    uint out_k;
+    uint out_v;
+    bool left_valid = uint(l) < left_cnt;
+    bool right_valid = (lid >= uint(l) + 1u) && (lid - uint(l) - 1u < right_cnt);
+    if (left_valid) {
+        uint lk = get_key(uint(l), base, shift, left_cnt, left_cnt_prev, right_cnt_prev);
+        uint lv = get_val(uint(l), base, shift, left_cnt, left_cnt_prev, right_cnt_prev);
+        if (right_valid) {
+            uint rk = get_key(left_cnt + lid - uint(l) - 1u, base, shift, left_cnt, left_cnt_prev, right_cnt_prev);
+            uint rv = get_val(left_cnt + lid - uint(l) - 1u, base, shift, left_cnt, left_cnt_prev, right_cnt_prev);
+            if (lk >= rk) { out_k = lk; out_v = lv; } else { out_k = rk; out_v = rv; }
+        } else {
+            out_k = lk; out_v = lv;
+        }
+    } else {
+        out_k = get_key(left_cnt + lid - uint(l) - 1u, base, shift, left_cnt, left_cnt_prev, right_cnt_prev);
+        out_v = get_val(left_cnt + lid - uint(l) - 1u, base, shift, left_cnt, left_cnt_prev, right_cnt_prev);
+    }
+
+    out_keys[gid] = out_k;
+    out_vals[gid] = out_v;
+}

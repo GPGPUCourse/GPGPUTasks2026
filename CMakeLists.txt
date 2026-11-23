@@ -81,6 +81,12 @@ endforeach()
 # Обратите внимание что это происходит на этапе компиляции, кроме того эта команда делает так чтобы файл src/kernels/vk/aplusb_comp.h был перечислен среди HEADERS для компиляции при вызове add_executable
 set(VULKAN_SOURCES
         src/kernels/vk/aplusb.comp
+        src/kernels/vk/lbvh_build_internal.comp
+        src/kernels/vk/lbvh_init.comp
+        src/kernels/vk/lbvh_refit.comp
+        src/kernels/vk/lbvh_sort_group_diag.comp
+        src/kernels/vk/lbvh_sort_merge.comp
+        src/kernels/vk/lbvh_sort_one_group.comp
         src/kernels/vk/ray_tracing_render_brute_force.comp
         src/kernels/vk/ray_tracing_render_using_lbvh.comp)
 

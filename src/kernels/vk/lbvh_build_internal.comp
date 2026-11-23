@@ -1,0 +1,108 @@
+#version 450
+
+#include <libgpu/vulkan/vk/common.vk>
+
+#include "../defines.h"
+#include "../shared_structs/aabb_gpu_shared.h"
+#include "../shared_structs/bvh_node_gpu_shared.h"
+
+layout (std430, binding = 0) readonly buffer MortonKeysBuf { uint mortonKeys[]; };
+layout (std430, binding = 1) buffer BvhNodesOut           { BVHNodeGPU bvhNodes[]; };
+layout (std430, binding = 2) buffer ParentsBuf             { uint parents[]; };
+
+layout (push_constant) uniform PushConstants
+{
+    uint nfaces;
+} params;
+
+layout (local_size_x = GROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
+
+const uint INVALID_NODE = 0xFFFFFFFFu;
+
+int clz32(uint x) {
+    if (x == 0u) return 32;
+    return 31 - findMSB(x);
+}
+
+int common_prefix(int N, int i, int j) {
+    if (j < 0 || j >= N) return -1;
+    uint ci = mortonKeys[uint(i)];
+    uint cj = mortonKeys[uint(j)];
+    if (ci == cj) return 32 + clz32(uint(i) ^ uint(j));
+    return clz32(ci ^ cj);
+}
+
+void determine_range(int N, int i, out int outFirst, out int outLast) {
+    int cpL = common_prefix(N, i, i - 1);
+    int cpR = common_prefix(N, i, i + 1);
+    int d = (cpR > cpL) ? 1 : -1;
+
+    int deltaMin = common_prefix(N, i, i - d);
+    int lmax = 2;
+    while (common_prefix(N, i, i + lmax * d) > deltaMin) {
+        lmax <<= 1;
+    }
+
+    int l = 0;
+    for (int t = lmax >> 1; t > 0; t >>= 1) {
+        if (common_prefix(N, i, i + (l + t) * d) > deltaMin) {
+            l += t;
+        }
+    }
+
+    int j = i + l * d;
+    outFirst = min(i, j);
+    outLast  = max(i, j);
+}
+
+int find_split(int N, int first, int last) {
+    if (first == last) return first;
+    int commonPrefix = common_prefix(N, first, last);
+    int split = first;
+    int step  = last - first;
+    do {
+        step = (step + 1) >> 1;
+        int newSplit = split + step;
+        if (newSplit < last) {
+            int splitPrefix = common_prefix(N, first, newSplit);
+            if (splitPrefix > commonPrefix) {
+                split = newSplit;
+            }
+        }
+    } while (step > 1);
+    return split;
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    int N = int(params.nfaces);
+
+    if (N <= 0) return;
+
+    if (N == 1) {
+        if (i == 0u) {
+            bvhNodes[0].leftChildIndex = INVALID_NODE;
+            bvhNodes[0].rightChildIndex = INVALID_NODE;
+            parents[0] = INVALID_NODE;
+        }
+        return;
+    }
+
+    if (i >= uint(N - 1)) return;
+
+    if (i == 0u) {
+        parents[0] = INVALID_NODE;
+    }
+
+    int first, last;
+    determine_range(N, int(i), first, last);
+    int split = find_split(N, first, last);
+
+    int leftIndex  = (split == first)    ? (N - 1 + split)     : split;
+    int rightIndex = (split + 1 == last) ? (N - 1 + split + 1) : (split + 1);
+
+    bvhNodes[i].leftChildIndex  = uint(leftIndex);
+    bvhNodes[i].rightChildIndex = uint(rightIndex);
+    parents[uint(leftIndex)] = i;
+    parents[uint(rightIndex)] = i;
+}

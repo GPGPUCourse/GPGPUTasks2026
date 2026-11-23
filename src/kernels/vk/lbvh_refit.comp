@@ -1,0 +1,92 @@
+#version 450
+
+#include <libgpu/vulkan/vk/common.vk>
+
+#include "../defines.h"
+#include "../shared_structs/aabb_gpu_shared.h"
+#include "../shared_structs/bvh_node_gpu_shared.h"
+
+layout (std430, binding = 0) readonly buffer FacesIn    { uint faces[]; };
+layout (std430, binding = 1) readonly buffer VerticesIn { float vertices[]; };
+layout (std430, binding = 2) coherent buffer BvhNodesOut         { BVHNodeGPU bvhNodes[]; };
+layout (std430, binding = 3) readonly buffer LeafTriIndicesIn { uint leafTriIndices[]; };
+layout (std430, binding = 4) coherent buffer RefitCountersBuf     { uint refitCounters[]; };
+layout (std430, binding = 5) readonly buffer ParentsBuf   { uint parents[]; };
+
+layout (push_constant) uniform PushConstants
+{
+    uint nfaces;
+} params;
+
+layout (local_size_x = GROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
+
+const uint INVALID_NODE = 0xFFFFFFFFu;
+
+vec3 loadVertex(uint vi) {
+    uint base = 3u * vi;
+    return vec3(vertices[base + 0u], vertices[base + 1u], vertices[base + 2u]);
+}
+
+uvec3 loadFace(uint fi) {
+    uint base = 3u * fi;
+    return uvec3(faces[base + 0u], faces[base + 1u], faces[base + 2u]);
+}
+
+AABBGPU triangle_aabb(uvec3 f) {
+    vec3 v0 = loadVertex(f.x);
+    vec3 v1 = loadVertex(f.y);
+    vec3 v2 = loadVertex(f.z);
+    AABBGPU aabb;
+    aabb.min_x = min(min(v0.x, v1.x), v2.x);
+    aabb.min_y = min(min(v0.y, v1.y), v2.y);
+    aabb.min_z = min(min(v0.z, v1.z), v2.z);
+    aabb.max_x = max(max(v0.x, v1.x), v2.x);
+    aabb.max_y = max(max(v0.y, v1.y), v2.y);
+    aabb.max_z = max(max(v0.z, v1.z), v2.z);
+    return aabb;
+}
+
+AABBGPU aabb_union(AABBGPU a, AABBGPU b) {
+    AABBGPU r;
+    r.min_x = min(a.min_x, b.min_x);
+    r.min_y = min(a.min_y, b.min_y);
+    r.min_z = min(a.min_z, b.min_z);
+    r.max_x = max(a.max_x, b.max_x);
+    r.max_y = max(a.max_y, b.max_y);
+    r.max_z = max(a.max_z, b.max_z);
+    return r;
+}
+
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    int N = int(params.nfaces);
+    if (i >= uint(N)) return;
+
+    uint leafIndex = uint(N - 1) + i;
+    uint tri = leafTriIndices[i];
+    bvhNodes[leafIndex].aabb = triangle_aabb(loadFace(tri));
+    bvhNodes[leafIndex].leftChildIndex = INVALID_NODE;
+    bvhNodes[leafIndex].rightChildIndex = INVALID_NODE;
+
+    if (N <= 1) return;
+
+    uint node = leafIndex;
+    uint parent = parents[node];
+    while (parent != INVALID_NODE) {
+        memoryBarrierBuffer();
+        uint old = atomicAdd(refitCounters[parent], 1u);
+        if (old == 0u) {
+            return;
+        }
+
+        memoryBarrierBuffer();
+        BVHNodeGPU pnode = bvhNodes[parent];
+        AABBGPU leftAabb  = bvhNodes[pnode.leftChildIndex].aabb;
+        AABBGPU rightAabb = bvhNodes[pnode.rightChildIndex].aabb;
+        pnode.aabb = aabb_union(leftAabb, rightAabb);
+        bvhNodes[parent] = pnode;
+
+        node = parent;
+        parent = parents[node];
+    }
+}

@@ -33,6 +33,12 @@ const ProgramBinaries& getRTWithLBVH();
 namespace avk2 {
 const ProgramBinaries& getAplusB();
 
+const ProgramBinaries& getLBVHBuildInternal();
+const ProgramBinaries& getLBVHInit();
+const ProgramBinaries& getLBVHRefit();
+const ProgramBinaries& getLBVHSortGroupDiag();
+const ProgramBinaries& getLBVHSortMerge();
+const ProgramBinaries& getLBVHSortOneGroup();
 const ProgramBinaries& getRTBruteForce();
 const ProgramBinaries& getRTWithLBVH();
 }

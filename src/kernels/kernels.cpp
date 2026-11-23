@@ -5,6 +5,12 @@
 #include "cl/generated_kernels/ray_tracing_render_using_lbvh.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
+#include "vk/generated_kernels/lbvh_build_internal_comp.h"
+#include "vk/generated_kernels/lbvh_init_comp.h"
+#include "vk/generated_kernels/lbvh_refit_comp.h"
+#include "vk/generated_kernels/lbvh_sort_group_diag_comp.h"
+#include "vk/generated_kernels/lbvh_sort_merge_comp.h"
+#include "vk/generated_kernels/lbvh_sort_one_group_comp.h"
 #include "vk/generated_kernels/ray_tracing_render_brute_force_comp.h"
 #include "vk/generated_kernels/ray_tracing_render_using_lbvh_comp.h"
 
@@ -61,6 +67,36 @@ namespace avk2 {
 const ProgramBinaries& getAplusB()
 {
     return vulkan_binaries_aplusb_comp;
+}
+
+const ProgramBinaries& getLBVHBuildInternal()
+{
+    return vulkan_binaries_lbvh_build_internal_comp;
+}
+
+const ProgramBinaries& getLBVHInit()
+{
+    return vulkan_binaries_lbvh_init_comp;
+}
+
+const ProgramBinaries& getLBVHRefit()
+{
+    return vulkan_binaries_lbvh_refit_comp;
+}
+
+const ProgramBinaries& getLBVHSortGroupDiag()
+{
+    return vulkan_binaries_lbvh_sort_group_diag_comp;
+}
+
+const ProgramBinaries& getLBVHSortMerge()
+{
+    return vulkan_binaries_lbvh_sort_merge_comp;
+}
+
+const ProgramBinaries& getLBVHSortOneGroup()
+{
+    return vulkan_binaries_lbvh_sort_one_group_comp;
 }
 
 const ProgramBinaries& getRTBruteForce()

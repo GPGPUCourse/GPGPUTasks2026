@@ -1,0 +1,43 @@
+#version 450
+
+#include <libgpu/vulkan/vk/common.vk>
+
+#include "../defines.h"
+
+layout (std430, binding = 0) readonly  buffer KeysIn    { uint input_keys[]; };
+layout (std430, binding = 1) writeonly buffer GroupDiags { uint group_diags[]; };
+
+layout (push_constant) uniform PushConstants {
+    int iter;
+    int n;
+} params;
+
+layout (local_size_x = GROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
+
+void main() {
+    const uint gid = gl_GlobalInvocationID.x;
+    if (gid * GROUP_SIZE >= uint(params.n)) {
+        return;
+    }
+
+    const uint base = (gid * GROUP_SIZE) & ~((uint(1) << uint(params.iter + 1)) - 1u);
+    const uint d = (gid * GROUP_SIZE) & ((uint(1) << uint(params.iter + 1)) - 1u);
+    const int shift = (1 << params.iter);
+
+    const uint block_len = min(uint(1) << uint(params.iter + 1), uint(params.n) - base);
+    const uint left_cnt = min(uint(1) << uint(params.iter), block_len);
+    const uint right_cnt = block_len - left_cnt;
+
+    int l = int(max(0, int(d) - int(right_cnt))) - 1;
+    int r = int(min(d, left_cnt)) + 1;
+    while (l + 1 < r) {
+        int m = (l + r) / 2;
+        if (m == 0 || d - uint(m) >= right_cnt || input_keys[base + uint(m - 1)] <= input_keys[base + uint(shift) + d - uint(m)]) {
+            l = m;
+        } else {
+            r = m;
+        }
+    }
+
+    group_diags[gid] = uint(l);
+}

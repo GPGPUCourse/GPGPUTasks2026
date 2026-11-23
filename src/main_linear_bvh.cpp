@@ -17,6 +17,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <limits>
 
 // Считает сколько непустых пикселей
 template<typename T>
@@ -78,6 +79,12 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_rt_brute_force(ocl::getRTBruteForce());
     ocl::KernelSource ocl_rt_with_lbvh(ocl::getRTWithLBVH());
 
+    avk2::KernelSource vk_lbvh_init(avk2::getLBVHInit());
+    avk2::KernelSource vk_lbvh_build_internal(avk2::getLBVHBuildInternal());
+    avk2::KernelSource vk_lbvh_refit(avk2::getLBVHRefit());
+    avk2::KernelSource vk_lbvh_sort_one_group(avk2::getLBVHSortOneGroup());
+    avk2::KernelSource vk_lbvh_sort_group_diag(avk2::getLBVHSortGroupDiag());
+    avk2::KernelSource vk_lbvh_sort_merge(avk2::getLBVHSortMerge());
     avk2::KernelSource vk_rt_brute_force(avk2::getRTBruteForce());
     avk2::KernelSource vk_rt_with_lbvh(avk2::getRTWithLBVH());
 
@@ -285,19 +292,153 @@ void run(int argc, char** argv)
         double gpu_lbvh_time_sum = 0.0;
         double rt_times_with_gpu_lbvh_sum = 0.0;
 
-        // TODO постройте LBVH на GPU
-        // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
+        bool gpu_lbvg_gpu_rt_done = true;
 
         if (gpu_lbvg_gpu_rt_done) {
+            gpu::shared_device_buffer_typed<BVHNodeGPU> lbvh_nodes_gpu(2 * nfaces - 1);
+            gpu::gpu_mem_32u leaf_faces_indices_gpu(nfaces);
+            gpu::gpu_mem_32u morton_keys_gpu(nfaces);
+            gpu::gpu_mem_32u morton_vals_gpu(nfaces);
+            gpu::gpu_mem_32u sort_keys_tmp_gpu(nfaces);
+            gpu::gpu_mem_32u sort_vals_tmp_gpu(nfaces);
+            gpu::gpu_mem_32u sort_group_diag_gpu(std::max(1u, (nfaces + GROUP_SIZE - 1) / GROUP_SIZE + 1));
+            gpu::gpu_mem_32u refit_counters_gpu(std::max(1u, nfaces > 0 ? nfaces - 1 : 0));
+            gpu::gpu_mem_32u parents_gpu(std::max(1u, 2 * nfaces - 1));
+
+            struct LBVHInitPush {
+                unsigned int nfaces;
+                float cMinX, cMinY, cMinZ;
+                float cMaxX, cMaxY, cMaxZ;
+            };
+            struct LBVHBuildPush {
+                unsigned int nfaces;
+            };
+            struct SortPush {
+                int n;
+            };
+            struct SortIterPush {
+                int iter;
+                int n;
+            };
+
+            auto computeCentroidBounds = [&]() {
+                point3f cMin{+std::numeric_limits<float>::infinity(),
+                             +std::numeric_limits<float>::infinity(),
+                             +std::numeric_limits<float>::infinity()};
+                point3f cMax{-std::numeric_limits<float>::infinity(),
+                             -std::numeric_limits<float>::infinity(),
+                             -std::numeric_limits<float>::infinity()};
+                for (unsigned int i = 0; i < nfaces; ++i) {
+                    const point3u& f = scene.faces[i];
+                    const point3f& v0 = scene.vertices[f.x];
+                    const point3f& v1 = scene.vertices[f.y];
+                    const point3f& v2 = scene.vertices[f.z];
+                    point3f c{
+                        (v0.x + v1.x + v2.x) / 3.0f,
+                        (v0.y + v1.y + v2.y) / 3.0f,
+                        (v0.z + v1.z + v2.z) / 3.0f
+                    };
+                    cMin.x = std::min(cMin.x, c.x);
+                    cMin.y = std::min(cMin.y, c.y);
+                    cMin.z = std::min(cMin.z, c.z);
+                    cMax.x = std::max(cMax.x, c.x);
+                    cMax.y = std::max(cMax.y, c.y);
+                    cMax.z = std::max(cMax.z, c.z);
+                }
+                LBVHInitPush p{};
+                p.nfaces = nfaces;
+                p.cMinX = cMin.x; p.cMinY = cMin.y; p.cMinZ = cMin.z;
+                p.cMaxX = cMax.x; p.cMaxY = cMax.y; p.cMaxZ = cMax.z;
+                return p;
+            };
+
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO постройте LBVH на GPU
+                LBVHInitPush initPush = computeCentroidBounds();
+                LBVHBuildPush buildPush{nfaces};
+
+                vk_lbvh_init.exec(
+                        initPush,
+                        gpu::WorkSize(GROUP_SIZE, 1, nfaces, 1),
+                        vertices_gpu, faces_gpu,
+                        morton_keys_gpu, leaf_faces_indices_gpu, refit_counters_gpu);
+
+                int numGroups = (int(nfaces) + GROUP_SIZE - 1) / GROUP_SIZE;
+                vk_lbvh_sort_one_group.exec(
+                        SortPush{(int)nfaces},
+                        gpu::WorkSize(GROUP_SIZE, 1, (unsigned int)numGroups * GROUP_SIZE, 1),
+                        morton_keys_gpu, leaf_faces_indices_gpu,
+                        morton_vals_gpu, sort_vals_tmp_gpu);
+                gpu::gpu_mem_32u* inK = &morton_vals_gpu;
+                gpu::gpu_mem_32u* inV = &sort_vals_tmp_gpu;
+                gpu::gpu_mem_32u* outK = &sort_keys_tmp_gpu;
+                gpu::gpu_mem_32u* outV = &leaf_faces_indices_gpu;
+
+                int num = numGroups;
+                int iSort = GROUP_SHIFT;
+                gpu::gpu_mem_32u* finalK = &morton_vals_gpu;
+                gpu::gpu_mem_32u* finalV = &sort_vals_tmp_gpu;
+                while (num > 1) {
+                    bool last = ((num + 1) / 2 == 1);
+                    gpu::gpu_mem_32u& curK = *inK;
+                    gpu::gpu_mem_32u& curV = *inV;
+                    gpu::gpu_mem_32u& nxtK = last ? morton_keys_gpu : *outK;
+                    gpu::gpu_mem_32u& nxtV = last
+                        ? ((&curV == &leaf_faces_indices_gpu) ? *outV : leaf_faces_indices_gpu)
+                        : *outV;
+
+                    unsigned int numDiagGroups = (nfaces + GROUP_SIZE - 1) / GROUP_SIZE;
+                    unsigned int diagGlobal = ((numDiagGroups + GROUP_SIZE - 1) / GROUP_SIZE) * GROUP_SIZE;
+                    vk_lbvh_sort_group_diag.exec(
+                            SortIterPush{iSort, (int)nfaces},
+                            gpu::WorkSize(GROUP_SIZE, 1, diagGlobal, 1),
+                            curK, sort_group_diag_gpu);
+
+                    vk_lbvh_sort_merge.exec(
+                            SortIterPush{iSort, (int)nfaces},
+                            gpu::WorkSize(GROUP_SIZE, 1, nfaces, 1),
+                            curK, curV, sort_group_diag_gpu, nxtK, nxtV);
+
+                    finalK = &nxtK;
+                    finalV = &nxtV;
+                    if (!last) {
+                        std::swap(inK, outK);
+                        std::swap(inV, outV);
+                    }
+                    num = (num + 1) / 2;
+                    ++iSort;
+                }
+
+                if (numGroups <= 1) {
+                    finalK = &morton_vals_gpu;
+                    finalV = &sort_vals_tmp_gpu;
+                }
+                if (finalK != &morton_keys_gpu) {
+                    std::vector<unsigned int> tmpK(nfaces);
+                    finalK->readN(tmpK.data(), nfaces);
+                    morton_keys_gpu.writeN(tmpK.data(), nfaces);
+                }
+                if (finalV != &leaf_faces_indices_gpu) {
+                    std::vector<unsigned int> tmpV(nfaces);
+                    finalV->readN(tmpV.data(), nfaces);
+                    leaf_faces_indices_gpu.writeN(tmpV.data(), nfaces);
+                }
+
+                vk_lbvh_build_internal.exec(
+                        buildPush,
+                        gpu::WorkSize(GROUP_SIZE, 1, std::max(1u, nfaces - 1), 1),
+                        morton_keys_gpu, lbvh_nodes_gpu, parents_gpu);
+
+                vk_lbvh_refit.exec(
+                        buildPush,
+                        gpu::WorkSize(GROUP_SIZE, 1, nfaces, 1),
+                        faces_gpu, vertices_gpu, lbvh_nodes_gpu, leaf_faces_indices_gpu, refit_counters_gpu, parents_gpu);
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
+
             gpu_lbvh_time_sum = stats::sum(gpu_lbvh_times);
             double build_mtris_per_sec = nfaces * 1e-6f / stats::median(gpu_lbvh_times);
             std::cout << "GPU LBVH build times (in seconds) - " << stats::valuesStatsLine(gpu_lbvh_times) << std::endl;
@@ -313,7 +454,31 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                if (context.type() == gpu::Context::TypeOpenCL) {
+                    ocl_rt_with_lbvh.exec(
+                        gpu::WorkSize(16, 16, width, height),
+                        vertices_gpu, faces_gpu,
+                        lbvh_nodes_gpu.clmem(), leaf_faces_indices_gpu.clmem(),
+                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                        camera_gpu.clmem(), nfaces);
+                } else if (context.type() == gpu::Context::TypeCUDA) {
+                    cuda::ray_tracing_render_using_lbvh(
+                        gpu::WorkSize(16, 16, width, height),
+                        vertices_gpu, faces_gpu,
+                        lbvh_nodes_gpu, leaf_faces_indices_gpu,
+                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                        camera_gpu, nfaces);
+                } else if (context.type() == gpu::Context::TypeVulkan) {
+                    vk_rt_with_lbvh.exec(
+                        nfaces,
+                        gpu::WorkSize(16, 16, width, height),
+                        vertices_gpu, faces_gpu,
+                        lbvh_nodes_gpu, leaf_faces_indices_gpu,
+                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                        camera_gpu);
+                } else {
+                    rassert(false, 654724541234123);
+                }
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }

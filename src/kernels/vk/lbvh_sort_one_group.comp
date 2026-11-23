@@ -1,0 +1,101 @@
+#version 450
+
+#include <libgpu/vulkan/vk/common.vk>
+
+#include "../defines.h"
+
+layout (std430, binding = 0) readonly  buffer KeysIn   { uint in_keys[];  };
+layout (std430, binding = 1) readonly  buffer ValsIn   { uint in_vals[];  };
+layout (std430, binding = 2) writeonly buffer KeysOut  { uint out_keys[]; };
+layout (std430, binding = 3) writeonly buffer ValsOut  { uint out_vals[]; };
+
+layout (push_constant) uniform PushConstants {
+    int n;
+} params;
+
+layout (local_size_x = GROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
+
+shared uint bufK1[GROUP_SIZE];
+shared uint bufK2[GROUP_SIZE];
+shared uint bufV1[GROUP_SIZE];
+shared uint bufV2[GROUP_SIZE];
+
+void main() {
+    const uint gid = gl_GlobalInvocationID.x;
+    const uint x = gl_LocalInvocationID.x;
+    const uint group_base = gl_WorkGroupID.x * GROUP_SIZE;
+
+    for (int iter = 0; iter < GROUP_SHIFT; ++iter) {
+        const uint y = x ^ (uint(1) << uint(iter));
+
+        uint vx;
+        uint vv;
+        if (iter == 0) {
+            uint idx = group_base + x;
+            bool inRange = idx < uint(params.n);
+            vx = inRange ? in_keys[idx] : 0xFFFFFFFFu;
+            vv = inRange ? in_vals[idx] : 0u;
+        } else if ((iter & 1) == 1) {
+            vx = bufK1[x];
+            vv = bufV1[x];
+        } else {
+            vx = bufK2[x];
+            vv = bufV2[x];
+        }
+
+        const bool on_right = ((x >> uint(iter)) & 1u) != 0u;
+        const uint base = x & ~((uint(1) << uint(iter + 1)) - 1u);
+        const uint this_base = x & ~((uint(1) << uint(iter)) - 1u);
+        const uint other_base = y & ~((uint(1) << uint(iter)) - 1u);
+
+        uint l = 0u;
+        uint r = uint(1) << uint(iter);
+
+        for (int i = 0; i < iter; ++i) {
+            const uint m = (l + r) / 2u;
+            uint vm;
+            if (iter == 0) {
+                uint idx = group_base + other_base + m;
+                vm = (idx < uint(params.n)) ? in_keys[idx] : 0xFFFFFFFFu;
+            } else if ((iter & 1) == 1) {
+                vm = bufK1[other_base + m];
+            } else {
+                vm = bufK2[other_base + m];
+            }
+            if (vm < vx || (on_right && vm == vx)) {
+                l = m;
+            } else {
+                r = m;
+            }
+        }
+
+        uint vl;
+        if (iter == 0) {
+            uint idx = group_base + other_base + l;
+            vl = (idx < uint(params.n)) ? in_keys[idx] : 0xFFFFFFFFu;
+        } else if ((iter & 1) == 1) {
+            vl = bufK1[other_base + l];
+        } else {
+            vl = bufK2[other_base + l];
+        }
+
+        const uint found = (vl < vx || (on_right && vl == vx)) ? r : l;
+        const uint idxOut = found + (x - this_base) + base;
+
+        if (iter == GROUP_SHIFT - 1) {
+            uint outIdx = group_base + idxOut;
+            if (outIdx < uint(params.n)) {
+                out_keys[outIdx] = vx;
+                out_vals[outIdx] = vv;
+            }
+        } else if ((iter & 1) == 0) {
+            bufK1[idxOut] = vx;
+            bufV1[idxOut] = vv;
+        } else {
+            bufK2[idxOut] = vx;
+            bufV2[idxOut] = vv;
+        }
+
+        barrier();
+    }
+}
