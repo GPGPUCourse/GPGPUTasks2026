@@ -14,6 +14,7 @@
 #include "io/scene_reader.h"
 
 #include "cpu_helpers/build_bvh_cpu.h"
+#include "cpu_helpers/denoise_ao.h"
 
 #include <filesystem>
 #include <fstream>
@@ -81,7 +82,6 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_reduce_centroids(ocl::getBuildLBVH(), "reduce_centroids");
     ocl::KernelSource ocl_reduce_bounds(ocl::getBuildLBVH(), "reduce_bounds");
     ocl::KernelSource ocl_make_morton_codes(ocl::getBuildLBVH(), "make_morton_codes");
-    ocl::KernelSource ocl_build_lbvh_leaves(ocl::getBuildLBVH(), "build_lbvh_leaves");
     ocl::KernelSource ocl_build_lbvh_nodes(ocl::getBuildLBVH(), "build_lbvh_nodes");
     ocl::KernelSource ocl_propagate_lbvh_bounds(ocl::getBuildLBVH(), "propagate_lbvh_bounds");
 
@@ -171,20 +171,20 @@ void run(int argc, char** argv)
 
                 if (context.type() == gpu::Context::TypeOpenCL) {
                     ocl_rt_brute_force.exec(
-                        gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height),
+                        gpu::WorkSize(16, 16, width, height),
                         vertices_gpu, faces_gpu,
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
                         camera_gpu.clmem(), nfaces);
                 } else if (context.type() == gpu::Context::TypeCUDA) {
                     cuda::ray_tracing_render_brute_force(
-                        gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height),
+                        gpu::WorkSize(16, 16, width, height),
                         vertices_gpu, faces_gpu,
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
                         camera_gpu, nfaces);
                 } else if (context.type() == gpu::Context::TypeVulkan) {
                     vk_rt_brute_force.exec(
                         nfaces,
-                        gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height),
+                        gpu::WorkSize(16, 16, width, height),
                         vertices_gpu, faces_gpu,
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
                         camera_gpu);
@@ -243,14 +243,14 @@ void run(int argc, char** argv)
 
                 if (context.type() == gpu::Context::TypeOpenCL) {
                     ocl_rt_with_lbvh.exec(
-                        gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height),
+                        gpu::WorkSize(16, 16, width, height),
                         vertices_gpu, faces_gpu,
                         lbvh_nodes_gpu.clmem(), leaf_faces_indices_gpu.clmem(),
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
                         camera_gpu.clmem(), nfaces);
                 } else if (context.type() == gpu::Context::TypeCUDA) {
                     cuda::ray_tracing_render_using_lbvh(
-                        gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height),
+                        gpu::WorkSize(16, 16, width, height),
                         vertices_gpu, faces_gpu,
                         lbvh_nodes_gpu, leaf_faces_indices_gpu,
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
@@ -258,7 +258,7 @@ void run(int argc, char** argv)
                 } else if (context.type() == gpu::Context::TypeVulkan) {
                     vk_rt_with_lbvh.exec(
                         nfaces,
-                        gpu::WorkSize(GROUP_SIZE_X, GROUP_SIZE_Y, width, height),
+                        gpu::WorkSize(16, 16, width, height),
                         vertices_gpu, faces_gpu,
                         lbvh_nodes_gpu, leaf_faces_indices_gpu,
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
@@ -307,13 +307,11 @@ void run(int argc, char** argv)
             gpu::gpu_mem_32u morton_codes_tmp_gpu(nfaces);
 
             std::vector<gpu::shared_device_buffer_typed<AABBGPU>> centroid_bounds_gpu;
-            for (unsigned int count = nfaces;;) {
-                count = (count - 1) / GROUP_SIZE + 1;
-                centroid_bounds_gpu.emplace_back(count);
-                if (count == 1) {
-                    break;
-                }
-            }
+            unsigned int centroid_count = nfaces;
+            do {
+                centroid_count = (centroid_count - 1) / GROUP_SIZE + 1;
+                centroid_bounds_gpu.emplace_back(centroid_count);
+            } while (centroid_count > 1);
 
             unsigned int tiles = (nfaces + 4 * GROUP_SIZE - 1) / (4 * GROUP_SIZE);
             gpu::gpu_mem_32u counts_gpu(16 * tiles);
@@ -363,10 +361,9 @@ void run(int argc, char** argv)
                     ocl_radix_sort_04.execAsynchronized(tiles_ws, src, src_ids, counts_gpu, dst, dst_ids, nfaces, shift);
                 }
 
-                ocl_build_lbvh_leaves.execAsynchronized(faces_ws, vertices_gpu, faces_gpu, leaf_faces_indices_gpu, lbvh_nodes_gpu.clmem(), nfaces);
+                ocl_build_lbvh_nodes.execAsynchronized(faces_ws, vertices_gpu, faces_gpu, leaf_faces_indices_gpu,
+                                                      morton_codes_gpu, lbvh_nodes_gpu.clmem(), parents_gpu, arrivals_gpu, nfaces);
                 if (nfaces > 1) {
-                    gpu::WorkSize nodes_ws(GROUP_SIZE, nfaces - 1);
-                    ocl_build_lbvh_nodes.execAsynchronized(nodes_ws, morton_codes_gpu, lbvh_nodes_gpu.clmem(), parents_gpu, arrivals_gpu, nfaces);
                     ocl_propagate_lbvh_bounds.execAsynchronized(faces_ws, lbvh_nodes_gpu.clmem(), parents_gpu, arrivals_gpu, nfaces);
                 }
                 OCL_SAFE_CALL(clFinish(context.cl()->queue()));
@@ -420,6 +417,7 @@ void run(int argc, char** argv)
                 rassert(count_ao_errors < width * height / 100, 3567856512354123, count_ao_errors, to_percent(count_ao_errors, width * height));
                 rassert(count_face_id_errors < width * height / 100, 3453465346387, count_face_id_errors, to_percent(count_face_id_errors, width * height));
             }
+            saveDenoisedAO(gpu_lbvh_framebuffer_ambient_occlusion, gpu_lbvh_framebuffer_face_ids, NO_FACE_ID, results_dir);
         }
 
         double total_time = total_t.elapsed();

@@ -47,7 +47,7 @@ static inline float3 triangle_box_center(__global const float* vertices, __globa
     return 0.5f * ((float3)(box.min_x, box.min_y, box.min_z) + (float3)(box.max_x, box.max_y, box.max_z));
 }
 
-static inline AABBGPU reduce_local_bounds(AABBGPU box, __local AABBGPU* bounds)
+static inline void reduce_local_bounds(AABBGPU box, __local AABBGPU* bounds)
 {
     uint tid = get_local_id(0);
     bounds[tid] = box;
@@ -57,8 +57,6 @@ static inline AABBGPU reduce_local_bounds(AABBGPU box, __local AABBGPU* bounds)
             bounds[tid] = union_bounds(bounds[tid], bounds[tid + stride]);
         }
     }
-    barrier(CLK_LOCAL_MEM_FENCE);
-    return bounds[0];
 }
 
 __attribute__((reqd_work_group_size(GROUP_SIZE, 1, 1)))
@@ -77,9 +75,9 @@ __kernel void reduce_centroids(
         box.min_y = box.max_y = centroid.y;
         box.min_z = box.max_z = centroid.z;
     }
-    box = reduce_local_bounds(box, bounds);
+    reduce_local_bounds(box, bounds);
     if (get_local_id(0) == 0) {
-        group_bounds[get_group_id(0)] = box;
+        group_bounds[get_group_id(0)] = bounds[0];
     }
 }
 
@@ -95,9 +93,9 @@ __kernel void reduce_bounds(
     if (i < count) {
         box = input[i];
     }
-    box = reduce_local_bounds(box, bounds);
+    reduce_local_bounds(box, bounds);
     if (get_local_id(0) == 0) {
-        output[get_group_id(0)] = box;
+        output[get_group_id(0)] = bounds[0];
     }
 }
 
@@ -134,22 +132,6 @@ __kernel void make_morton_codes(
     triangle_ids[i] = i;
 }
 
-__kernel void build_lbvh_leaves(
-    __global const float* vertices,
-    __global const uint* faces,
-    __global const uint* sorted_ids,
-    __global BVHNodeGPU* nodes,
-    uint nfaces)
-{
-    uint i = get_global_id(0);
-    if (i >= nfaces) {
-        return;
-    }
-    nodes[nfaces - 1 + i].aabb = triangle_bounds(vertices, faces, sorted_ids[i]);
-    nodes[nfaces - 1 + i].leftChildIndex = 0xFFFFFFFFu;
-    nodes[nfaces - 1 + i].rightChildIndex = 0xFFFFFFFFu;
-}
-
 static inline int lbvh_common_prefix(__global const uint* codes, int nfaces, int i, int j)
 {
     if (j < 0 || j >= nfaces) {
@@ -163,6 +145,9 @@ static inline int lbvh_common_prefix(__global const uint* codes, int nfaces, int
 }
 
 __kernel void build_lbvh_nodes(
+    __global const float* vertices,
+    __global const uint* faces,
+    __global const uint* sorted_ids,
     __global const uint* sorted_codes,
     __global BVHNodeGPU* nodes,
     __global uint* parents,
@@ -170,6 +155,10 @@ __kernel void build_lbvh_nodes(
     uint nfaces)
 {
     int i = get_global_id(0);
+    if (i >= (int)nfaces) {
+        return;
+    }
+    nodes[nfaces - 1 + i] = (BVHNodeGPU){triangle_bounds(vertices, faces, sorted_ids[i]), 0xFFFFFFFFu, 0xFFFFFFFFu};
     if (i >= (int)nfaces - 1) {
         return;
     }
