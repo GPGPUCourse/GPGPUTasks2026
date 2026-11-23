@@ -16,6 +16,16 @@ void aplusb(const gpu::WorkSize& workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
+void build_lbvh(const gpu::WorkSize &workSize,
+    const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
+    gpu::shared_device_buffer_typed<BVHNodeGPU> &nodes,
+    gpu::gpu_mem_32u &leafTriIndices, unsigned int nfaces,
+    float minX, float minY, float minZ,
+    float maxX, float maxY, float maxZ)
+{
+    // dummy implementation if CUDA_SUPPORT is disabled
+    rassert(false, 54623523412413);
+}
 void ray_tracing_render_brute_force(const gpu::WorkSize &workSize,
     const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
     gpu::gpu_mem_32i &framebuffer_face_id,

@@ -67,7 +67,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -229,9 +229,6 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на CPU LBVH
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-
                 if (context.type() == gpu::Context::TypeOpenCL) {
                     ocl_rt_with_lbvh.exec(
                         gpu::WorkSize(16, 16, width, height),
@@ -288,16 +285,41 @@ void run(int argc, char** argv)
         double gpu_lbvh_time_sum = 0.0;
         double rt_times_with_gpu_lbvh_sum = 0.0;
 
-        // TODO постройте LBVH на GPU
-        // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
+        gpu::shared_device_buffer_typed<BVHNodeGPU> gpu_lbvh_nodes(2ull * nfaces - 1ull);
+        gpu::gpu_mem_32u gpu_leaf_faces_indices(nfaces);
+
+        // Morton coordinates use the scene bounds; all triangle centroids lie inside them.
+        point3f scene_min{std::numeric_limits<float>::max(),
+                          std::numeric_limits<float>::max(),
+                          std::numeric_limits<float>::max()};
+        point3f scene_max{-std::numeric_limits<float>::max(),
+                          -std::numeric_limits<float>::max(),
+                          -std::numeric_limits<float>::max()};
+        for (const point3f& vertex : scene.vertices) {
+            scene_min.x = std::min(scene_min.x, vertex.x);
+            scene_min.y = std::min(scene_min.y, vertex.y);
+            scene_min.z = std::min(scene_min.z, vertex.z);
+            scene_max.x = std::max(scene_max.x, vertex.x);
+            scene_max.y = std::max(scene_max.y, vertex.y);
+            scene_max.z = std::max(scene_max.z, vertex.z);
+        }
+
+        const bool gpu_lbvg_gpu_rt_done = (context.type() == gpu::Context::TypeCUDA);
 
         if (gpu_lbvg_gpu_rt_done) {
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
-
-                // TODO постройте LBVH на GPU
+                if (context.type() == gpu::Context::TypeCUDA) {
+                    cuda::build_lbvh(
+                        gpu::WorkSize(GROUP_SIZE, nfaces),
+                        vertices_gpu, faces_gpu,
+                        gpu_lbvh_nodes, gpu_leaf_faces_indices, nfaces,
+                        scene_min.x, scene_min.y, scene_min.z,
+                        scene_max.x, scene_max.y, scene_max.z);
+                } else {
+                    throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                }
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -316,7 +338,16 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                if (context.type() == gpu::Context::TypeCUDA) {
+                    cuda::ray_tracing_render_using_lbvh(
+                        gpu::WorkSize(16, 16, width, height),
+                        vertices_gpu, faces_gpu,
+                        gpu_lbvh_nodes, gpu_leaf_faces_indices,
+                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                        camera_gpu, nfaces);
+                } else {
+                    throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+                }
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }
