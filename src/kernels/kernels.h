@@ -24,6 +24,7 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
 }
 
 namespace ocl {
+const ProgramBinaries& getLBVHBuild();
 const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getRTBruteForce();
