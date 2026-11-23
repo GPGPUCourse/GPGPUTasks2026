@@ -336,9 +336,6 @@ namespace avk2 {
 		void							clearKernel(int id);
 		void							clearKernels();
 		void							clearStagingBuffers();
-		void							clearFences();
-
-		std::unordered_map<std::string, std::shared_ptr<vk::raii::Fence>>	fences_;
 
 		std::shared_ptr<VkContext>		avk2_context_;
 
@@ -350,11 +347,9 @@ namespace avk2 {
 		const unsigned int &					getQueueFamilyIndex();
 		vk::raii::Queue &						getQueue();
 
-		vk::raii::Fence &						findFence(const std::string &key);
-
 		vk::raii::CommandBuffer					createCommandBuffer();
-		void									submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer, vk::raii::Fence &fence);
-		void									submitCommandBufferAsync(const vk::raii::CommandBuffer &command_buffer, vk::raii::Fence &fence);
+		void									submitCommandBuffer(const vk::raii::CommandBuffer &command_buffer);
+		std::shared_ptr<vk::raii::Fence>		submitCommandBufferAsync(const vk::raii::CommandBuffer &command_buffer);
 		vk::raii::DescriptorSet					allocateDescriptor(vk::raii::DescriptorSetLayout& descriptor_set_layout, const std::vector<vk::DescriptorType> &descriptor_types);
 
 	protected:

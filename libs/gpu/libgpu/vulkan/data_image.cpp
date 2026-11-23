@@ -118,7 +118,7 @@ void avk2::raii::ImageData::transitionLayout(vk::ImageLayout old_layout, vk::Ima
 
 	command_buffer.end();
 
-	context.vk()->submitCommandBuffer(command_buffer, context.vk()->findFence("transitionLayout"));
+	context.vk()->submitCommandBuffer(command_buffer);
 
 	current_layout_ = new_layout;
 }
