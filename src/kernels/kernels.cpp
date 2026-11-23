@@ -7,6 +7,7 @@
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/ray_tracing_render_brute_force_comp.h"
 #include "vk/generated_kernels/ray_tracing_render_using_lbvh_comp.h"
+#include "cl/generated_kernels/build_lbvh.h"
 
 #ifndef CUDA_SUPPORT
 namespace cuda {
@@ -54,6 +55,11 @@ const ProgramBinaries& getRTBruteForce()
 const ProgramBinaries& getRTWithLBVH()
 {
     return opencl_binaries_ray_tracing_render_using_lbvh;
+}
+
+const ProgramBinaries& getBuildLBVH()
+{
+    return opencl_binaries_build_lbvh;
 }
 } // namespace ocl
 

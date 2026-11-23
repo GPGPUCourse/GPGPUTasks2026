@@ -77,15 +77,21 @@ void run(int argc, char** argv)
 
     ocl::KernelSource ocl_rt_brute_force(ocl::getRTBruteForce());
     ocl::KernelSource ocl_rt_with_lbvh(ocl::getRTWithLBVH());
+    ocl::KernelSource ocl_clean_counters(ocl::getBuildLBVH(), "clean_counters");
+    ocl::KernelSource ocl_make_morton_codes(ocl::getBuildLBVH(), "make_morton_codes");
+    ocl::KernelSource ocl_sort_codes(ocl::getBuildLBVH(), "sort_codes");
+    ocl::KernelSource ocl_build_tree_structure(ocl::getBuildLBVH(), "build_tree_structure");
+    ocl::KernelSource ocl_init_leaves(ocl::getBuildLBVH(), "init_leaves");
+    ocl::KernelSource ocl_compute_aabbs(ocl::getBuildLBVH(), "compute_aabbs");
 
     avk2::KernelSource vk_rt_brute_force(avk2::getRTBruteForce());
     avk2::KernelSource vk_rt_with_lbvh(avk2::getRTWithLBVH());
 
-    const std::string gnome_scene_path = "data/gnome/gnome.ply";
+    const std::string gnome_scene_path = "../data/gnome/gnome.ply";
     std::vector<std::string> scenes = {
         gnome_scene_path,
-        "data/powerplant/powerplant.obj",
-        "data/san-miguel/san-miguel.obj",
+        "../data/powerplant/powerplant.obj",
+        "../data/san-miguel/san-miguel.obj",
     };
 
     const int niters = 10; // при отладке удобно запускать одну итерацию
@@ -113,7 +119,7 @@ void run(int argc, char** argv)
         rassert(nvertices > 0, 546345423523143);
         rassert(nfaces > 0, 54362452342);
         std::string scene_name = std::filesystem::path(scene_path).parent_path().filename().string();
-        std::string camera_path = "data/" + scene_name + "/camera.txt";
+        std::string camera_path = "../data/" + scene_name + "/camera.txt";
         std::string results_dir = "results/" + scene_name;
         std::filesystem::create_directory(std::filesystem::path("results"));
         std::filesystem::create_directory(std::filesystem::path(results_dir));
@@ -129,6 +135,21 @@ void run(int argc, char** argv)
         // Аллоцируем буферы в VRAM
         gpu::gpu_mem_32f vertices_gpu(3 * nvertices);
         gpu::gpu_mem_32u faces_gpu(3 * nfaces);
+
+        unsigned int padding = 1;
+        while (padding < nfaces) {
+            padding *= 2;
+        }
+
+        int n_nodes = 2 * nfaces - 1;
+        gpu::gpu_mem_32u counters(std::max(nfaces - 1, 1u));
+        gpu::gpu_mem_32u parents(n_nodes);
+        gpu::gpu_mem_32u morton_codes(padding);
+        morton_codes.fill(UINT32_MAX);
+        gpu::gpu_mem_32u face_indices(padding);
+        face_indices.fill(0u);
+        gpu::shared_device_buffer_typed<BVHNodeGPU> lbvh_nodes_gpu(n_nodes);
+
         gpu::shared_device_buffer_typed<CameraViewGPU> camera_gpu(1);
 
         // Аллоцируем фрейм-буферы (то есть картинки в которые сохранится результат рендеринга)
@@ -285,16 +306,83 @@ void run(int argc, char** argv)
         double gpu_lbvh_time_sum = 0.0;
         double rt_times_with_gpu_lbvh_sum = 0.0;
 
-        // TODO постройте LBVH на GPU
-        // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
+        bool gpu_lbvg_gpu_rt_done = true;
+
+        point3f min_point = scene.vertices.front();
+        point3f max_point = scene.vertices.front();
+        for (const point3f& v : scene.vertices) {
+            min_point.x = std::min(min_point.x, v.x);
+            min_point.y = std::min(min_point.y, v.y);
+            min_point.z = std::min(min_point.z, v.z);
+            max_point.x = std::max(max_point.x, v.x);
+            max_point.y = std::max(max_point.y, v.y);
+            max_point.z = std::max(max_point.z, v.z);
+        }
 
         if (gpu_lbvg_gpu_rt_done) {
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO постройте LBVH на GPU
+                if (nfaces > 1) {
+                    ocl_clean_counters.exec(
+                        gpu::WorkSize(GROUP_SIZE, nfaces - 1),
+                        counters,
+                        nfaces - 1
+                    );
+                }
+
+                ocl_make_morton_codes.exec(
+                    gpu::WorkSize(GROUP_SIZE, nfaces),
+                    vertices_gpu,
+                    faces_gpu,
+                    morton_codes,
+                    face_indices,
+                    nfaces,
+                    min_point.x, min_point.y, min_point.z,
+                    max_point.x, max_point.y, max_point.z
+                );
+
+                for (unsigned int width = 2; width <= padding; width *= 2) {
+                    for (unsigned int stride = width / 2; stride >= 1; stride /= 2) {
+                        ocl_sort_codes.exec(
+                            gpu::WorkSize(GROUP_SIZE, padding),
+                            morton_codes,
+                            face_indices,
+                            padding,
+                            width, stride
+                        );
+                    }
+                }
+
+                if (nfaces > 1) {
+                    ocl_build_tree_structure.exec(
+                        gpu::WorkSize(GROUP_SIZE, nfaces - 1),
+                        morton_codes,
+                        lbvh_nodes_gpu.clmem(),
+                        parents,
+                        nfaces
+                    );
+                }
+
+                ocl_init_leaves.exec(
+                    gpu::WorkSize(GROUP_SIZE, nfaces),
+                    vertices_gpu,
+                    faces_gpu,
+                    face_indices,
+                    lbvh_nodes_gpu.clmem(),
+                    nfaces
+                );
+
+                if (nfaces > 1) {
+                    ocl_compute_aabbs.exec(
+                        gpu::WorkSize(GROUP_SIZE, nfaces),
+                        parents,
+                        lbvh_nodes_gpu.clmem(),
+                        counters,
+                        nfaces
+                    );
+                }
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -313,7 +401,16 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                if (context.type() == gpu::Context::TypeOpenCL) {
+                    ocl_rt_with_lbvh.exec(
+                        gpu::WorkSize(16, 16, width, height),
+                        vertices_gpu, faces_gpu,
+                        lbvh_nodes_gpu.clmem(), face_indices.clmem(),
+                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                        camera_gpu.clmem(), nfaces);
+                } else {
+                    rassert(false, 9085496203840);
+                }
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }
