@@ -1,6 +1,13 @@
 #include "kernels.h"
 
 #include "cl/generated_kernels/aplusb.h"
+#include "cl/generated_kernels/lbvh_centroid_bounds.h"
+#include "cl/generated_kernels/lbvh_scene_bounds.h"
+#include "cl/generated_kernels/lbvh_morton_codes.h"
+#include "cl/generated_kernels/lbvh_merge_pairs.h"
+#include "cl/generated_kernels/lbvh_build_topology.h"
+#include "cl/generated_kernels/lbvh_init_leaves.h"
+#include "cl/generated_kernels/lbvh_build_aabbs.h"
 #include "cl/generated_kernels/ray_tracing_render_brute_force.h"
 #include "cl/generated_kernels/ray_tracing_render_using_lbvh.h"
 
@@ -54,6 +61,34 @@ const ProgramBinaries& getRTBruteForce()
 const ProgramBinaries& getRTWithLBVH()
 {
     return opencl_binaries_ray_tracing_render_using_lbvh;
+}
+const ProgramBinaries& getLBVHCentroidBounds()
+{
+    return opencl_binaries_lbvh_centroid_bounds;
+}
+const ProgramBinaries& getLBVHSceneBounds()
+{
+    return opencl_binaries_lbvh_scene_bounds;
+}
+const ProgramBinaries& getLBVHMortonCodes()
+{
+    return opencl_binaries_lbvh_morton_codes;
+}
+const ProgramBinaries& getLBVHMergePairs()
+{
+    return opencl_binaries_lbvh_merge_pairs;
+}
+const ProgramBinaries& getLBVHBuildTopology()
+{
+    return opencl_binaries_lbvh_build_topology;
+}
+const ProgramBinaries& getLBVHInitLeaves()
+{
+    return opencl_binaries_lbvh_init_leaves;
+}
+const ProgramBinaries& getLBVHBuildAABBs()
+{
+    return opencl_binaries_lbvh_build_aabbs;
 }
 } // namespace ocl
 

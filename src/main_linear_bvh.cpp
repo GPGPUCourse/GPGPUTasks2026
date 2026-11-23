@@ -17,6 +17,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <limits>
 
 // Считает сколько непустых пикселей
 template<typename T>
@@ -77,6 +78,13 @@ void run(int argc, char** argv)
 
     ocl::KernelSource ocl_rt_brute_force(ocl::getRTBruteForce());
     ocl::KernelSource ocl_rt_with_lbvh(ocl::getRTWithLBVH());
+    ocl::KernelSource ocl_centroid_bounds(ocl::getLBVHCentroidBounds());
+    ocl::KernelSource ocl_scene_bounds(ocl::getLBVHSceneBounds());
+    ocl::KernelSource ocl_morton_codes(ocl::getLBVHMortonCodes());
+    ocl::KernelSource ocl_merge_pairs(ocl::getLBVHMergePairs());
+    ocl::KernelSource ocl_build_topology(ocl::getLBVHBuildTopology());
+    ocl::KernelSource ocl_init_leaves(ocl::getLBVHInitLeaves());
+    ocl::KernelSource ocl_build_aabbs(ocl::getLBVHBuildAABBs());
 
     avk2::KernelSource vk_rt_brute_force(avk2::getRTBruteForce());
     avk2::KernelSource vk_rt_with_lbvh(avk2::getRTWithLBVH());
@@ -229,9 +237,6 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на CPU LBVH
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-
                 if (context.type() == gpu::Context::TypeOpenCL) {
                     ocl_rt_with_lbvh.exec(
                         gpu::WorkSize(16, 16, width, height),
@@ -290,14 +295,212 @@ void run(int argc, char** argv)
 
         // TODO постройте LBVH на GPU
         // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
+        const unsigned int ngroups = (nfaces + GROUP_SIZE - 1) / GROUP_SIZE;
+        gpu::gpu_mem_32f centroids_gpu(3 * nfaces);
+        gpu::gpu_mem_32f group_bounds_gpu(6 * ngroups);
+        gpu::gpu_mem_32f scene_bounds_gpu(6);
+        gpu::gpu_mem_32u morton_codes_gpu(nfaces);
+        gpu::gpu_mem_32u triangle_ids_gpu(nfaces);
+        gpu::gpu_mem_32u merge_codes_gpu(nfaces);
+        gpu::gpu_mem_32u merge_ids_gpu(nfaces);
+        gpu::shared_device_buffer_typed<BVHNodeGPU> gpu_lbvh_nodes(2 * nfaces - 1);
+        gpu::gpu_mem_32u gpu_parent_indices(2 * nfaces - 1);
+        gpu::gpu_mem_32u gpu_ready_counts(std::max(1u, nfaces - 1));
+        gpu::gpu_mem_32u gpu_leaf_triangle_ids(nfaces);
+        if (context.type() == gpu::Context::TypeOpenCL) {
+            ocl_centroid_bounds.exec(gpu::WorkSize(GROUP_SIZE, nfaces),
+                vertices_gpu, faces_gpu, centroids_gpu, group_bounds_gpu, nfaces);
+            ocl_scene_bounds.exec(gpu::WorkSize(GROUP_SIZE, GROUP_SIZE),
+                group_bounds_gpu, scene_bounds_gpu, ngroups);
+            ocl_morton_codes.exec(gpu::WorkSize(GROUP_SIZE, nfaces),
+                centroids_gpu, scene_bounds_gpu, morton_codes_gpu, triangle_ids_gpu, nfaces);
+
+            if (scene_path == gnome_scene_path) {
+                float gpu_bounds[6];
+                std::vector<unsigned int> gpu_codes(nfaces), gpu_ids(nfaces);
+                scene_bounds_gpu.readN(gpu_bounds, 6);
+                morton_codes_gpu.readN(gpu_codes.data(), nfaces);
+                triangle_ids_gpu.readN(gpu_ids.data(), nfaces);
+
+                point3f lo{+std::numeric_limits<float>::infinity(), +std::numeric_limits<float>::infinity(), +std::numeric_limits<float>::infinity()};
+                point3f hi{-std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity()};
+                for (const point3u& face : scene.faces) {
+                    const point3f& a = scene.vertices[face.x];
+                    const point3f& b = scene.vertices[face.y];
+                    const point3f& c = scene.vertices[face.z];
+                    const point3f center{(a.x + b.x + c.x) * (1.0f / 3.0f),
+                                         (a.y + b.y + c.y) * (1.0f / 3.0f),
+                                         (a.z + b.z + c.z) * (1.0f / 3.0f)};
+                    lo.x = std::min(lo.x, center.x); lo.y = std::min(lo.y, center.y); lo.z = std::min(lo.z, center.z);
+                    hi.x = std::max(hi.x, center.x); hi.y = std::max(hi.y, center.y); hi.z = std::max(hi.z, center.z);
+                }
+                rassert(std::abs(gpu_bounds[0] - lo.x) < 1e-4f && std::abs(gpu_bounds[1] - lo.y) < 1e-4f && std::abs(gpu_bounds[2] - lo.z) < 1e-4f &&
+                        std::abs(gpu_bounds[3] - hi.x) < 1e-4f && std::abs(gpu_bounds[4] - hi.y) < 1e-4f && std::abs(gpu_bounds[5] - hi.z) < 1e-4f,
+                        53478234917);
+                for (unsigned int i = 0; i < nfaces; ++i) {
+                    const point3u& face = scene.faces[i];
+                    const point3f& a = scene.vertices[face.x];
+                    const point3f& b = scene.vertices[face.y];
+                    const point3f& c = scene.vertices[face.z];
+                    const point3f center{(a.x + b.x + c.x) * (1.0f / 3.0f),
+                                         (a.y + b.y + c.y) * (1.0f / 3.0f),
+                                         (a.z + b.z + c.z) * (1.0f / 3.0f)};
+                    const float dx = std::max(hi.x - lo.x, 1e-9f);
+                    const float dy = std::max(hi.y - lo.y, 1e-9f);
+                    const float dz = std::max(hi.z - lo.z, 1e-9f);
+                    const MortonCode expected = morton3D((center.x - lo.x) / dx,
+                                                         (center.y - lo.y) / dy,
+                                                         (center.z - lo.z) / dz);
+                    rassert(gpu_codes[i] == expected && gpu_ids[i] == i, 53478234918, i, gpu_codes[i], expected);
+                }
+                std::sort(gpu_codes.begin(), gpu_codes.end());
+                const size_t distinct_codes = std::unique(gpu_codes.begin(), gpu_codes.end()) - gpu_codes.begin();
+                const size_t duplicate_codes = nfaces - distinct_codes;
+                std::cout << "GPU Morton codes verified; duplicate codes: " << duplicate_codes << std::endl;
+            }
+
+            unsigned int merge_passes = 0;
+            for (unsigned int run_length = 1; run_length < nfaces; run_length <<= 1, ++merge_passes) {
+                if (merge_passes % 2 == 0) {
+                    ocl_merge_pairs.exec(gpu::WorkSize(GROUP_SIZE, nfaces),
+                        morton_codes_gpu, triangle_ids_gpu, merge_codes_gpu, merge_ids_gpu, nfaces, run_length);
+                } else {
+                    ocl_merge_pairs.exec(gpu::WorkSize(GROUP_SIZE, nfaces),
+                        merge_codes_gpu, merge_ids_gpu, morton_codes_gpu, triangle_ids_gpu, nfaces, run_length);
+                }
+            }
+            auto& sorted_codes_gpu = merge_passes % 2 ? merge_codes_gpu : morton_codes_gpu;
+            auto& sorted_ids_gpu = merge_passes % 2 ? merge_ids_gpu : triangle_ids_gpu;
+            if (nfaces > 1)
+                ocl_build_topology.exec(gpu::WorkSize(GROUP_SIZE, nfaces - 1),
+                    sorted_codes_gpu, gpu_lbvh_nodes.clmem(), gpu_parent_indices, gpu_ready_counts, nfaces);
+
+            if (scene_path == gnome_scene_path) {
+                std::vector<unsigned int> sorted_codes = sorted_codes_gpu.readVector();
+                std::vector<unsigned int> sorted_ids = sorted_ids_gpu.readVector();
+                std::vector<BVHNodeGPU> built_nodes(nfaces - 1);
+                gpu_lbvh_nodes.readN(built_nodes.data(), nfaces - 1);
+                for (unsigned int i = 1; i < nfaces; ++i) {
+                    rassert(sorted_codes[i - 1] <= sorted_codes[i], 53478234919, i);
+                    if (sorted_codes[i - 1] == sorted_codes[i])
+                        rassert(sorted_ids[i - 1] < sorted_ids[i], 53478234920, i);
+                }
+                for (unsigned int i = 0; i + 1 < nfaces; ++i) {
+                    int first, last;
+                    determine_range(sorted_codes, (int)nfaces, (int)i, first, last);
+                    const int split = find_split(sorted_codes, first, last);
+                    const unsigned int left = split == first ? nfaces - 1 + split : split;
+                    const unsigned int right = split + 1 == last ? nfaces + split : split + 1;
+                    rassert(built_nodes[i].leftChildIndex == left && built_nodes[i].rightChildIndex == right,
+                            53478234921, i, left, right);
+                }
+                std::cout << "GPU LBVH topology verified against CPU" << std::endl;
+
+                const std::vector<unsigned int> repeated_codes{7u, 3u, 7u, 3u, 7u};
+                const std::vector<unsigned int> repeated_ids{0u, 1u, 2u, 3u, 4u};
+                gpu::gpu_mem_32u test_codes(repeated_codes.size()), test_ids(repeated_ids.size());
+                gpu::gpu_mem_32u test_codes_tmp(repeated_codes.size()), test_ids_tmp(repeated_ids.size());
+                test_codes.writeN(repeated_codes.data(), repeated_codes.size());
+                test_ids.writeN(repeated_ids.data(), repeated_ids.size());
+                unsigned int test_passes = 0;
+                for (unsigned int run_length = 1; run_length < repeated_codes.size(); run_length <<= 1, ++test_passes) {
+                    if (test_passes % 2 == 0)
+                        ocl_merge_pairs.exec(gpu::WorkSize(GROUP_SIZE, repeated_codes.size()),
+                            test_codes, test_ids, test_codes_tmp, test_ids_tmp, (unsigned int)repeated_codes.size(), run_length);
+                    else
+                        ocl_merge_pairs.exec(gpu::WorkSize(GROUP_SIZE, repeated_codes.size()),
+                            test_codes_tmp, test_ids_tmp, test_codes, test_ids, (unsigned int)repeated_codes.size(), run_length);
+                }
+                auto& test_sorted_codes_gpu = test_passes % 2 ? test_codes_tmp : test_codes;
+                auto& test_sorted_ids_gpu = test_passes % 2 ? test_ids_tmp : test_ids;
+                const std::vector<unsigned int> test_sorted_codes = test_sorted_codes_gpu.readVector();
+                const std::vector<unsigned int> test_sorted_ids = test_sorted_ids_gpu.readVector();
+                rassert((test_sorted_codes == std::vector<unsigned int>{3u, 3u, 7u, 7u, 7u}) &&
+                        (test_sorted_ids == std::vector<unsigned int>{1u, 3u, 0u, 2u, 4u}), 53478234922);
+                gpu::shared_device_buffer_typed<BVHNodeGPU> test_nodes(2 * repeated_codes.size() - 1);
+                gpu::gpu_mem_32u test_parents(2 * repeated_codes.size() - 1);
+                gpu::gpu_mem_32u test_ready(repeated_codes.size() - 1);
+                ocl_build_topology.exec(gpu::WorkSize(GROUP_SIZE, repeated_codes.size() - 1),
+                    test_sorted_codes_gpu, test_nodes.clmem(), test_parents, test_ready, (unsigned int)repeated_codes.size());
+                std::vector<BVHNodeGPU> test_built_nodes(repeated_codes.size() - 1);
+                test_nodes.readN(test_built_nodes.data(), test_built_nodes.size());
+                for (int i = 0; i < (int)repeated_codes.size() - 1; ++i) {
+                    int first, last;
+                    determine_range(test_sorted_codes, (int)repeated_codes.size(), i, first, last);
+                    const int split = find_split(test_sorted_codes, first, last);
+                    const unsigned int left = split == first ? (unsigned int)(repeated_codes.size() - 1 + split) : (unsigned int)split;
+                    const unsigned int right = split + 1 == last ? (unsigned int)(repeated_codes.size() + split) : (unsigned int)(split + 1);
+                    rassert(test_built_nodes[i].leftChildIndex == left && test_built_nodes[i].rightChildIndex == right,
+                            53478234923, i);
+                }
+                std::cout << "GPU LBVH duplicate-code case verified" << std::endl;
+            }
+
+            ocl_init_leaves.exec(gpu::WorkSize(GROUP_SIZE, nfaces),
+                vertices_gpu, faces_gpu, sorted_ids_gpu, gpu_lbvh_nodes.clmem(),
+                gpu_leaf_triangle_ids, gpu_parent_indices, nfaces);
+            ocl_build_aabbs.exec(gpu::WorkSize(GROUP_SIZE, nfaces),
+                gpu_lbvh_nodes.clmem(), gpu_parent_indices, gpu_ready_counts, nfaces);
+
+            if (scene_path == gnome_scene_path) {
+                std::vector<BVHNodeGPU> reference_nodes;
+                std::vector<uint32_t> reference_leaf_ids;
+                buildLBVH_CPU(scene.vertices, scene.faces, reference_nodes, reference_leaf_ids);
+                std::vector<BVHNodeGPU> built_nodes(2 * nfaces - 1);
+                gpu_lbvh_nodes.readN(built_nodes.data(), built_nodes.size());
+                const std::vector<unsigned int> built_leaf_ids = gpu_leaf_triangle_ids.readVector();
+                const std::vector<unsigned int> ready = gpu_ready_counts.readVector();
+                for (unsigned int i = 0; i < nfaces - 1; ++i)
+                    rassert(ready[i] == 2u, 53478234924, i, ready[i]);
+                for (size_t i = 0; i < built_nodes.size(); ++i) {
+                    const AABBGPU& a = built_nodes[i].aabb;
+                    const AABBGPU& b = reference_nodes[i].aabb;
+                    rassert(std::abs(a.min_x - b.min_x) < 1e-4f &&
+                            std::abs(a.min_y - b.min_y) < 1e-4f &&
+                            std::abs(a.min_z - b.min_z) < 1e-4f &&
+                            std::abs(a.max_x - b.max_x) < 1e-4f &&
+                            std::abs(a.max_y - b.max_y) < 1e-4f &&
+                            std::abs(a.max_z - b.max_z) < 1e-4f &&
+                            built_nodes[i].leftChildIndex == reference_nodes[i].leftChildIndex &&
+                            built_nodes[i].rightChildIndex == reference_nodes[i].rightChildIndex,
+                            53478234925, i);
+                }
+                rassert(built_leaf_ids == reference_leaf_ids, 53478234926);
+                std::cout << "GPU LBVH AABBs verified against CPU" << std::endl;
+            }
+        }
+        bool gpu_lbvg_gpu_rt_done = context.type() == gpu::Context::TypeOpenCL;
 
         if (gpu_lbvg_gpu_rt_done) {
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO постройте LBVH на GPU
+                ocl_centroid_bounds.exec(gpu::WorkSize(GROUP_SIZE, nfaces),
+                    vertices_gpu, faces_gpu, centroids_gpu, group_bounds_gpu, nfaces);
+                ocl_scene_bounds.exec(gpu::WorkSize(GROUP_SIZE, GROUP_SIZE),
+                    group_bounds_gpu, scene_bounds_gpu, ngroups);
+                ocl_morton_codes.exec(gpu::WorkSize(GROUP_SIZE, nfaces),
+                    centroids_gpu, scene_bounds_gpu, morton_codes_gpu, triangle_ids_gpu, nfaces);
+                unsigned int merge_passes = 0;
+                for (unsigned int run_length = 1; run_length < nfaces; run_length <<= 1, ++merge_passes) {
+                    if (merge_passes % 2 == 0)
+                        ocl_merge_pairs.exec(gpu::WorkSize(GROUP_SIZE, nfaces),
+                            morton_codes_gpu, triangle_ids_gpu, merge_codes_gpu, merge_ids_gpu, nfaces, run_length);
+                    else
+                        ocl_merge_pairs.exec(gpu::WorkSize(GROUP_SIZE, nfaces),
+                            merge_codes_gpu, merge_ids_gpu, morton_codes_gpu, triangle_ids_gpu, nfaces, run_length);
+                }
+                auto& sorted_codes = merge_passes % 2 ? merge_codes_gpu : morton_codes_gpu;
+                auto& sorted_ids = merge_passes % 2 ? merge_ids_gpu : triangle_ids_gpu;
+                if (nfaces > 1)
+                    ocl_build_topology.exec(gpu::WorkSize(GROUP_SIZE, nfaces - 1),
+                        sorted_codes, gpu_lbvh_nodes.clmem(), gpu_parent_indices, gpu_ready_counts, nfaces);
+                ocl_init_leaves.exec(gpu::WorkSize(GROUP_SIZE, nfaces),
+                    vertices_gpu, faces_gpu, sorted_ids, gpu_lbvh_nodes.clmem(),
+                    gpu_leaf_triangle_ids, gpu_parent_indices, nfaces);
+                ocl_build_aabbs.exec(gpu::WorkSize(GROUP_SIZE, nfaces),
+                    gpu_lbvh_nodes.clmem(), gpu_parent_indices, gpu_ready_counts, nfaces);
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -316,7 +519,11 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                ocl_rt_with_lbvh.exec(gpu::WorkSize(16, 16, width, height),
+                    vertices_gpu, faces_gpu,
+                    gpu_lbvh_nodes.clmem(), gpu_leaf_triangle_ids,
+                    framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                    camera_gpu.clmem(), nfaces);
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }

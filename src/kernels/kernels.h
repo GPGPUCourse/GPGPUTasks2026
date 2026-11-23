@@ -28,6 +28,13 @@ const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getRTBruteForce();
 const ProgramBinaries& getRTWithLBVH();
+const ProgramBinaries& getLBVHCentroidBounds();
+const ProgramBinaries& getLBVHSceneBounds();
+const ProgramBinaries& getLBVHMortonCodes();
+const ProgramBinaries& getLBVHMergePairs();
+const ProgramBinaries& getLBVHBuildTopology();
+const ProgramBinaries& getLBVHInitLeaves();
+const ProgramBinaries& getLBVHBuildAABBs();
 }
 
 namespace avk2 {
