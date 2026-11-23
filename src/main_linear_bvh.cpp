@@ -77,6 +77,15 @@ void run(int argc, char** argv)
 
     ocl::KernelSource ocl_rt_brute_force(ocl::getRTBruteForce());
     ocl::KernelSource ocl_rt_with_lbvh(ocl::getRTWithLBVH());
+    ocl::KernelSource ocl_centroid_bounds(ocl::getLBVHBuild(), "lbvh_centroid_bounds");
+    ocl::KernelSource ocl_reduce_bounds(ocl::getLBVHBuild(), "lbvh_reduce_bounds");
+    ocl::KernelSource ocl_morton_codes(ocl::getLBVHBuild(), "lbvh_morton_codes");
+    ocl::KernelSource ocl_init_leaves(ocl::getLBVHBuild(), "lbvh_init_leaves");
+    ocl::KernelSource ocl_build_tree(ocl::getLBVHBuild(), "lbvh_build_tree");
+    ocl::KernelSource ocl_propagate_aabb(ocl::getLBVHBuild(), "lbvh_propagate_aabb");
+    ocl::KernelSource ocl_radix_scan(ocl::getLBVHRadixSort(), "lbvh_radix_scan");
+    ocl::KernelSource ocl_radix_accumulate(ocl::getLBVHRadixSort(), "lbvh_radix_accumulate");
+    ocl::KernelSource ocl_radix_scatter(ocl::getLBVHRadixSort(), "lbvh_radix_scatter");
 
     avk2::KernelSource vk_rt_brute_force(avk2::getRTBruteForce());
     avk2::KernelSource vk_rt_with_lbvh(avk2::getRTWithLBVH());
@@ -289,14 +298,76 @@ void run(int argc, char** argv)
 
         // TODO постройте LBVH на GPU
         // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
+        bool gpu_lbvg_gpu_rt_done = context.type() == gpu::Context::TypeOpenCL;
 
         if (gpu_lbvg_gpu_rt_done) {
+            gpu::shared_device_buffer_typed<BVHNodeGPU> lbvh_nodes_gpu(2 * (size_t)nfaces - 1);
+            gpu::gpu_mem_32u leaf_faces_indices_gpu(nfaces), indices_buffer_gpu(nfaces);
+            gpu::gpu_mem_32u codes_gpu(nfaces), codes_buffer_gpu(nfaces), local_prefixes_gpu(nfaces);
+            gpu::gpu_mem_32u parents_gpu(2 * (size_t)nfaces - 1), flags_gpu(nfaces);
+
+            std::vector<unsigned int> bounds_sizes{div_ceil(nfaces, (unsigned int)GROUP_SIZE)};
+            while (bounds_sizes.back() > 1) {
+                bounds_sizes.push_back(div_ceil(bounds_sizes.back(), (unsigned int)GROUP_SIZE));
+            }
+            std::vector<gpu::shared_device_buffer_typed<AABBGPU>> bounds_gpu;
+            for (unsigned int size : bounds_sizes) {
+                bounds_gpu.emplace_back(size);
+            }
+
+            const unsigned int block_size = 2 * GROUP_SIZE;
+            std::vector<unsigned int> scan_sizes{div_ceil(nfaces, block_size)};
+            while (scan_sizes.back() > 1) {
+                scan_sizes.push_back(div_ceil(scan_sizes.back(), block_size));
+            }
+            std::vector<gpu::gpu_mem_32u> block_prefixes_gpu;
+            for (unsigned int size : scan_sizes) {
+                block_prefixes_gpu.emplace_back(size);
+            }
+
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
                 // TODO постройте LBVH на GPU
+                ocl_centroid_bounds.execAsynchronized(gpu::WorkSize(GROUP_SIZE, nfaces),
+                    vertices_gpu, faces_gpu, bounds_gpu[0].clmem(), nfaces);
+                for (size_t level = 0; level + 1 < bounds_sizes.size(); ++level) {
+                    ocl_reduce_bounds.execAsynchronized(gpu::WorkSize(GROUP_SIZE, bounds_sizes[level]),
+                        bounds_gpu[level].clmem(), bounds_gpu[level + 1].clmem(), bounds_sizes[level]);
+                }
+                ocl_morton_codes.execAsynchronized(gpu::WorkSize(GROUP_SIZE, nfaces),
+                    vertices_gpu, faces_gpu, bounds_gpu.back().clmem(), codes_gpu, leaf_faces_indices_gpu, nfaces);
+
+                for (unsigned int bit = 0; bit < 30; ++bit) {
+                    gpu::gpu_mem_32u in_codes = bit % 2 == 0 ? codes_gpu : codes_buffer_gpu;
+                    gpu::gpu_mem_32u out_codes = bit % 2 == 0 ? codes_buffer_gpu : codes_gpu;
+                    gpu::gpu_mem_32u in_indices = bit % 2 == 0 ? leaf_faces_indices_gpu : indices_buffer_gpu;
+                    gpu::gpu_mem_32u out_indices = bit % 2 == 0 ? indices_buffer_gpu : leaf_faces_indices_gpu;
+                    ocl_radix_scan.execAsynchronized(gpu::WorkSize(GROUP_SIZE, scan_sizes[0] * GROUP_SIZE),
+                        in_codes, local_prefixes_gpu, block_prefixes_gpu[0], nfaces, bit, 1u);
+                    for (size_t level = 0; level + 1 < scan_sizes.size(); ++level) {
+                        ocl_radix_scan.execAsynchronized(gpu::WorkSize(GROUP_SIZE, scan_sizes[level + 1] * GROUP_SIZE),
+                            block_prefixes_gpu[level], block_prefixes_gpu[level], block_prefixes_gpu[level + 1],
+                            scan_sizes[level], bit, 0u);
+                    }
+                    for (size_t level = scan_sizes.size() - 1; level > 1; --level) {
+                        ocl_radix_accumulate.execAsynchronized(gpu::WorkSize(GROUP_SIZE, scan_sizes[level - 2]),
+                            block_prefixes_gpu[level - 1], block_prefixes_gpu[level - 2], scan_sizes[level - 2]);
+                    }
+                    ocl_radix_scatter.execAsynchronized(gpu::WorkSize(GROUP_SIZE, nfaces),
+                        in_codes, in_indices, local_prefixes_gpu, block_prefixes_gpu[0], block_prefixes_gpu.back(),
+                        out_codes, out_indices, nfaces, bit);
+                }
+
+                ocl_init_leaves.execAsynchronized(gpu::WorkSize(GROUP_SIZE, nfaces),
+                    vertices_gpu, faces_gpu, leaf_faces_indices_gpu, lbvh_nodes_gpu.clmem(), flags_gpu, nfaces);
+                if (nfaces > 1) {
+                    ocl_build_tree.execAsynchronized(gpu::WorkSize(GROUP_SIZE, nfaces - 1),
+                        codes_gpu, lbvh_nodes_gpu.clmem(), parents_gpu, nfaces);
+                }
+                ocl_propagate_aabb.exec(gpu::WorkSize(GROUP_SIZE, nfaces),
+                    lbvh_nodes_gpu.clmem(), parents_gpu, flags_gpu, nfaces);
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -316,6 +387,12 @@ void run(int argc, char** argv)
                 timer t;
 
                 // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                ocl_rt_with_lbvh.execSubdivided(
+                    gpu::WorkSize(16, 16, width, height),
+                    vertices_gpu, faces_gpu,
+                    lbvh_nodes_gpu.clmem(), leaf_faces_indices_gpu.clmem(),
+                    framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                    camera_gpu.clmem(), nfaces);
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }
