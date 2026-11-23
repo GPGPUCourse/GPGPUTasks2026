@@ -285,16 +285,15 @@ void run(int argc, char** argv)
         double gpu_lbvh_time_sum = 0.0;
         double rt_times_with_gpu_lbvh_sum = 0.0;
 
-        // TODO постройте LBVH на GPU
-        // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
-
-        if (gpu_lbvg_gpu_rt_done) {
+        {
+            gpu::shared_device_buffer_typed<BVHNodeGPU> lbvh_nodes_gpu(2 * nfaces - 1);
+            gpu::gpu_mem_32u leaf_faces_indices_gpu(nfaces);
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO постройте LBVH на GPU
+                cuda::build_lbvh(gpu::WorkSize(GROUP_SIZE, nfaces),
+                    vertices_gpu, faces_gpu, lbvh_nodes_gpu, leaf_faces_indices_gpu, nfaces);
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -313,7 +312,12 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                cuda::ray_tracing_render_using_lbvh(
+                    gpu::WorkSize(16, 16, width, height),
+                    vertices_gpu, faces_gpu,
+                    lbvh_nodes_gpu, leaf_faces_indices_gpu,
+                    framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                    camera_gpu, nfaces);
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }

@@ -4,6 +4,11 @@
 
 #include <libgpu/cuda/cu/common.cu>
 
+#include <thrust/device_ptr.h>
+#include <thrust/extrema.h>
+#include <thrust/sort.h>
+#include <thrust/system/cuda/execution_policy.h>
+
 #include "../shared_structs/camera_gpu_shared.h"
 #include "../shared_structs/bvh_node_gpu_shared.h"
 #include "../defines.h"
@@ -12,6 +17,110 @@
 #include "camera_helpers.cu"
 #include "geometry_helpers.cu"
 #include "random_helpers.cu"
+
+__global__ void build_morton_codes(const float* vertices, const unsigned int* faces, float lo, float size,
+    unsigned int* codes, unsigned int* indices, int n)
+{
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) {
+        return;
+    }
+
+    float3 a = cuda::fetch_float3(vertices, faces[3 * i]);
+    float3 b = cuda::fetch_float3(vertices, faces[3 * i + 1]);
+    float3 c = cuda::fetch_float3(vertices, faces[3 * i + 2]);
+    unsigned int x = min(max((int)(((a.x + b.x + c.x) / 3 - lo) / size * 1024), 0), 1023);
+    unsigned int y = min(max((int)(((a.y + b.y + c.y) / 3 - lo) / size * 1024), 0), 1023);
+    unsigned int z = min(max((int)(((a.z + b.z + c.z) / 3 - lo) / size * 1024), 0), 1023);
+    unsigned int code = 0;
+    for (int bit = 0; bit < 10; ++bit) {
+        code |= ((x >> bit) & 1u) << (3 * bit + 2);
+        code |= ((y >> bit) & 1u) << (3 * bit + 1);
+        code |= ((z >> bit) & 1u) << (3 * bit);
+    }
+    codes[i] = code;
+    indices[i] = i;
+}
+
+__device__ int common_prefix(const unsigned int* codes, int n, int i, int j)
+{
+    if (j < 0 || j >= n) {
+        return -1;
+    }
+    if (codes[i] == codes[j]) {
+        return 32 + __clz((unsigned int)(i ^ j));
+    }
+    return __clz(codes[i] ^ codes[j]);
+}
+
+__global__ void build_nodes(const float* vertices, const unsigned int* faces,
+    const unsigned int* codes, const unsigned int* indices,
+    BVHNodeGPU* nodes, unsigned int* levels, int n)
+{
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n) {
+        return;
+    }
+
+    const int fi = indices[i];
+    float3 a = cuda::fetch_float3(vertices, faces[3 * fi]);
+    float3 b = cuda::fetch_float3(vertices, faces[3 * fi + 1]);
+    float3 c = cuda::fetch_float3(vertices, faces[3 * fi + 2]);
+    nodes[n - 1 + i].aabb = {
+        fminf(a.x, fminf(b.x, c.x)), fminf(a.y, fminf(b.y, c.y)), fminf(a.z, fminf(b.z, c.z)),
+        fmaxf(a.x, fmaxf(b.x, c.x)), fmaxf(a.y, fmaxf(b.y, c.y)), fmaxf(a.z, fmaxf(b.z, c.z))};
+    nodes[n - 1 + i].leftChildIndex = 0xffffffff;
+    nodes[n - 1 + i].rightChildIndex = 0xffffffff;
+    if (i >= n - 1) {
+        return;
+    }
+
+    int d = common_prefix(codes, n, i, i + 1) > common_prefix(codes, n, i, i - 1) ? 1 : -1;
+    int prefix = common_prefix(codes, n, i, i - d);
+    int len = 1;
+    int end = d == 1 ? n - i : i + 1;
+    while (len + 1 < end) {
+        int mid = len + (end - len) / 2;
+        if (common_prefix(codes, n, i, i + mid * d) > prefix) {
+            len = mid;
+        } else {
+            end = mid;
+        }
+    }
+
+    int first = min(i, i + len * d);
+    int last = max(i, i + len * d);
+    prefix = common_prefix(codes, n, first, last);
+    int left = first;
+    int right = last;
+    while (left + 1 < right) {
+        int mid = left + (right - left) / 2;
+        if (common_prefix(codes, n, first, mid) > prefix) {
+            left = mid;
+        } else {
+            right = mid;
+        }
+    }
+
+    int a_index = left == first ? n - 1 + left : left;
+    int b_index = left + 1 == last ? n + left : left + 1;
+    nodes[i].leftChildIndex = a_index;
+    nodes[i].rightChildIndex = b_index;
+    levels[i] = prefix;
+}
+
+__global__ void build_bounds(BVHNodeGPU* nodes, const unsigned int* levels, int level, int n)
+{
+    const int i = blockIdx.x * blockDim.x + threadIdx.x;
+    if (i >= n - 1 || levels[i] != level) {
+        return;
+    }
+
+    const AABBGPU& a = nodes[nodes[i].leftChildIndex].aabb;
+    const AABBGPU& b = nodes[nodes[i].rightChildIndex].aabb;
+    nodes[i].aabb = {fminf(a.min_x, b.min_x), fminf(a.min_y, b.min_y), fminf(a.min_z, b.min_z),
+                     fmaxf(a.max_x, b.max_x), fmaxf(a.max_y, b.max_y), fmaxf(a.max_z, b.max_z)};
+}
 
 // BVH traversal: closest hit along ray
 __device__ bool bvh_closest_hit(
@@ -228,6 +337,29 @@ __global__ void ray_tracing_render_using_lbvh(
 
 
 namespace cuda {
+void build_lbvh(const gpu::WorkSize &workSize,
+    const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
+    gpu::shared_device_buffer_typed<BVHNodeGPU> &nodes, gpu::gpu_mem_32u &indices, unsigned int n)
+{
+    gpu::Context context;
+    cudaStream_t stream = context.cudaStream();
+
+    gpu::gpu_mem_32u codes(n), levels(n);
+    auto policy = thrust::cuda::par.on(stream);
+    auto first = thrust::device_pointer_cast(vertices.cuptr());
+    auto bounds = thrust::minmax_element(policy, first, first + vertices.number());
+    float lo = *bounds.first, hi = *bounds.second;
+    ::build_morton_codes<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+        vertices.cuptr(), faces.cuptr(), lo, fmaxf(hi - lo, 1e-9f), codes.cuptr(), indices.cuptr(), n);
+    thrust::stable_sort_by_key(policy, codes.cuptr(), codes.cuptr() + n, indices.cuptr());
+    ::build_nodes<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(
+        vertices.cuptr(), faces.cuptr(), codes.cuptr(), indices.cuptr(), nodes.cuptr(), levels.cuptr(), n);
+    for (int level = 63; level >= 0; --level) {
+        ::build_bounds<<<workSize.cuGridSize(), workSize.cuBlockSize(), 0, stream>>>(nodes.cuptr(), levels.cuptr(), level, n);
+    }
+    CUDA_CHECK_KERNEL(stream);
+}
+
 void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
     const gpu::shared_device_buffer_typed<BVHNodeGPU> &bvhNodes, const gpu::gpu_mem_32u &leafTriIndices,

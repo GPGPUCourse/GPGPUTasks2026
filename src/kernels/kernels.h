@@ -6,6 +6,10 @@
 #include "shared_structs/bvh_node_gpu_shared.h"
 
 namespace cuda {
+void build_lbvh(const gpu::WorkSize &workSize,
+    const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
+    gpu::shared_device_buffer_typed<BVHNodeGPU> &nodes, gpu::gpu_mem_32u &indices, unsigned int n);
+
 void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n);
 
 void ray_tracing_render_brute_force(const gpu::WorkSize &workSize,

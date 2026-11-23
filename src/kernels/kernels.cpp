@@ -10,6 +10,13 @@
 
 #ifndef CUDA_SUPPORT
 namespace cuda {
+void build_lbvh(const gpu::WorkSize &workSize,
+    const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
+    gpu::shared_device_buffer_typed<BVHNodeGPU> &nodes, gpu::gpu_mem_32u &indices, unsigned int n)
+{
+    rassert(false, 54623523412413);
+}
+
 void aplusb(const gpu::WorkSize& workSize,
     const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n)
 {
