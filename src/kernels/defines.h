@@ -7,6 +7,9 @@
 
 #define AO_SAMPLES   8
 
+#define LBVH_MERGE_ITEMS 4u
+#define LBVH_REFIT_PREFIX_BITS 8u
+
 #define RASSERT_ENABLED 0 // disabled by default, enable for debug by changing 0 to 1, disable before performance evaluation/profiling/commiting
 
 #endif // pragma once
