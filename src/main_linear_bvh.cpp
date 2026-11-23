@@ -18,7 +18,7 @@
 #include <filesystem>
 #include <fstream>
 
-#include "build_bvh_gpu.h"
+#include "build_lbvh_gpu.h"
 
 // Считает сколько непустых пикселей
 template<typename T>
