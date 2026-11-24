@@ -72,6 +72,7 @@ __kernel void ray_tracing_lbvh_preprocess(
     }
 
     if (lid == 0) {
+
         reduction_buf[grid] = local_centroids_aabbs[0];
     }
 }
