@@ -97,7 +97,7 @@ void run(int argc, char** argv)
         "data/san-miguel/san-miguel.obj",
     };
 
-    const int niters = 10; // при отладке удобно запускать одну итерацию
+    const int niters = 1; // при отладке удобно запускать одну итерацию
     std::vector<double> gpu_rt_perf_mrays_per_sec;
     std::vector<double> gpu_lbvh_perfs_mtris_per_sec;
 
@@ -311,7 +311,7 @@ void run(int argc, char** argv)
             
             gpu::shared_device_buffer_typed<BVHNodeGPU> lbvh_nodes_gpu(nnodes);
             gpu::shared_device_buffer_typed<AABBGPU> leaf_aabbs_gpu(n);
-            gpu::shared_device_buffer_typed<point3f> centroids_gpu(n);
+            gpu::shared_device_buffer_typed<cl_float3> centroids_gpu(n);
             gpu::shared_device_buffer_typed<AABBGPU> aabb_reduction_buffer_gpu(aabbReductionGroupCount);
             gpu::shared_device_buffer_typed<MortonCode> morton_1_gpu(n);
             gpu::shared_device_buffer_typed<MortonCode> morton_2_gpu(n);
