@@ -28,6 +28,15 @@ const ProgramBinaries& getAplusB();
 
 const ProgramBinaries& getRTBruteForce();
 const ProgramBinaries& getRTWithLBVH();
+
+const ProgramBinaries& getLBVHSceneAABB();
+const ProgramBinaries& getLBVHPreprocess();
+const ProgramBinaries& getLBVHMorton();
+const ProgramBinaries& getLBVHRadixSortHistogram();
+const ProgramBinaries& getLBVHRadixSortPrefix();
+const ProgramBinaries& getLBVHRadixSortScatter();
+const ProgramBinaries& getLBVHBuild();
+const ProgramBinaries& getLBVHAABBs();
 }
 
 namespace avk2 {

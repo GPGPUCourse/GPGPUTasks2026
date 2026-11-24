@@ -64,7 +64,16 @@ set(LIBRARIES
 set(OPENCL_SOURCES
         src/kernels/cl/aplusb.cl
         src/kernels/cl/ray_tracing_render_brute_force.cl
-        src/kernels/cl/ray_tracing_render_using_lbvh.cl)
+        src/kernels/cl/ray_tracing_render_using_lbvh.cl
+        src/kernels/cl/ray_tracing_lbvh_scene_aabb.cl
+        src/kernels/cl/ray_tracing_lbvh_preprocess.cl
+        src/kernels/cl/ray_tracing_lbvh_morton.cl
+        src/kernels/cl/ray_tracing_lbvh_rsort_hist.cl
+        src/kernels/cl/ray_tracing_lbvh_rsort_prefix.cl
+        src/kernels/cl/ray_tracing_lbvh_rsort_scan.cl
+        src/kernels/cl/ray_tracing_lbvh_build.cl
+        src/kernels/cl/ray_tracing_lbvh_aabbs.cl
+)
 
 set(OPENCL_INCLUDES src/kernels/defines.h src/kernels/cl/helpers/rassert.cl src/kernels/cl/camera_helpers.cl src/kernels/cl/geometry_helpers.cl src/kernels/cl/random_helpers.cl src/kernels/shared_structs/aabb_gpu_shared.h src/kernels/shared_structs/bvh_node_gpu_shared.h src/kernels/shared_structs/camera_gpu_shared.h src/kernels/shared_structs/morton_code_gpu_shared.h src/kernels/shared_structs/struct_helpers.h)
 set(OPENCL_DEFINES)

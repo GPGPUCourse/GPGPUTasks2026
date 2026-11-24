@@ -78,6 +78,14 @@ void run(int argc, char** argv)
 
     ocl::KernelSource ocl_rt_brute_force(ocl::getRTBruteForce());
     ocl::KernelSource ocl_rt_with_lbvh(ocl::getRTWithLBVH());
+    ocl::KernelSource ocl_lbvh_preprocess(ocl::getLBVHPreprocess());
+    ocl::KernelSource ocl_lbvh_scene_aabb(ocl::getLBVHSceneAABB());
+    ocl::KernelSource ocl_lbvh_morton(ocl::getLBVHMorton());
+    ocl::KernelSource ocl_lbvh_rsort_hist(ocl::getLBVHRadixSortHistogram());
+    ocl::KernelSource ocl_lbvh_rsort_prefix(ocl::getLBVHRadixSortPrefix());
+    ocl::KernelSource ocl_lbvh_rsort_scan(ocl::getLBVHRadixSortScatter());
+    ocl::KernelSource ocl_lbvh_build(ocl::getLBVHBuild());
+    ocl::KernelSource ocl_lbvh_aabbs(ocl::getLBVHAABBs());
 
     avk2::KernelSource vk_rt_brute_force(avk2::getRTBruteForce());
     avk2::KernelSource vk_rt_with_lbvh(avk2::getRTWithLBVH());
@@ -288,14 +296,140 @@ void run(int argc, char** argv)
 
         // TODO постройте LBVH на GPU
         // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
+        constexpr bool gpu_lbvg_gpu_rt_done = true;
 
-        if (gpu_lbvg_gpu_rt_done) {
+        if constexpr (gpu_lbvg_gpu_rt_done) {
             std::vector<double> gpu_lbvh_times;
+
+            unsigned int n = nfaces;
+            unsigned int nnodes = 2*n - 1;
+
+            const size_t aabbReductionGroupCount = (n + GROUP_SIZE - 1) / GROUP_SIZE;
+            const size_t aabbReductionGlobalSize = aabbReductionGroupCount * GROUP_SIZE;
+            const size_t radixGroupCount = (n + GROUP_SIZE - 1) / GROUP_SIZE;
+            const size_t radixGlobalSize = radixGroupCount * GROUP_SIZE;
+            
+            gpu::shared_device_buffer_typed<BVHNodeGPU> lbvh_nodes_gpu(nnodes);
+            gpu::shared_device_buffer_typed<AABBGPU> leaf_aabbs_gpu(n);
+            gpu::shared_device_buffer_typed<point3f> centroids_gpu(n);
+            gpu::shared_device_buffer_typed<AABBGPU> aabb_reduction_buffer_gpu(aabbReductionGroupCount);
+            gpu::shared_device_buffer_typed<MortonCode> morton_1_gpu(n);
+            gpu::shared_device_buffer_typed<MortonCode> morton_2_gpu(n);
+            gpu::gpu_mem_32u tri_indices_1_gpu(n);
+            gpu::gpu_mem_32u tri_indices_2_gpu(n);
+            gpu::gpu_mem_32u radix_hist_gpu(radixGroupCount * 16);
+            gpu::gpu_mem_32u radix_group_offsets_gpu(radixGroupCount * 16);
+            gpu::gpu_mem_32u parents_indices_gpu(nnodes);
+            gpu::gpu_mem_32u checkpoint_counters_gpu(nnodes);
+
+            gpu::shared_device_buffer_typed<MortonCode>& sorted_morton_gpu = morton_1_gpu;
+            gpu::gpu_mem_32u& sorted_tri_indices_gpu = tri_indices_1_gpu;
+
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO постройте LBVH на GPU
+                // 1. Предобработка сцены
+                ocl_lbvh_preprocess.exec(
+                    gpu::WorkSize(GROUP_SIZE, aabbReductionGlobalSize),
+                    vertices_gpu,
+                    faces_gpu,
+                    n,
+                    tri_indices_1_gpu,
+                    leaf_aabbs_gpu,
+                    centroids_gpu,
+                    aabb_reduction_buffer_gpu
+                ); // looks ok, reduction buffer size = aabbReductionGroupCount
+
+                std::cout << "Scene processed" << std::endl;
+
+                // 2. Получаем глобальный aabb для вычисления кодов мортона
+                ocl_lbvh_scene_aabb.exec(
+                    gpu::WorkSize(GROUP_SIZE, GROUP_SIZE),
+                    static_cast<uint>(aabbReductionGroupCount),
+                    aabb_reduction_buffer_gpu
+                ); // looks ok, does reduction in 1 workgroup via local memory i/o hierarchical approach
+
+                std::cout << "Global aabb computed" << std::endl;
+
+                // 3. Считаем коды мортона
+                ocl_lbvh_morton.exec(
+                    gpu::WorkSize(GROUP_SIZE, n),
+                    centroids_gpu,
+                    n,
+                    aabb_reduction_buffer_gpu,
+                    morton_1_gpu
+                ); // looks ok, computes morton code for each tri using centroids aabb
+
+                std::cout << "Morton codes computed" << std::endl;
+
+                // 4. Сортируем индексы листьев по кодам мортона
+                auto& key_buffer_in = morton_1_gpu;
+                auto& key_buffer_out = morton_2_gpu;
+                auto& val_buffer_in = tri_indices_1_gpu;
+                auto& val_buffer_out = tri_indices_2_gpu;
+                for (uint pass = 0; pass < 8; ++pass) {
+                    const uint shift = pass * 4;
+
+                    ocl_lbvh_rsort_hist.exec(
+                        gpu::WorkSize(GROUP_SIZE, radixGlobalSize),
+                        key_buffer_in,
+                        radix_hist_gpu,
+                        n,
+                        shift
+                    );
+
+                    ocl_lbvh_rsort_prefix.exec(
+                        gpu::WorkSize(16, 16),
+                        radix_hist_gpu,
+                        radix_group_offsets_gpu,
+                        static_cast<uint>(radixGroupCount)
+                    );
+
+                    ocl_lbvh_rsort_scan.exec(
+                        gpu::WorkSize(GROUP_SIZE, radixGlobalSize),
+                        key_buffer_in,
+                        val_buffer_in,
+                        key_buffer_out,
+                        val_buffer_out,
+                        radix_group_offsets_gpu,
+                        n,
+                        shift
+                    );
+
+                    std::swap(key_buffer_in, key_buffer_out);
+                    std::swap(val_buffer_in, val_buffer_out);
+                }
+                sorted_morton_gpu = key_buffer_in;
+                sorted_tri_indices_gpu = val_buffer_in;
+
+                std::cout << "Morton codes sorted" << std::endl;
+
+                // 6. Строим lbvh
+                parents_indices_gpu.fill(CL_UINT_MAX);
+                ocl_lbvh_build.exec(
+                    gpu::WorkSize(GROUP_SIZE, n),
+                    sorted_morton_gpu,
+                    sorted_tri_indices_gpu,
+                    parents_indices_gpu,
+                    lbvh_nodes_gpu,
+                    n
+                );
+
+                std::cout << "lbvh built" << std::endl;
+
+                // 7. Получаем aabb для каждой ноды lbvh
+                checkpoint_counters_gpu.fill(0);
+                ocl_lbvh_aabbs.exec(
+                    gpu::WorkSize(GROUP_SIZE, n),
+                    leaf_aabbs_gpu,
+                    sorted_tri_indices_gpu,
+                    parents_indices_gpu,
+                    checkpoint_counters_gpu,
+                    lbvh_nodes_gpu,
+                    n
+                );
+
+                std::cout << "lbvh aabbs computed" << std::endl;
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -314,7 +448,12 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                ocl_rt_with_lbvh.exec(
+                    gpu::WorkSize(16, 16, width, height),
+                    vertices_gpu, faces_gpu,
+                    lbvh_nodes_gpu.clmem(), sorted_tri_indices_gpu.clmem(),
+                    framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                    camera_gpu.clmem(), nfaces);
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }

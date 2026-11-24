@@ -3,6 +3,14 @@
 #include "cl/generated_kernels/aplusb.h"
 #include "cl/generated_kernels/ray_tracing_render_brute_force.h"
 #include "cl/generated_kernels/ray_tracing_render_using_lbvh.h"
+#include "cl/generated_kernels/ray_tracing_lbvh_scene_aabb.h"
+#include "cl/generated_kernels/ray_tracing_lbvh_preprocess.h"
+#include "cl/generated_kernels/ray_tracing_lbvh_morton.h"
+#include "cl/generated_kernels/ray_tracing_lbvh_rsort_hist.h"
+#include "cl/generated_kernels/ray_tracing_lbvh_rsort_prefix.h"
+#include "cl/generated_kernels/ray_tracing_lbvh_rsort_scan.h"
+#include "cl/generated_kernels/ray_tracing_lbvh_build.h"
+#include "cl/generated_kernels/ray_tracing_lbvh_aabbs.h"
 
 #include "vk/generated_kernels/aplusb_comp.h"
 #include "vk/generated_kernels/ray_tracing_render_brute_force_comp.h"
@@ -54,6 +62,46 @@ const ProgramBinaries& getRTBruteForce()
 const ProgramBinaries& getRTWithLBVH()
 {
     return opencl_binaries_ray_tracing_render_using_lbvh;
+}
+
+const ProgramBinaries& getLBVHSceneAABB()
+{
+    return opencl_binaries_ray_tracing_lbvh_scene_aabb;
+}
+
+const ProgramBinaries& getLBVHPreprocess()
+{
+    return opencl_binaries_ray_tracing_lbvh_preprocess;
+}
+
+const ProgramBinaries& getLBVHMorton()
+{
+    return opencl_binaries_ray_tracing_lbvh_morton;
+}
+
+const ProgramBinaries& getLBVHRadixSortHistogram()
+{
+    return opencl_binaries_ray_tracing_lbvh_rsort_hist;
+}
+
+const ProgramBinaries& getLBVHRadixSortPrefix()
+{
+    return opencl_binaries_ray_tracing_lbvh_rsort_prefix;
+}
+
+const ProgramBinaries& getLBVHRadixSortScatter()
+{
+    return opencl_binaries_ray_tracing_lbvh_rsort_scan;
+}
+
+const ProgramBinaries& getLBVHBuild()
+{
+    return opencl_binaries_ray_tracing_lbvh_build;
+}
+
+const ProgramBinaries& getLBVHAABBs()
+{
+    return opencl_binaries_ray_tracing_lbvh_aabbs;
 }
 } // namespace ocl
 
