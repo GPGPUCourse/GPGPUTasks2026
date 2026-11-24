@@ -325,7 +325,7 @@ void run(int argc, char** argv)
             gpu::gpu_mem_32u radix_tile_totals_gpu(radixTileCount * 16);
             gpu::gpu_mem_32u radix_tile_offsets_gpu(radixTileCount * 16);
             gpu::gpu_mem_32u parents_indices_gpu(nnodes);
-            gpu::gpu_mem_32u checkpoint_counters_gpu(nnodes);
+            gpu::gpu_mem_32u checkpoint_counters_gpu(std::max(1u, n - 1));
 
             gpu::shared_device_buffer_typed<MortonCode>& sorted_morton_gpu = morton_1_gpu;
             gpu::gpu_mem_32u& sorted_tri_indices_gpu = tri_indices_1_gpu;
@@ -411,18 +411,17 @@ void run(int argc, char** argv)
                 sorted_tri_indices_gpu = val_buffer_in;
 
                 // 6. Строим lbvh
-                parents_indices_gpu.fill(CL_UINT_MAX);
                 ocl_lbvh_build.exec(
                     gpu::WorkSize(GROUP_SIZE, n),
                     sorted_morton_gpu,
                     sorted_tri_indices_gpu,
                     parents_indices_gpu,
+                    checkpoint_counters_gpu,
                     lbvh_nodes_gpu,
                     n
                 );
 
                 // 7. Получаем aabb для каждой ноды lbvh
-                checkpoint_counters_gpu.fill(0);
                 ocl_lbvh_aabbs.exec(
                     gpu::WorkSize(GROUP_SIZE, n),
                     leaf_aabbs_gpu,

@@ -93,6 +93,7 @@ __kernel void ray_tracing_lbvh_build(
     __global const MortonCode* sortedMorton, // sorted indexation
     __global const uint* leafTriIndices,     // sorted indexation
     __global uint* parentsIndices,           // sorted indexation
+    __global uint* checkpointCounters,       // internal nodes
     __global BVHNodeGPU*  outNodes,          // sorted indexation
     uint n
 ) {
@@ -110,11 +111,18 @@ __kernel void ray_tracing_lbvh_build(
 
     const uint i = gid;
 
+    if (i < n - 1)
+        checkpointCounters[i] = 0;
+
     const uint leafIndex = (n - 1) + i;
     outNodes[leafIndex].leftChildIndex = UINT_MAX;
     outNodes[leafIndex].rightChildIndex = UINT_MAX;
 
     if (i >= n - 1) return;
+
+    if (i == 0) {
+        parentsIndices[0] = UINT_MAX;
+    }
 
     int first, last;
     determine_range(sortedMorton, (int)n, i, &first, &last);
