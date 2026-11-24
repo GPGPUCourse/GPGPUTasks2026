@@ -15,6 +15,8 @@
 
 #include "cpu_helpers/build_bvh_cpu.h"
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <fstream>
 
@@ -50,6 +52,76 @@ size_t countDiffs(const TypedImage<T> &a, const TypedImage<T> &b, T threshold) {
         }
     }
     return count;
+}
+
+static image32f denoiseAmbientOcclusion(const image32f& ao, const image32i& face_ids,
+                                       const SceneGeometry& scene)
+{
+    const int width = ao.width();
+    const int height = ao.height();
+    std::vector<point3f> normals(size_t(width) * height);
+    #pragma omp parallel for
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const int face_id = face_ids.ptr(y)[x];
+            if (face_id < 0) {
+                continue;
+            }
+            const point3u& face = scene.faces[face_id];
+            const point3f a = scene.vertices[face.y] - scene.vertices[face.x];
+            const point3f b = scene.vertices[face.z] - scene.vertices[face.x];
+            const point3f normal(a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x);
+            const float length = std::sqrt(normal.x * normal.x + normal.y * normal.y + normal.z * normal.z);
+            if (length > 0.0f) {
+                normals[size_t(y) * width + x] = normal / length;
+            }
+        }
+    }
+
+    constexpr int radius = 2;
+    constexpr float spatial_weights[] = {1, 4, 6, 4, 1};
+    image32f filtered(width, height, 1);
+    #pragma omp parallel for
+    for (int y = 0; y < height; ++y) {
+        for (int x = 0; x < width; ++x) {
+            const int face_id = face_ids.ptr(y)[x];
+            if (face_id < 0) {
+                filtered.ptr(y)[x] = ao.ptr(y)[x];
+                continue;
+            }
+
+            const point3f& normal = normals[size_t(y) * width + x];
+            float weighted_ao = 0.0f;
+            float weight_sum = 0.0f;
+            for (int ny = std::max(0, y - radius); ny <= std::min(height - 1, y + radius); ++ny) {
+                for (int nx = std::max(0, x - radius); nx <= std::min(width - 1, x + radius); ++nx) {
+                    const int neighbor_face_id = face_ids.ptr(ny)[nx];
+                    if (neighbor_face_id < 0) {
+                        continue;
+                    }
+                    const point3f& neighbor = normals[size_t(ny) * width + nx];
+                    const float alignment = normal.x * neighbor.x + normal.y * neighbor.y + normal.z * neighbor.z;
+                    const float normal_weight = neighbor_face_id == face_id ? 1.0f : std::clamp((alignment - 0.8f) / 0.2f, 0.0f, 1.0f);
+                    const float weight = spatial_weights[ny - y + radius] * spatial_weights[nx - x + radius] * normal_weight;
+                    weighted_ao += weight * ao.ptr(ny)[nx];
+                    weight_sum += weight;
+                }
+            }
+            filtered.ptr(y)[x] = weighted_ao / weight_sum;
+        }
+    }
+    return filtered;
+}
+
+static image8u ambientOcclusionToGrayscale(const image32f& ao)
+{
+    image8u grayscale(ao.width(), ao.height(), 1);
+    for (int y = 0; y < ao.height(); ++y) {
+        for (int x = 0; x < ao.width(); ++x) {
+            grayscale.ptr(y)[x] = static_cast<unsigned char>(std::lround(255.0f * std::clamp(ao.ptr(y)[x], 0.0f, 1.0f)));
+        }
+    }
+    return grayscale;
 }
 
 void run(int argc, char** argv)
@@ -123,6 +195,7 @@ void run(int argc, char** argv)
         const unsigned int height = camera.K.height;
         double loading_data_time = loading_scene_t.elapsed();
         double images_saving_time = 0.0;
+        double ao_denoising_time = 0.0;
         std::cout << "Scene " << scene_name << " loaded: " << nvertices << " vertices, " << nfaces << " faces in " << loading_data_time << " sec" << std::endl;
         std::cout << "Camera framebuffer size: " << width << "x" << height << std::endl;
 
@@ -345,6 +418,15 @@ void run(int argc, char** argv)
                 rassert(count_ao_errors < width * height / 100, 3567856512354123, count_ao_errors, to_percent(count_ao_errors, width * height));
                 rassert(count_face_id_errors < width * height / 100, 3453465346387, count_face_id_errors, to_percent(count_face_id_errors, width * height));
             }
+
+            timer denoising_t;
+            const image32f denoised_ao = denoiseAmbientOcclusion(gpu_lbvh_framebuffer_ambient_occlusion, gpu_lbvh_framebuffer_face_ids, scene);
+            ao_denoising_time = denoising_t.elapsed();
+
+            timer ao_images_saving_t;
+            debug_io::dumpImage(results_dir + "/ao_before.bmp", ambientOcclusionToGrayscale(gpu_lbvh_framebuffer_ambient_occlusion));
+            debug_io::dumpImage(results_dir + "/ao_after.bmp", ambientOcclusionToGrayscale(denoised_ao));
+            images_saving_time += ao_images_saving_t.elapsed();
         }
         
 
@@ -358,6 +440,7 @@ void run(int argc, char** argv)
         std::cout << to_percent(rt_times_with_cpu_lbvh_sum, total_time) << " GPU with CPU LBVH + ";
         std::cout << to_percent(gpu_lbvh_time_sum, total_time) << " GPU LBVH + ";
         std::cout << to_percent(rt_times_with_gpu_lbvh_sum, total_time) << " GPU with GPU LBVH + ";
+        std::cout << to_percent(ao_denoising_time, total_time) << " AO denoising + ";
         std::cout << to_percent(images_saving_time, total_time) << " images IO + ";
         std::cout << to_percent(pcie_writing_time, total_time) << " PCI-E write + ";
         std::cout << to_percent(pcie_reading_time, total_time) << " PCI-E read + ";
