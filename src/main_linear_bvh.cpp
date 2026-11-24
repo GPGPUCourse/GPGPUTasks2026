@@ -97,7 +97,7 @@ void run(int argc, char** argv)
         "data/san-miguel/san-miguel.obj",
     };
 
-    const int niters = 1; // при отладке удобно запускать одну итерацию
+    const int niters = 10; // при отладке удобно запускать одну итерацию
     std::vector<double> gpu_rt_perf_mrays_per_sec;
     std::vector<double> gpu_lbvh_perfs_mtris_per_sec;
 
@@ -340,16 +340,12 @@ void run(int argc, char** argv)
                     aabb_reduction_buffer_gpu
                 ); // looks ok, reduction buffer size = aabbReductionGroupCount
 
-                std::cout << "Scene processed" << std::endl;
-
                 // 2. Получаем глобальный aabb для вычисления кодов мортона
                 ocl_lbvh_scene_aabb.exec(
                     gpu::WorkSize(GROUP_SIZE, GROUP_SIZE),
                     static_cast<uint>(aabbReductionGroupCount),
                     aabb_reduction_buffer_gpu
                 ); // looks ok, does reduction in 1 workgroup via local memory i/o hierarchical approach
-
-                std::cout << "Global aabb computed" << std::endl;
 
                 // 3. Считаем коды мортона
                 ocl_lbvh_morton.exec(
@@ -359,8 +355,6 @@ void run(int argc, char** argv)
                     aabb_reduction_buffer_gpu,
                     morton_1_gpu
                 ); // looks ok, computes morton code for each tri using centroids aabb
-
-                std::cout << "Morton codes computed" << std::endl;
 
                 // 4. Сортируем индексы листьев по кодам мортона
                 auto& key_buffer_in = morton_1_gpu;
@@ -402,8 +396,6 @@ void run(int argc, char** argv)
                 sorted_morton_gpu = key_buffer_in;
                 sorted_tri_indices_gpu = val_buffer_in;
 
-                std::cout << "Morton codes sorted" << std::endl;
-
                 // 6. Строим lbvh
                 parents_indices_gpu.fill(CL_UINT_MAX);
                 ocl_lbvh_build.exec(
@@ -414,8 +406,6 @@ void run(int argc, char** argv)
                     lbvh_nodes_gpu,
                     n
                 );
-
-                std::cout << "lbvh built" << std::endl;
 
                 // 7. Получаем aabb для каждой ноды lbvh
                 checkpoint_counters_gpu.fill(0);
@@ -428,8 +418,6 @@ void run(int argc, char** argv)
                     lbvh_nodes_gpu,
                     n
                 );
-
-                std::cout << "lbvh aabbs computed" << std::endl;
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
