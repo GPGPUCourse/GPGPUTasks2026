@@ -8,6 +8,11 @@
 namespace cuda {
 void aplusb(const gpu::WorkSize& workSize, const gpu::gpu_mem_32u& a, const gpu::gpu_mem_32u& b, gpu::gpu_mem_32u& c, unsigned int n);
 
+void build_lbvh(const gpu::gpu_mem_32f& vertices, const gpu::gpu_mem_32u& faces,
+    unsigned int nfaces, gpu::shared_device_buffer_typed<BVHNodeGPU>& nodes,
+    gpu::gpu_mem_32u& leafTriIndices);
+
+
 void ray_tracing_render_brute_force(const gpu::WorkSize &workSize,
     const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
     gpu::gpu_mem_32i &framebuffer_face_id,
