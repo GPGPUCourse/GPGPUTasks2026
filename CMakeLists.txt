@@ -69,6 +69,7 @@ set(OPENCL_SOURCES
         src/kernels/cl/ray_tracing_lbvh_preprocess.cl
         src/kernels/cl/ray_tracing_lbvh_morton.cl
         src/kernels/cl/ray_tracing_lbvh_rsort_hist.cl
+        src/kernels/cl/ray_tracing_lbvh_rsort_group_prefix.cl
         src/kernels/cl/ray_tracing_lbvh_rsort_prefix.cl
         src/kernels/cl/ray_tracing_lbvh_rsort_scan.cl
         src/kernels/cl/ray_tracing_lbvh_build.cl

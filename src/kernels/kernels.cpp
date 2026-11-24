@@ -7,6 +7,7 @@
 #include "cl/generated_kernels/ray_tracing_lbvh_preprocess.h"
 #include "cl/generated_kernels/ray_tracing_lbvh_morton.h"
 #include "cl/generated_kernels/ray_tracing_lbvh_rsort_hist.h"
+#include "cl/generated_kernels/ray_tracing_lbvh_rsort_group_prefix.h"
 #include "cl/generated_kernels/ray_tracing_lbvh_rsort_prefix.h"
 #include "cl/generated_kernels/ray_tracing_lbvh_rsort_scan.h"
 #include "cl/generated_kernels/ray_tracing_lbvh_build.h"
@@ -82,6 +83,11 @@ const ProgramBinaries& getLBVHMorton()
 const ProgramBinaries& getLBVHRadixSortHistogram()
 {
     return opencl_binaries_ray_tracing_lbvh_rsort_hist;
+}
+
+const ProgramBinaries& getLBVHRadixSortGroupPrefix()
+{
+    return opencl_binaries_ray_tracing_lbvh_rsort_group_prefix;
 }
 
 const ProgramBinaries& getLBVHRadixSortPrefix()

@@ -33,6 +33,7 @@ const ProgramBinaries& getLBVHSceneAABB();
 const ProgramBinaries& getLBVHPreprocess();
 const ProgramBinaries& getLBVHMorton();
 const ProgramBinaries& getLBVHRadixSortHistogram();
+const ProgramBinaries& getLBVHRadixSortGroupPrefix();
 const ProgramBinaries& getLBVHRadixSortPrefix();
 const ProgramBinaries& getLBVHRadixSortScatter();
 const ProgramBinaries& getLBVHBuild();

@@ -82,6 +82,7 @@ void run(int argc, char** argv)
     ocl::KernelSource ocl_lbvh_scene_aabb(ocl::getLBVHSceneAABB());
     ocl::KernelSource ocl_lbvh_morton(ocl::getLBVHMorton());
     ocl::KernelSource ocl_lbvh_rsort_hist(ocl::getLBVHRadixSortHistogram());
+    ocl::KernelSource ocl_lbvh_rsort_group_prefix(ocl::getLBVHRadixSortGroupPrefix());
     ocl::KernelSource ocl_lbvh_rsort_prefix(ocl::getLBVHRadixSortPrefix());
     ocl::KernelSource ocl_lbvh_rsort_scan(ocl::getLBVHRadixSortScatter());
     ocl::KernelSource ocl_lbvh_build(ocl::getLBVHBuild());
@@ -308,6 +309,8 @@ void run(int argc, char** argv)
             const size_t aabbReductionGlobalSize = aabbReductionGroupCount * GROUP_SIZE;
             const size_t radixGroupCount = (n + GROUP_SIZE - 1) / GROUP_SIZE;
             const size_t radixGlobalSize = radixGroupCount * GROUP_SIZE;
+            const size_t radixTileCount = (radixGroupCount + 255) / 256;
+            const size_t radixGroupPrefixGlobalSize = radixTileCount * 16 * GROUP_SIZE;
             
             gpu::shared_device_buffer_typed<BVHNodeGPU> lbvh_nodes_gpu(nnodes);
             gpu::shared_device_buffer_typed<AABBGPU> leaf_aabbs_gpu(n);
@@ -319,6 +322,8 @@ void run(int argc, char** argv)
             gpu::gpu_mem_32u tri_indices_2_gpu(n);
             gpu::gpu_mem_32u radix_hist_gpu(radixGroupCount * 16);
             gpu::gpu_mem_32u radix_group_offsets_gpu(radixGroupCount * 16);
+            gpu::gpu_mem_32u radix_tile_totals_gpu(radixTileCount * 16);
+            gpu::gpu_mem_32u radix_tile_offsets_gpu(radixTileCount * 16);
             gpu::gpu_mem_32u parents_indices_gpu(nnodes);
             gpu::gpu_mem_32u checkpoint_counters_gpu(nnodes);
 
@@ -338,14 +343,14 @@ void run(int argc, char** argv)
                     leaf_aabbs_gpu,
                     centroids_gpu,
                     aabb_reduction_buffer_gpu
-                ); // looks ok, reduction buffer size = aabbReductionGroupCount
+                );
 
                 // 2. Получаем глобальный aabb для вычисления кодов мортона
                 ocl_lbvh_scene_aabb.exec(
                     gpu::WorkSize(GROUP_SIZE, GROUP_SIZE),
                     static_cast<uint>(aabbReductionGroupCount),
                     aabb_reduction_buffer_gpu
-                ); // looks ok, does reduction in 1 workgroup via local memory i/o hierarchical approach
+                );
 
                 // 3. Считаем коды мортона
                 ocl_lbvh_morton.exec(
@@ -354,7 +359,7 @@ void run(int argc, char** argv)
                     n,
                     aabb_reduction_buffer_gpu,
                     morton_1_gpu
-                ); // looks ok, computes morton code for each tri using centroids aabb
+                );
 
                 // 4. Сортируем индексы листьев по кодам мортона
                 auto& key_buffer_in = morton_1_gpu;
@@ -372,11 +377,19 @@ void run(int argc, char** argv)
                         shift
                     );
 
-                    ocl_lbvh_rsort_prefix.exec(
-                        gpu::WorkSize(16, 16),
+                    ocl_lbvh_rsort_group_prefix.exec(
+                        gpu::WorkSize(GROUP_SIZE, radixGroupPrefixGlobalSize),
                         radix_hist_gpu,
                         radix_group_offsets_gpu,
+                        radix_tile_totals_gpu,
                         static_cast<uint>(radixGroupCount)
+                    );
+
+                    ocl_lbvh_rsort_prefix.exec(
+                        gpu::WorkSize(16, 16),
+                        radix_tile_totals_gpu,
+                        radix_tile_offsets_gpu,
+                        static_cast<uint>(radixTileCount)
                     );
 
                     ocl_lbvh_rsort_scan.exec(
@@ -386,6 +399,7 @@ void run(int argc, char** argv)
                         key_buffer_out,
                         val_buffer_out,
                         radix_group_offsets_gpu,
+                        radix_tile_offsets_gpu,
                         n,
                         shift
                     );

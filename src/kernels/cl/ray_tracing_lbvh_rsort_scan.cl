@@ -9,16 +9,18 @@ __kernel void ray_tracing_lbvh_rsort_scan(
     __global uint* keysOut,
     __global uint* valuesOut,
 
-    __global const uint* groupOffsets,
+    __global const uint* groupLocalOffsets,
+    __global const uint* tileOffsets,
 
     uint n,
     uint shift
 ) {
     __local uint16 localScan[256];
+    const uint groupId = get_group_id(0);
     const uint lid = get_local_id(0);
     const uint ls = get_local_size(0);
 
-    const uint gid = get_group_id(0) * ls + lid;
+    const uint gid = groupId * ls + lid;
 
     const uint valid = gid < n;
 
@@ -55,42 +57,24 @@ __kernel void ray_tracing_lbvh_rsort_scan(
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    // ==========================================
-    // 2. Inclusive prefix scan.
-    // ==========================================
-
     for (uint offset = 1; offset < ls; offset <<= 1) {
-
-        uint16 current = localScan[lid];
-
-        uint16 previous = (lid >= offset)
+        const uint16 current = localScan[lid];
+        const uint16 previous = lid >= offset
             ? localScan[lid - offset]
             : (uint16)(0u);
 
-        // Все work-items должны закончить чтение
-        // перед изменением Local Memory.
         barrier(CLK_LOCAL_MEM_FENCE);
 
         localScan[lid] = current + previous;
-
         barrier(CLK_LOCAL_MEM_FENCE);
     }
 
-    // ==========================================
-    // 3. Вычисляем local rank и destination.
-    // ==========================================
-
     if (valid) {
-
-        const uint localRank =
-            localScan[lid][digit] - 1u;
-
-        const uint groupOffset =
-            groupOffsets[
-                get_group_id(0) * RADIX_SIZE + digit
-            ];
-
-        const uint destination = groupOffset + localRank;
+        const uint tileId = groupId / 256;
+        const uint bucketOffset = groupLocalOffsets[groupId * RADIX_SIZE + digit]
+                                + tileOffsets[tileId * RADIX_SIZE + digit];
+        const uint localRank = localScan[lid][digit] - 1u;
+        const uint destination = bucketOffset + localRank;
 
         keysOut[destination] = key;
         valuesOut[destination] = value;
