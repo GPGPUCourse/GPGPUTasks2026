@@ -999,24 +999,3 @@ OpenCLKernelArg::OpenCLKernelArg(const gpu::shared_device_buffer &arg)
 		throw ocl_exception("Offset is not zero, but ignored");
 	}
 }
-
-template<typename T>
-OpenCLKernelArg::OpenCLKernelArg(const gpu::shared_device_buffer_typed<T> &arg)
-{
-	is_null = false;
-	size = sizeof(cl_mem);
-	cl_mem_storage = arg.clmem();
-	value = &cl_mem_storage;
-	if (arg.cloffset() != 0) {
-		throw ocl_exception("Offset is not zero, but ignored");
-	}
-}
-
-template OpenCLKernelArg::OpenCLKernelArg(const gpu::shared_device_buffer_typed<char> &arg);
-template OpenCLKernelArg::OpenCLKernelArg(const gpu::shared_device_buffer_typed<unsigned char> &arg);
-template OpenCLKernelArg::OpenCLKernelArg(const gpu::shared_device_buffer_typed<short> &arg);
-template OpenCLKernelArg::OpenCLKernelArg(const gpu::shared_device_buffer_typed<unsigned short> &arg);
-template OpenCLKernelArg::OpenCLKernelArg(const gpu::shared_device_buffer_typed<int> &arg);
-template OpenCLKernelArg::OpenCLKernelArg(const gpu::shared_device_buffer_typed<unsigned int> &arg);
-template OpenCLKernelArg::OpenCLKernelArg(const gpu::shared_device_buffer_typed<float> &arg);
-template OpenCLKernelArg::OpenCLKernelArg(const gpu::shared_device_buffer_typed<double> &arg);

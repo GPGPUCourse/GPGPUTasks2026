@@ -17,6 +17,7 @@
 #include <libgpu/work_size.h>
 #include <libgpu/opencl/device_info.h>
 #include <libgpu/opencl/utils.h>
+#include <libgpu/shared_device_buffer.h>
 #include <libgpu/utils.h>
 #include "../../../base/libbase/thread_mutex.h"
 #include <memory>
@@ -67,7 +68,8 @@ namespace ocl {
 		OpenCLKernelArg(const gpu::shared_device_buffer &arg);
 
 		template <typename T>
-		OpenCLKernelArg(const gpu::shared_device_buffer_typed<T> &arg);
+		OpenCLKernelArg(const gpu::shared_device_buffer_typed<T> &arg)
+			: OpenCLKernelArg(static_cast<const gpu::shared_device_buffer &>(arg)) {}
 
 		bool			is_null;
 		size_t			size;
