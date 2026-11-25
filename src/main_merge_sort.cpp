@@ -8,6 +8,8 @@
 
 #include "kernels/defines.h"
 #include "kernels/kernels.h"
+#include "libgpu/shared_device_buffer.h"
+#include "libgpu/work_size.h"
 
 #include <fstream>
 
@@ -26,7 +28,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -102,8 +104,26 @@ void run(int argc, char** argv)
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
         } else if (context.type() == gpu::Context::TypeCUDA) {
-            // TODO
-            throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
+            constexpr unsigned int BLOCK_SIZE = 256;
+            
+            int steps = 0;
+            for (int k = 1; k < n; k *= 2) steps++;
+            
+            const gpu::gpu_mem_32u* curr_src = &input_gpu;
+            gpu::gpu_mem_32u* curr_dst = &buffer1_gpu;
+
+            int step_id = 0;
+            for (int sorted_k = 1; sorted_k < n; sorted_k *= 2)
+            {
+                if (step_id == steps - 1) curr_dst = &buffer_output_gpu;
+                else if (step_id % 2 == 1) curr_dst = &buffer1_gpu;
+                else curr_dst = &buffer2_gpu;
+
+                cuda::merge_sort(gpu::WorkSize(BLOCK_SIZE, n), *curr_src, *curr_dst, sorted_k, n);
+                curr_src = curr_dst;
+                step_id++;
+            }
+
         } else if (context.type() == gpu::Context::TypeVulkan) {
             // TODO
             throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
