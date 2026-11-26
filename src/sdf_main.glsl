@@ -24,6 +24,21 @@ float lazycos(float angle)
     return 1.0;
 }
 
+float sdCapsule(vec3 p, vec3 a, vec3 b, float r)
+{
+    vec3 pa = p - a;
+    vec3 ba = b - a;
+    float h = clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0);
+
+    return length(pa - ba * h) - r;
+}
+
+float smin(float a, float b, float k)
+{
+    float h = max(k - abs(a - b), 0.0) / k;
+    return min(a, b) - h * h * k * 0.25;
+}
+
 // возможно, для конструирования тела пригодятся какие-то примитивы из набора https://iquilezles.org/articles/distfunctions/
 // способ сделать гладкий переход между примитивами: https://iquilezles.org/articles/smin/
 vec4 sdBody(vec3 p)
@@ -31,7 +46,29 @@ vec4 sdBody(vec3 p)
     float d = 1e10;
 
     // TODO
-    d = sdSphere((p - vec3(0.0, 0.35, -0.7)), 0.35);
+    float bottom = sdSphere(p - vec3(0.0, 0.28, -0.7), 0.28);
+    float upper = sdSphere(p - vec3(0.0, 0.56, -0.7), 0.19);
+    d = smin(bottom, upper, 0.2);
+
+    vec3 q = p;
+    q.x = abs(q.x);
+
+    float arm = sdCapsule(
+        q,
+        vec3(0.22, 0.4, -0.7),
+        vec3(0.34, 0.2, -0.7),
+        0.055
+    );
+
+    float leg = sdCapsule(
+        q,
+        vec3(0.12, 0.13, -0.7),
+        vec3(0.14, -0.015, -0.62),
+        0.065
+    );
+
+    d = min(d, arm);
+    d = min(d, leg);
 
     // return distance and color
     return vec4(d, vec3(0.0, 1.0, 0.0));
@@ -39,8 +76,28 @@ vec4 sdBody(vec3 p)
 
 vec4 sdEye(vec3 p)
 {
+    vec3 center = vec3(0.0, 0.55, -0.54);
 
-    vec4 res = vec4(1e10, 0.0, 0.0, 0.0);
+    float eye = sdSphere(p - center, 0.13);
+    vec4 res = vec4(eye, 1.0, 1.0, 1.0);
+
+    float blue = sdSphere(
+        p - center - vec3(0.0, 0.0, 0.07),
+        0.085
+    );
+
+    if(blue < res.x) {
+        res = vec4(blue, 0.0, 0.7, 0.85);
+    }
+
+    float black = sdSphere(
+        p - center - vec3(0.0, 0.0, 0.12),
+        0.045
+    );
+
+    if(black < res.x) {
+        res = vec4(black, 0.02, 0.02, 0.02);
+    }
 
     return res;
 }
