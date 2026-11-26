@@ -24,6 +24,7 @@ GPU_STRUCT_BEGIN(BVHNodeGPU)
     AABBGPU aabb;
     GPUC_UINT leftChildIndex;
     GPUC_UINT rightChildIndex;
+
 GPU_STRUCT_END(BVHNodeGPU)
 
 /* ---------------- Host-only layout checks ---------------- */

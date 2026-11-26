@@ -37,6 +37,41 @@ void ray_tracing_render_using_lbvh(const gpu::WorkSize &workSize,
     // dummy implementation if CUDA_SUPPORT is disabled
     rassert(false, 54623523412413);
 }
+void buildLBVH_GPU(const gpu::WorkSize &workSize,
+    const gpu::gpu_mem_32f &vertices, const gpu::gpu_mem_32u &faces,
+    gpu::shared_device_buffer_typed<BVHNodeGPU> &outNodes, gpu::gpu_mem_32u &outLeafTriIndices, gpu::gpu_mem_32u &mortons_codes,
+    unsigned int nfaces)
+{
+    rassert(false, 54623523412413);
+}
+void build_mortons_codes(
+    const gpu::WorkSize &workSize,
+    const gpu::gpu_mem_32f &vertices,
+    const gpu::gpu_mem_32u &faces,
+    gpu::gpu_mem_32u &mortons_codes,
+    unsigned int nfaces,
+    const gpu::gpu_mem_32i &cMinGpu,
+    const gpu::gpu_mem_32i &cMaxGpu)
+{
+    rassert(false, 54623523412413);
+}
+void calculate_bounding_box(
+    const gpu::WorkSize &workSize,
+    const gpu::gpu_mem_32f &vertices,
+    const gpu::gpu_mem_32u &faces,
+    unsigned int nfaces,
+    gpu::gpu_mem_32i &cMinGpu,
+    gpu::gpu_mem_32i &cMaxGpu)
+{
+    rassert(false, 54623523412413);
+}
+void sort_mortons_codes(
+    gpu::gpu_mem_32u &mortons_codes,
+    gpu::gpu_mem_32u &outLeafTriIndices,
+    unsigned int nfaces)
+{
+    rassert(false, 54623523412413);
+}
 } // namespace cuda
 #endif
 

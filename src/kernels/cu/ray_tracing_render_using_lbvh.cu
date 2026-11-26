@@ -23,17 +23,62 @@ __device__ bool bvh_closest_hit(
     const float* vertices,
     const unsigned int* faces,
     float tMin,
-    float& outT, // сюда нужно записать t рассчитанный в intersect_ray_triangle(..., t, u, v)
+    float& outT,
     int& outFaceId,
-    float& outU, // сюда нужно записать u рассчитанный в intersect_ray_triangle(..., t, u, v)
-    float& outV) // сюда нужно записать v рассчитанный в intersect_ray_triangle(..., t, u, v)
+    float& outU,
+    float& outV)
 {
-    const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
+    const uint32_t INVALID = 4294967295;
+    const BVHNodeGPU* stack[64];
+    int n = 0;
+    stack[n++] = &nodes[0];
+    bool hitAnything = false;
+    while (n > 0) {
+        const BVHNodeGPU& node = *stack[--n];
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+        if (node.leftChildIndex == INVALID && node.rightChildIndex == INVALID) {
+            int leafIdx = &node - nodes;
+            int triIdx = leafTriIndices[leafIdx - leafStart];
 
-    return false; // no intersections found
+            uint3 f = loadFace(faces, triIdx);
+            float3 a = loadVertex(vertices, f.x);
+            float3 b = loadVertex(vertices, f.y);
+            float3 c = loadVertex(vertices, f.z);
+
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, a, b, c, tMin, outT, false, t, u, v)) {
+                outT = t;
+                outFaceId = triIdx;
+                outU = u; outV = v;
+                hitAnything = true;
+            }
+        }
+        else {
+            const BVHNodeGPU& childL = nodes[node.leftChildIndex];
+            const BVHNodeGPU& childR = nodes[node.rightChildIndex];
+
+            float tNearL, tFarL, tNearR, tFarR;
+            bool overlapL = intersect_ray_aabb(orig, dir, childL.aabb, tMin, outT, tNearL, tFarL);
+            bool overlapR = intersect_ray_aabb(orig, dir, childR.aabb, tMin, outT, tNearR, tFarR);
+
+            if (overlapL && overlapR) {
+                if (tNearL < tNearR) {
+                    stack[n++] = &nodes[node.rightChildIndex];
+                    stack[n++] = &nodes[node.leftChildIndex];
+                } else {
+                    stack[n++] = &nodes[node.leftChildIndex];
+                    stack[n++] = &nodes[node.rightChildIndex];
+                }
+            } else if (overlapL) {
+                stack[n++] = &nodes[node.leftChildIndex];
+            } else if (overlapR) {
+                stack[n++] = &nodes[node.rightChildIndex];
+            }
+        }
+    }
+
+    return hitAnything;
 }
 
 // BVH traversal: any hit (for AO rays)
@@ -50,8 +95,42 @@ __device__ bool any_hit_from(
 {
     const int rootIndex = 0;
     const int leafStart = (int)nfaces - 1;
+    const uint32_t INVALID = 4294967295;
+    const BVHNodeGPU* stack[64];
+    int n = 0;
+    stack[n++] = &nodes[0];
+	do {
+        const BVHNodeGPU& node = *stack[--n];
 
-    // TODO implement BVH travering (with stack, don't use recursion)
+	    if (node.leftChildIndex == INVALID && node.rightChildIndex == INVALID) {
+            int leafIdx = &node - nodes;
+            int triIdx = leafTriIndices[leafIdx - leafStart];
+
+            if (triIdx == ignore_face) continue;
+
+            uint3 f = loadFace(faces, triIdx);
+            float3 a = loadVertex(vertices, f.x);
+            float3 b = loadVertex(vertices, f.y);
+            float3 c = loadVertex(vertices, f.z);
+
+            float t, u, v;
+            if (intersect_ray_triangle(orig, dir, a, b, c, 1e-4f, FLT_MAX, false, t, u, v)) {
+                return true;
+            }
+        }
+
+        else {
+            const BVHNodeGPU& childL = nodes[node.leftChildIndex];
+            const BVHNodeGPU& childR = nodes[node.rightChildIndex];
+
+            float tNearL, tFarL, tNearR, tFarR;
+            bool overlapL = intersect_ray_aabb(orig, dir, childL.aabb, 1e-4f, FLT_MAX, tNearL, tFarL);
+            bool overlapR = intersect_ray_aabb(orig, dir, childR.aabb, 1e-4f, FLT_MAX, tNearR, tFarR);
+
+            if (overlapL) stack[n++] = &nodes[node.leftChildIndex];
+            if (overlapR) stack[n++] = &nodes[node.rightChildIndex];
+        }
+	} while (n > 0);
 
     return false; // no intersections found
 }

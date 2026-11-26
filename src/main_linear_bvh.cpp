@@ -67,7 +67,7 @@ void run(int argc, char** argv)
     // TODO 000 P.S. если вы выбрали CUDA - не забудьте установить CUDA SDK и добавить -DGPU_CUDA_SUPPORT=ON в CMake options
     // TODO 010 P.S. так же в случае CUDA - добавьте в CMake options (НЕ меняйте сами CMakeLists.txt чтобы не менять окружение тестирования):
     // TODO 010 "-DCMAKE_CUDA_ARCHITECTURES=75 -DCMAKE_CUDA_FLAGS=-lineinfo" (первое - чтобы включить поддержку WMMA, второе - чтобы compute-sanitizer и профилировщик знали номера строк кернела)
-    gpu::Context context = activateContext(device, gpu::Context::TypeOpenCL);
+    gpu::Context context = activateContext(device, gpu::Context::TypeCUDA);
     // OpenCL - рекомендуется как вариант по умолчанию, можно выполнять на CPU, есть printf, есть аналог valgrind/cuda-memcheck - https://github.com/jrprice/Oclgrind
     // CUDA   - рекомендуется если у вас NVIDIA видеокарта, есть printf, т.к. в таком случае вы сможете пользоваться профилировщиком (nsight-compute) и санитайзером (compute-sanitizer, это бывший cuda-memcheck)
     // Vulkan - не рекомендуется, т.к. писать код (compute shaders) на шейдерном языке GLSL на мой взгляд менее приятно чем в случае OpenCL/CUDA
@@ -206,7 +206,7 @@ void run(int argc, char** argv)
         double cpu_lbvh_time = 0.0;
         double rt_times_with_cpu_lbvh_sum = 0.0;
         {
-            std::vector<BVHNodeGPU> lbvh_nodes_cpu;
+            std::vector<BVHNodeGPU> lbvh_nodes_cpu(nfaces);
             std::vector<uint32_t> leaf_faces_indices_cpu;
             timer cpu_lbvh_t;
             buildLBVH_CPU(scene.vertices, scene.faces, lbvh_nodes_cpu, leaf_faces_indices_cpu);
@@ -229,34 +229,12 @@ void run(int argc, char** argv)
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO оттрасируйте лучи на GPU используя построенный на CPU LBVH
-                throw std::runtime_error(CODE_IS_NOT_IMPLEMENTED);
-
-                if (context.type() == gpu::Context::TypeOpenCL) {
-                    ocl_rt_with_lbvh.exec(
-                        gpu::WorkSize(16, 16, width, height),
-                        vertices_gpu, faces_gpu,
-                        lbvh_nodes_gpu.clmem(), leaf_faces_indices_gpu.clmem(),
-                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu.clmem(), nfaces);
-                } else if (context.type() == gpu::Context::TypeCUDA) {
-                    cuda::ray_tracing_render_using_lbvh(
+                cuda::ray_tracing_render_using_lbvh(
                         gpu::WorkSize(16, 16, width, height),
                         vertices_gpu, faces_gpu,
                         lbvh_nodes_gpu, leaf_faces_indices_gpu,
                         framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
                         camera_gpu, nfaces);
-                } else if (context.type() == gpu::Context::TypeVulkan) {
-                    vk_rt_with_lbvh.exec(
-                        nfaces,
-                        gpu::WorkSize(16, 16, width, height),
-                        vertices_gpu, faces_gpu,
-                        lbvh_nodes_gpu, leaf_faces_indices_gpu,
-                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
-                        camera_gpu);
-                } else {
-                    rassert(false, 654724541234123);
-                }
 
                 rt_times_with_cpu_lbvh.push_back(t.elapsed());
             }
@@ -290,14 +268,26 @@ void run(int argc, char** argv)
 
         // TODO постройте LBVH на GPU
         // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
-        bool gpu_lbvg_gpu_rt_done = false;
+        size_t N =  scene.faces.size();
+        gpu::shared_device_buffer_typed<BVHNodeGPU> lbvh_nodes_gpu(2 * N - 1);
+        gpu::gpu_mem_32u leaf_faces_indices_gpu(N);
+
+        gpu::gpu_mem_32u mortons_codes_gpu(N);
+
+        gpu::gpu_mem_32i cMin_gpu(3);
+        gpu::gpu_mem_32i cMax_gpu(3);
+
+        bool gpu_lbvg_gpu_rt_done = true;
 
         if (gpu_lbvg_gpu_rt_done) {
             std::vector<double> gpu_lbvh_times;
             for (int iter = 0; iter < niters; ++iter) {
                 timer t;
 
-                // TODO постройте LBVH на GPU
+                cuda::calculate_bounding_box(gpu::WorkSize(GROUP_SIZE, N), vertices_gpu, faces_gpu, N, cMin_gpu, cMax_gpu);
+                cuda::build_mortons_codes(gpu::WorkSize(GROUP_SIZE, N), vertices_gpu, faces_gpu, mortons_codes_gpu, N, cMin_gpu, cMax_gpu);
+                cuda::sort_mortons_codes(mortons_codes_gpu, leaf_faces_indices_gpu, nfaces);
+                cuda::buildLBVH_GPU(gpu::WorkSize(GROUP_SIZE, 2 * N - 1), vertices_gpu, faces_gpu, lbvh_nodes_gpu, leaf_faces_indices_gpu, mortons_codes_gpu, N);
 
                 gpu_lbvh_times.push_back(t.elapsed());
             }
@@ -317,6 +307,12 @@ void run(int argc, char** argv)
                 timer t;
 
                 // TODO оттрасируйте лучи на GPU используя построенный на GPU LBVH
+                cuda::ray_tracing_render_using_lbvh(
+                        gpu::WorkSize(16, 16, width, height),
+                        vertices_gpu, faces_gpu,
+                        lbvh_nodes_gpu, leaf_faces_indices_gpu,
+                        framebuffer_face_id_gpu, framebuffer_ambient_occlusion_gpu,
+                        camera_gpu, nfaces);
 
                 gpu_lbvh_rt_times.push_back(t.elapsed());
             }

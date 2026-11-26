@@ -100,7 +100,12 @@ if (GPU_CUDA_SUPPORT)
     set(CUDA_SOURCES
             src/kernels/cu/aplusb.cu
             src/kernels/cu/ray_tracing_render_brute_force.cu
-            src/kernels/cu/ray_tracing_render_using_lbvh.cu)
+            src/kernels/cu/ray_tracing_render_using_lbvh.cu
+            src/kernels/cu/build_lbvh_gpu.cu
+            src/kernels/cu/build_mortons_codes.cu
+            src/kernels/cu/calculate_bounding_box.cu
+            src/kernels/cu/sorting_mortons_codes.cu
+    )
 
     add_definitions(-DCUDA_SUPPORT)
     add_library(${PROJECT_NAME}_core STATIC ${SOURCES} ${CUDA_SOURCES} ${HEADERS})
@@ -121,3 +126,11 @@ if (GPU_CUDA_SUPPORT)
     target_include_directories(main_aplusb     PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
     target_include_directories(main_linear_bvh PRIVATE ${CUDAToolkit_INCLUDE_DIRS})
 endif ()
+
+foreach(TARGET_NAME main_aplusb main_linear_bvh)
+    add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory
+            ${CMAKE_SOURCE_DIR}/data
+            $<TARGET_FILE_DIR:${TARGET_NAME}>/data
+    )
+endforeach()
