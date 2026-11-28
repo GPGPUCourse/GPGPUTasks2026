@@ -73,6 +73,9 @@ P.S. `Tesla V100-SXM2-16GB`: `125 TFLOPS` Tensor Core FP16.
 | 4 | 2025 | Тяньшэн Цю | ИТМО | 215844 coolness = 279.48 MTris/s x 772.32 MRays/s | OpenCL | [PR #812](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/812/changes/a1429be138ae54c5d8fd6b4da30b330acf7613da) |
 | 5 | 2025 | Ostapenko Vladislav | ВШЭ | 201689 coolness = 316.55 MTris/s x 637.16 MRays/s | OpenCL | [PR #803](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/803/changes/b9a15e181bf39927b585f40e061bab0a9ac1f3e6) |
 | 6 | 2025 | Sanan Kornyakov | ВШЭ | 171595 coolness = 216.56 MTris/s x 792.38 MRays/s | OpenCL | [PR #813](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/813/changes/fce74a1b6ee1bf1a1bffe2aa8d846c95ccd922af) |
+| N/A | 2026 | Максим Кунц | МГУ | N/A = N/A MTris/s x 8319.34 MRays/sec* | Vulkan + RT cores* | [PR #781](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/781/changes/b2f700a866d440043652ba548e6facad28a0d288) |
+
+*Максим Кунц использовал Ray Tracing cores (hardware acceleration) через расширение [GL_EXT_ray_query](https://github.com/KhronosGroup/GLSL/blob/main/extensions/ext/GLSL_EXT_ray_query.txt), замер на RTX 5060 Ti (24 FP32 TFlops, 448 GB/s)
 
 ## Task 09. SDF
 
