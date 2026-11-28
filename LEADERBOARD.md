@@ -1,6 +1,6 @@
 # LEADERBOARD
 
-Ниже победители по задачам курса GPGPU 2025.
+Ниже победители по задачам курса GPGPU (за 2025 и за 2026 года прочтения).
 
 Замеры делались на `Tesla V100-SXM2-16GB`: `15.67 TFLOPS FP32`, `897 GBytes/s` peak memory bandwidth.
 
