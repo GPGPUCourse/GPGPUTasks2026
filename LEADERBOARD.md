@@ -55,14 +55,29 @@ P.S. `Tesla V100-SXM2-16GB`: `125 TFLOPS` Tensor Core FP16.
 
 | Place | Year | Participant | Team | Result (average over 5 cases) | API | Link |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 2025 | Вячеслав Григорович | ИТМО | 47559.94 uint millions/s | OpenCL | [PR #680](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/680/changes/23a70c6c68dde9672ea115a995d38ab60eb6a1d9) |
-| 2 | 2025 | Тяньшэн Цю | ИТМО | 34705.36 uint millions/s | OpenCL | [PR #647](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/647/changes/4ea307e7344961c857ab9a3cd3791dbca08b0ec5) |
-| 3 | 2025 | Артём Батыгин | ВШЭ | 33163.08 uint millions/s | OpenCL | [PR #666](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/666/changes/16b8816077ad12bef47ff10cade6e9bbc52bde40) |
+| 1 | 2026 | Виталий Павлов | ГКУ «Инфогород» | 52661.30 uint millions/s | CUDA | [PR #705](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/705/changes/74720a8a0d27477793293e593a6948ca6b1739f1) |
+| 2 | 2026 | Санджар Сатлыков | ВШЭ СПб / YADRO | 49482.80 uint millions/s | CUDA | [PR #746](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/746/changes/57242a6eeab245e27540ebef04c76287b2da2946) |
+| 2 | 2026 | Максим Кунц | МГУ | 49480.90 uint millions/s | CUDA | [PR #714](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/714/changes/fea9eb64fe94551be89213985a07a23aec2c6268) |
+| 2 | 2026 | Вазген Согоян | СПбГУ (МКН) | 49410.30 uint millions/s | OpenCL | [PR #741](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/741/changes/6307e67539b26e324cf69e5ceb988dda6afb2f3d) |
+| 3 | 2025 | Вячеслав Григорович | ИТМО | 47559.94 uint millions/s | OpenCL | [PR #680](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/680/changes/23a70c6c68dde9672ea115a995d38ab60eb6a1d9) |
+| 4 | 2025 | Тяньшэн Цю | ИТМО | 34705.36 uint millions/s | OpenCL | [PR #647](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/647/changes/4ea307e7344961c857ab9a3cd3791dbca08b0ec5) |
+| 5 | 2025 | Артём Батыгин | ВШЭ | 33163.08 uint millions/s | OpenCL | [PR #666](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/666/changes/16b8816077ad12bef47ff10cade6e9bbc52bde40) |
 
 ## Task 08. Ray Tracing
 
 | Place | Year | Participant | Team | Result | API | Link |
 | --- | --- | --- | --- | --- | --- | --- |
-| 1 | 2025 | Тяньшэн Цю | ИТМО | 215844 coolness = 279.48 MTris/s x 772.32 MRays/s | OpenCL | [PR #812](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/812/changes/a1429be138ae54c5d8fd6b4da30b330acf7613da) |
-| 2 | 2025 | Ostapenko Vladislav | ВШЭ | 201689 coolness = 316.55 MTris/s x 637.16 MRays/s | OpenCL | [PR #803](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/803/changes/b9a15e181bf39927b585f40e061bab0a9ac1f3e6) |
-| 3 | 2025 | Sanan Kornyakov | ВШЭ | 171595 coolness = 216.56 MTris/s x 792.38 MRays/s | OpenCL | [PR #813](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/813/changes/fce74a1b6ee1bf1a1bffe2aa8d846c95ccd922af) |
+| 1 | 2026 | Павел Мовчанюк | Военмех | 617181 coolness = 710.95 MTris/s x 868.11 MRays/s | CUDA | [PR #781](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/781/changes/b2f700a866d440043652ba548e6facad28a0d288) |
+| 2 | 2026 | Мирон Стукалов | СПбГУ | 520850 coolness = 670.39 MTris/s x 776.94 MRays/s | CUDA | [PR #819](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/819/changes/720b4c9eee3544258cbed93aa54815aea2b244b0) |
+| 3 | 2026 | Александр Емельянов | ВШЭ | 478963 coolness = 562.89 MTris/s x 850.91 MRays/s | CUDA | [PR #803](https://github.com/GPGPUCourse/GPGPUTasks2026/pull/803/changes/bb0a15cd19cfb7671fd90ecfbc4cc348f1ff245a) |
+| 4 | 2025 | Тяньшэн Цю | ИТМО | 215844 coolness = 279.48 MTris/s x 772.32 MRays/s | OpenCL | [PR #812](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/812/changes/a1429be138ae54c5d8fd6b4da30b330acf7613da) |
+| 5 | 2025 | Ostapenko Vladislav | ВШЭ | 201689 coolness = 316.55 MTris/s x 637.16 MRays/s | OpenCL | [PR #803](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/803/changes/b9a15e181bf39927b585f40e061bab0a9ac1f3e6) |
+| 6 | 2025 | Sanan Kornyakov | ВШЭ | 171595 coolness = 216.56 MTris/s x 792.38 MRays/s | OpenCL | [PR #813](https://github.com/GPGPUCourse/GPGPUTasks2025/pull/813/changes/fce74a1b6ee1bf1a1bffe2aa8d846c95ccd922af) |
+
+## Task 09. SDF
+
+Задание является творческим, объективной метрики нет.
+
+## Task 10. Software GPGPU rasterization (по аналогии с cudaraster)
+
+**TODO**
